@@ -10,6 +10,7 @@ SUBDIRS := \
 	isolation \
 	mount \
 	name_max \
+	openat2 \
 	overlayfs \
 	procfs \
 	pseudofs \
