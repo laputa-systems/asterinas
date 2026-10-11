@@ -145,6 +145,8 @@ TEST_TMPDIR=/ext2 TEST_DIRECT=1 ./empty_write/empty_write
 TEST_TMPDIR=/tmp ./name_max/name_max
 TEST_TMPDIR=/ext2 ./name_max/name_max
 
+./openat2/openat2
+
 ./overlayfs/lchown_lower_symlink
 ./overlayfs/link_lower_file
 ./overlayfs/mknod_whiteout_rejected
