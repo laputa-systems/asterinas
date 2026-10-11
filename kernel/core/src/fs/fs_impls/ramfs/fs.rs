@@ -19,14 +19,14 @@ use crate::{
         file::{AccessMode, InodeMode, InodeType, PerOpenFileOps, StatusFlags, mkmod},
         pipe::Pipe,
         pseudofs::AnonDeviceId,
-        utils::{self, CStr256, DirentVisitor},
+        utils::{self, DirentVisitor},
         vfs::{
             file_system::{FileSystem, FsEventSubscriberStats, SuperBlock},
             inode::{
                 Extension, FallocMode, FileOps, HardLinkability, Inode, Metadata, MknodType,
                 RenameMode, RevalidationPolicy, SymbolicLink,
             },
-            path::{Dentry, is_dot, is_dot_or_dotdot, is_dotdot},
+            path::{Dentry, is_dot_bytes, is_dot_or_dotdot_bytes, is_dotdot_bytes},
             registry::{FsCreationCtx, FsProperties, FsType},
             xattr::{XattrName, XattrNamespace, XattrSetFlags},
         },
@@ -177,7 +177,7 @@ pub(in crate::fs::fs_impls) struct RamInode {
 enum Inner {
     Dir(RwMutex<DirEntry>),
     File(Mutex<PageCache>),
-    SymLink(Mutex<String>),
+    SymLink(Mutex<Vec<u8>>),
     BlockDevice(u64),
     CharDevice(u64),
     Socket,
@@ -204,8 +204,8 @@ impl Inner {
         Self::File(Mutex::new(PageCache::new_anon(0).unwrap()))
     }
 
-    pub(self) fn new_symlink(target: &str) -> Self {
-        Self::SymLink(Mutex::new(String::from(target)))
+    pub(self) fn new_symlink(target: &[u8]) -> Self {
+        Self::SymLink(Mutex::new(target.to_vec()))
     }
 
     pub(self) fn new_block_device(dev_id: u64) -> Self {
@@ -242,7 +242,7 @@ impl Inner {
         }
     }
 
-    fn as_symlink(&self) -> Option<&Mutex<String>> {
+    fn as_symlink(&self) -> Option<&Mutex<Vec<u8>>> {
         match self {
             Self::SymLink(link) => Some(link),
             _ => None,
@@ -387,8 +387,8 @@ impl InodeMeta {
 
 /// Represents a directory entry within a `RamInode`.
 struct DirEntry {
-    children: SlotVec<(CStr256, Arc<RamInode>)>,
-    idx_map: HashMap<CStr256, usize>, // Used to accelerate indexing in `children`
+    children: SlotVec<(Vec<u8>, Arc<RamInode>)>,
+    idx_map: HashMap<Vec<u8>, usize>, // Used to accelerate indexing in `children`
     this: Weak<RamInode>,
     parent: Weak<RamInode>,
 }
@@ -410,41 +410,38 @@ impl DirEntry {
         self.parent = parent;
     }
 
-    fn contains_entry(&self, name: &str) -> bool {
-        if is_dot_or_dotdot(name) {
+    fn contains_entry(&self, name: &[u8]) -> bool {
+        if is_dot_or_dotdot_bytes(name) {
             true
         } else {
-            self.idx_map.contains_key(name.as_bytes())
+            self.idx_map.contains_key(name)
         }
     }
 
-    fn get_entry(&self, name: &str) -> Option<(usize, Arc<RamInode>)> {
-        if is_dot(name) {
+    fn get_entry(&self, name: &[u8]) -> Option<(usize, Arc<RamInode>)> {
+        if is_dot_bytes(name) {
             Some((0, self.this.upgrade().unwrap()))
-        } else if is_dotdot(name) {
+        } else if is_dotdot_bytes(name) {
             Some((1, self.parent.upgrade().unwrap()))
         } else {
-            let idx = *self.idx_map.get(name.as_bytes())?;
+            let idx = *self.idx_map.get(name)?;
             let target_inode = self
                 .children
                 .get(idx)
-                .map(|(name_cstr256, inode)| {
-                    debug_assert_eq!(name, name_cstr256.as_str().unwrap());
-                    inode.clone()
-                })
+                .map(|(_, inode)| inode.clone())
                 .unwrap();
             Some((idx + NUM_SPECIAL_ENTRIES, target_inode))
         }
     }
 
-    fn append_entry(&mut self, name: &str, inode: Arc<RamInode>) -> usize {
-        let name = CStr256::from_str_truncated(name);
-        let idx = self.children.put((name, inode));
+    fn append_entry(&mut self, name: &[u8], inode: Arc<RamInode>) -> usize {
+        let name = name.to_vec();
+        let idx = self.children.put((name.clone(), inode));
         self.idx_map.insert(name, idx);
         idx
     }
 
-    fn remove_entry(&mut self, idx: usize) -> Option<(CStr256, Arc<RamInode>)> {
+    fn remove_entry(&mut self, idx: usize) -> Option<(Vec<u8>, Arc<RamInode>)> {
         assert!(idx >= NUM_SPECIAL_ENTRIES);
         let removed = self.children.remove(idx - NUM_SPECIAL_ENTRIES)?;
         self.idx_map.remove(&removed.0);
@@ -454,10 +451,10 @@ impl DirEntry {
     fn substitute_entry(
         &mut self,
         idx: usize,
-        new_entry: (CStr256, Arc<RamInode>),
-    ) -> Option<(CStr256, Arc<RamInode>)> {
+        new_entry: (Vec<u8>, Arc<RamInode>),
+    ) -> Option<(Vec<u8>, Arc<RamInode>)> {
         assert!(idx >= NUM_SPECIAL_ENTRIES);
-        let new_name = new_entry.0;
+        let new_name = new_entry.0.clone();
         let idx_children = idx - NUM_SPECIAL_ENTRIES;
 
         let substitute = self.children.put_at(idx_children, new_entry)?;
@@ -501,7 +498,7 @@ impl DirEntry {
                 .skip_while(|(offset, _)| offset + NUM_SPECIAL_ENTRIES < start_idx)
             {
                 let offset = offset_children + NUM_SPECIAL_ENTRIES;
-                visitor.visit(name.as_str().unwrap(), child.ino, child.typ, offset + 1)?;
+                visitor.visit_bytes(name, child.ino, child.typ, offset + 1)?;
                 *idx = offset + 1;
             }
             Ok(())
@@ -620,7 +617,7 @@ impl RamInode {
         mode: InodeMode,
         uid: Uid,
         gid: Gid,
-        target: &str,
+        target: &[u8],
         to_be_revalidated: ToBeRevalidated,
     ) -> Arc<Self> {
         Arc::new_cyclic(|weak_self| RamInode {
@@ -720,6 +717,10 @@ impl RamInode {
     }
 
     fn find(&self, name: &str) -> Result<Arc<Self>> {
+        self.find_bytes(name.as_bytes())
+    }
+
+    fn find_bytes(&self, name: &[u8]) -> Result<Arc<Self>> {
         if self.typ != InodeType::Dir {
             return Err(errno!(ENOTDIR, "self is not dir"));
         }
@@ -754,7 +755,7 @@ impl RamInode {
         name: &str,
         mode: InodeMode,
     ) -> Result<Arc<dyn Inode>> {
-        self.create_impl(name, InodeType::Dir, mode, None, ToBeRevalidated::Yes)
+        self.create_impl(name.as_bytes(), InodeType::Dir, mode, None, ToBeRevalidated::Yes)
     }
 
     /// Creates a device inode whose dentry must be revalidated.
@@ -764,7 +765,7 @@ impl RamInode {
         mode: InodeMode,
         type_: MknodType,
     ) -> Result<Arc<dyn Inode>> {
-        self.mknod_impl(name, mode, type_, ToBeRevalidated::Yes)
+        self.mknod_impl(name.as_bytes(), mode, type_, ToBeRevalidated::Yes)
     }
 
     /// Unlinks entry `name` if `predicate` returns true for the target inode.
@@ -782,6 +783,20 @@ impl RamInode {
         if is_dot_or_dotdot(name) {
             return Err(errno!(EISDIR, "unlink . or .."));
         }
+        self.unlink_if_bytes(name.as_bytes(), predicate)
+    }
+
+    pub(in crate::fs::fs_impls) fn unlink_if_bytes<F>(
+        &self,
+        name: &[u8],
+        predicate: F,
+    ) -> Result<bool>
+    where
+        F: FnOnce(&Self) -> bool,
+    {
+        if is_dot_or_dotdot_bytes(name) {
+            return Err(errno!(EISDIR, "unlink . or .."));
+        }
         if self.typ != InodeType::Dir {
             return Err(errno!(ENOTDIR, "self is not dir"));
         }
@@ -789,7 +804,7 @@ impl RamInode {
         self.unlink_impl(name, predicate)
     }
 
-    fn unlink_impl<F>(&self, name: &str, predicate: F) -> Result<bool>
+    fn unlink_impl<F>(&self, name: &[u8], predicate: F) -> Result<bool>
     where
         F: FnOnce(&Self) -> bool,
     {
@@ -833,18 +848,32 @@ impl RamInode {
         if is_dot(name) {
             return Err(errno!(EINVAL, "rmdir on ."));
         }
-        if is_dotdot(name) {
+        self.rmdir_if_bytes(name.as_bytes(), predicate)
+    }
+
+    pub(in crate::fs::fs_impls) fn rmdir_if_bytes<F>(
+        &self,
+        name: &[u8],
+        predicate: F,
+    ) -> Result<bool>
+    where
+        F: FnOnce(&Self) -> bool,
+    {
+        if is_dot_bytes(name) {
+            return Err(errno!(EINVAL, "rmdir on ."));
+        }
+        if is_dotdot_bytes(name) {
             return Err(errno!(ENOTEMPTY, "rmdir on .."));
         }
         if self.typ != InodeType::Dir {
             return Err(errno!(ENOTDIR, "self is not dir"));
         }
 
-        let target = self.find(name)?;
+        let target = self.find_bytes(name)?;
         self.rmdir_impl(name, &target, predicate)
     }
 
-    fn rmdir_impl<F>(&self, name: &str, target: &Self, predicate: F) -> Result<bool>
+    fn rmdir_impl<F>(&self, name: &[u8], target: &Self, predicate: F) -> Result<bool>
     where
         F: FnOnce(&Self) -> bool,
     {
@@ -889,10 +918,10 @@ impl RamInode {
 
     fn create_impl(
         &self,
-        name: &str,
+        name: &[u8],
         type_: InodeType,
         mode: InodeMode,
-        symlink_target: Option<&str>,
+        symlink_target: Option<&[u8]>,
         to_be_revalidated: ToBeRevalidated,
     ) -> Result<Arc<dyn Inode>> {
         if self.typ != InodeType::Dir {
@@ -938,7 +967,7 @@ impl RamInode {
 
     fn mknod_impl(
         &self,
-        name: &str,
+        name: &[u8],
         mode: InodeMode,
         type_: MknodType,
         to_be_revalidated: ToBeRevalidated,
@@ -1191,6 +1220,16 @@ impl Inode for RamInode {
         mode: InodeMode,
         type_: MknodType,
     ) -> Result<Arc<dyn Inode>> {
+        self.mknod_impl(name.as_bytes(), mode, type_, ToBeRevalidated::No)
+    }
+
+    fn mknod_bytes(
+        &self,
+        _self_dentry: &Dentry,
+        name: &[u8],
+        mode: InodeMode,
+        type_: MknodType,
+    ) -> Result<Arc<dyn Inode>> {
         self.mknod_impl(name, mode, type_, ToBeRevalidated::No)
     }
 
@@ -1210,6 +1249,16 @@ impl Inode for RamInode {
         type_: InodeType,
         mode: InodeMode,
     ) -> Result<Arc<dyn Inode>> {
+        self.create_impl(name.as_bytes(), type_, mode, None, ToBeRevalidated::No)
+    }
+
+    fn create_bytes(
+        &self,
+        _self_dentry: &Dentry,
+        name: &[u8],
+        type_: InodeType,
+        mode: InodeMode,
+    ) -> Result<Arc<dyn Inode>> {
         self.create_impl(name, type_, mode, None, ToBeRevalidated::No)
     }
 
@@ -1218,6 +1267,22 @@ impl Inode for RamInode {
         _self_dentry: &Dentry,
         name: &str,
         target: &str,
+        mode: InodeMode,
+    ) -> Result<Arc<dyn Inode>> {
+        self.create_impl(
+            name.as_bytes(),
+            InodeType::SymLink,
+            mode,
+            Some(target.as_bytes()),
+            ToBeRevalidated::No,
+        )
+    }
+
+    fn create_symlink_bytes(
+        &self,
+        _self_dentry: &Dentry,
+        name: &[u8],
+        target: &[u8],
         mode: InodeMode,
     ) -> Result<Arc<dyn Inode>> {
         self.create_impl(
@@ -1251,7 +1316,11 @@ impl Inode for RamInode {
         ))
     }
 
-    fn link(&self, _self_dentry: &Dentry, old_dentry: &Dentry, name: &str) -> Result<()> {
+    fn link(&self, self_dentry: &Dentry, old_dentry: &Dentry, name: &str) -> Result<()> {
+        self.link_bytes(self_dentry, old_dentry, name.as_bytes())
+    }
+
+    fn link_bytes(&self, _self_dentry: &Dentry, old_dentry: &Dentry, name: &[u8]) -> Result<()> {
         if self.typ != InodeType::Dir {
             return Err(errno!(ENOTDIR, "self is not dir"));
         }
@@ -1289,7 +1358,7 @@ impl Inode for RamInode {
 
     fn unlink(&self, child_dentry: &Dentry) -> Result<()> {
         let target = child_dentry.inode().downcast_ref::<RamInode>().unwrap();
-        let name = child_dentry.name();
+        let name = child_dentry.name_bytes();
         if !self.unlink_impl(&name, |entry| entry.ino == target.ino)? {
             return Err(errno!(ENOENT));
         }
@@ -1298,13 +1367,18 @@ impl Inode for RamInode {
 
     fn rmdir(&self, child_dentry: &Dentry) -> Result<()> {
         let target = child_dentry.inode().downcast_ref::<RamInode>().unwrap();
-        let name = child_dentry.name();
+        let name = child_dentry.name_bytes();
         self.rmdir_impl(&name, target, |_| true)?;
         Ok(())
     }
 
     fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         let inode = self.find(name)?;
+        Ok(inode as _)
+    }
+
+    fn lookup_bytes(&self, name: &[u8]) -> Result<Arc<dyn Inode>> {
+        let inode = self.find_bytes(name)?;
         Ok(inode as _)
     }
 
@@ -1316,7 +1390,24 @@ impl Inode for RamInode {
         _replaced_inode: Option<&Arc<dyn Inode>>,
         mode: RenameMode,
     ) -> Result<()> {
-        let old_name = old_child_dentry.name();
+        self.rename_bytes(
+            old_child_dentry,
+            new_dir_dentry,
+            new_name.as_bytes(),
+            _replaced_inode,
+            mode,
+        )
+    }
+
+    fn rename_bytes(
+        &self,
+        old_child_dentry: &Dentry,
+        new_dir_dentry: &Dentry,
+        new_name: &[u8],
+        _replaced_inode: Option<&Arc<dyn Inode>>,
+        mode: RenameMode,
+    ) -> Result<()> {
+        let old_name = old_child_dentry.name_bytes();
         // Perform necessary checks to ensure that `dst_inode` can be replaced by `src_inode`.
         let check_replace_inode =
             |src_inode: &Arc<RamInode>, dst_inode: &Arc<RamInode>| -> Result<()> {
@@ -1370,7 +1461,7 @@ impl Inode for RamInode {
                 self_dir.remove_entry(dst_idx);
                 self_dir.substitute_entry(
                     src_idx,
-                    (CStr256::from_str_truncated(new_name), src_inode.clone()),
+                    (new_name.to_vec(), src_inode.clone()),
                 );
                 drop(self_dir);
 
@@ -1381,7 +1472,7 @@ impl Inode for RamInode {
             } else {
                 self_dir.substitute_entry(
                     src_idx,
-                    (CStr256::from_str_truncated(new_name), src_inode.clone()),
+                    (new_name.to_vec(), src_inode.clone()),
                 );
                 drop(self_dir);
 

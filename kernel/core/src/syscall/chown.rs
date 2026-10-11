@@ -72,9 +72,11 @@ pub(super) fn sys_fchownat(
     let gid = to_optional_id(gid, Gid::new)?;
 
     let path = {
-        let path_name = path_name.to_string_lossy();
-        let fs_path =
-            FsPath::from_fd_at(dirfd, &path_name, EmptyPathStr::AllowIfFlag(flags.bits()))?;
+        let fs_path = FsPath::from_fd_at_bytes(
+            dirfd,
+            path_name.to_bytes(),
+            EmptyPathStr::AllowIfFlag(flags.bits()),
+        )?;
 
         let fs_ref = ctx.thread_local.borrow_fs();
         let path_resolver = fs_ref.resolver().read();
