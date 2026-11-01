@@ -53,10 +53,15 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         }
 
         let nr_to_alloc = COUNT * 2 / 3;
-        let allocated = super::pools::alloc(
+        let Some(allocated) = super::pools::alloc(
             guard,
             Layout::from_size_align(nr_to_alloc * Self::segment_size(), PAGE_SIZE).unwrap(),
-        )?;
+        ) else {
+            return super::pools::alloc(
+                guard,
+                Layout::from_size_align(Self::segment_size(), PAGE_SIZE).unwrap(),
+            );
+        };
 
         // `rev()` keeps future allocations contiguous from lower to higher
         // addresses. This increases the likelihood that they can be merged,
