@@ -21,6 +21,7 @@ pub(super) struct IpOptionSet {
     ttl: IpTtl,
     hdrincl: bool,
     recverr: bool,
+    pktinfo: bool,
 }
 
 const DEFAULT_TTL: u8 = 64;
@@ -33,6 +34,7 @@ impl IpOptionSet {
             ttl: IpTtl(None),
             hdrincl: false,
             recverr: false,
+            pktinfo: false,
         }
     }
 
@@ -42,6 +44,7 @@ impl IpOptionSet {
             ttl: IpTtl(None),
             hdrincl: false,
             recverr: false,
+            pktinfo: false,
         }
     }
 
@@ -62,6 +65,10 @@ impl IpOptionSet {
             ip_recverr @ Recverr => {
                 let recverr = self.recverr();
                 ip_recverr.set(recverr);
+            }
+            ip_pktinfo @ Pktinfo => {
+                let pktinfo = self.pktinfo();
+                ip_pktinfo.set(pktinfo);
             }
             _ => return Err(errno!(ENOPROTOOPT, "the socket option is unknown")),
         });
@@ -95,11 +102,16 @@ impl IpOptionSet {
                 let recverr = ip_recverr.get().unwrap();
                 self.set_recverr(*recverr);
             }
-            _ =>
+            ip_pktinfo @ Pktinfo => {
+                let pktinfo = ip_pktinfo.get().unwrap();
+                self.set_pktinfo(*pktinfo);
+            }
+            _ => {
                 return Err(errno!(
                     ENOPROTOOPT,
                     "the socket option to be set is unknown"
-                )),
+                ));
+            }
         });
 
         Ok(NeedIfacePoll::FALSE)
@@ -111,6 +123,7 @@ impl_socket_options!(
     pub(crate) struct Ttl(IpTtl);
     pub(crate) struct Hdrincl(bool);
     pub(crate) struct Recverr(bool);
+    pub(crate) struct Pktinfo(bool);
 );
 
 #[derive(Clone, Copy, Debug)]
