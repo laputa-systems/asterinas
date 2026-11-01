@@ -23,6 +23,7 @@ set -e
 ./vt/vt_ioctl
 ./vt/vt_waitactive
 
+./block_uevent
 ./devtmpfs_mode
 ./evdev
 ./framebuffer
