@@ -13,7 +13,10 @@ use aster_bigtcp::{
     wire::{Ipv4Cidr, Ipv6Cidr},
 };
 
-use super::util::{self, ResponseMode};
+use super::{
+    notify::RequestOrigin,
+    util::{self, ResponseMode},
+};
 use crate::{
     net::{
         iface::{
@@ -207,6 +210,7 @@ pub(super) fn do_new_addr(request_segment: &AddrSegment) -> Result<()> {
             label,
             scope: body.scope,
         },
+        RequestOrigin::request(request_segment.header()),
     )
 }
 
@@ -245,7 +249,11 @@ pub(super) fn do_del_addr(request_segment: &AddrSegment) -> Result<()> {
         }),
     };
 
-    config::remove_ipv4_address(iface, &selector)
+    config::remove_ipv4_address(
+        iface,
+        &selector,
+        RequestOrigin::request(request_segment.header()),
+    )
 }
 
 fn require_ipv4(body: &CIfaddrMsg) -> Result<()> {
@@ -280,7 +288,7 @@ fn iface_to_new_addrs(
         addr_segments.extend(
             ipv4_addresses(iface)
                 .iter()
-                .map(|address| ipv4_to_new_addr(request_header, address)),
+                .map(|address| ipv4_to_addr(request_header, CSegmentType::NEWADDR, address)),
         );
     }
 
@@ -291,17 +299,21 @@ fn iface_to_new_addrs(
     addr_segments
 }
 
-fn new_addr_header(request_header: &CMsgSegHdr) -> CMsgSegHdr {
+fn addr_header(request_header: &CMsgSegHdr, type_: CSegmentType) -> CMsgSegHdr {
     CMsgSegHdr {
         len: 0,
-        type_: CSegmentType::NEWADDR as _,
+        type_: type_ as _,
         flags: SegHdrCommonFlags::empty().bits(),
         seq: request_header.seq,
         pid: request_header.pid,
     }
 }
 
-fn ipv4_to_new_addr(request_header: &CMsgSegHdr, address: &InterfaceAddress) -> AddrSegment {
+pub(super) fn ipv4_to_addr(
+    request_header: &CMsgSegHdr,
+    type_: CSegmentType,
+    address: &InterfaceAddress,
+) -> AddrSegment {
     let mut flags = AddrMessageFlags::PERMANENT;
     if address.is_secondary() {
         flags |= AddrMessageFlags::SECONDARY;
@@ -340,7 +352,7 @@ fn ipv4_to_new_addr(request_header: &CMsgSegHdr, address: &InterfaceAddress) -> 
         }),
     ]);
 
-    AddrSegment::new(new_addr_header(request_header), body, attrs)
+    AddrSegment::new(addr_header(request_header, type_), body, attrs)
 }
 
 fn ipv6_to_new_addr(request_header: &CMsgSegHdr, iface: &Arc<Iface>, cidr: Ipv6Cidr) -> AddrSegment {
@@ -384,5 +396,5 @@ fn ipv6_to_new_addr(request_header: &CMsgSegHdr, iface: &Arc<Iface>, cidr: Ipv6C
         attrs.push(AddrAttr::Protocol(AddrProtocol::KernelLoopback));
     }
 
-    AddrSegment::new(new_addr_header(request_header), body, attrs)
+    AddrSegment::new(addr_header(request_header, CSegmentType::NEWADDR), body, attrs)
 }
