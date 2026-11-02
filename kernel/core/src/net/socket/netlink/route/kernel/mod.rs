@@ -17,6 +17,8 @@ use crate::{
 
 mod addr;
 mod link;
+mod route;
+mod rule;
 mod util;
 
 pub(super) struct NetlinkRouteKernelSocket {
@@ -46,6 +48,12 @@ impl NetlinkRouteKernelSocket {
             }
             RtnlSegment::GetAddr(request_segment) => {
                 addr::do_get_addr(request_segment, strict_check)
+            }
+            RtnlSegment::GetRoute(request_segment) => {
+                route::do_get_route(request_segment, strict_check)
+            }
+            RtnlSegment::GetRule(request_segment) => {
+                rule::do_get_rule(request_segment, strict_check)
             }
             _ => Err(errno!(
                 EOPNOTSUPP,

@@ -14,11 +14,15 @@ pub(super) use attr::{
     AddrAttrClass, LinkAttrClass,
     addr::{AddrAttr, AddrProtocol},
     link::LinkAttr,
+    route::RouteAttr,
+    rule::RuleAttr,
 };
 pub(super) use segment::{
     RtnlSegment,
     addr::{AddrMessageFlags, AddrSegment, CIfaddrMsg, RtScope},
     link::{CIfinfoMsg, LinkSegment},
+    route::{RouteSegment, RouteSegmentBody},
+    rule::{RuleSegment, RuleSegmentBody},
 };
 
 use crate::net::socket::netlink::message::Message;
