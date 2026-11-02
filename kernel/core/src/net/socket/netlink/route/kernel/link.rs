@@ -2,7 +2,10 @@
 
 //! Handle link-related requests.
 
-use aster_bigtcp::wire::EthernetAddress;
+use aster_bigtcp::{
+    iface::{InterfaceFlags, InterfaceType},
+    wire::EthernetAddress,
+};
 
 use super::util::{self, ResponseMode};
 use crate::{
@@ -10,7 +13,7 @@ use crate::{
         iface::{DEFAULT_TX_QUEUE_LEN, Iface, iter_all_ifaces},
         socket::netlink::{
             message::{CMsgSegHdr, CSegmentType, GetRequestFlags, SegHdrCommonFlags},
-            route::message::{CIfinfoMsg, LinkAttr, LinkAttrClass, LinkSegment, RtnlSegment},
+            route::message::{CIfinfoMsg, LinkAttr, LinkAttrClass, LinkSegment, OperState, RtnlSegment},
         },
     },
     prelude::*,
@@ -151,6 +154,17 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
     Ok(())
 }
 
+/// Linux reports a loopback interface as `UNKNOWN` while it is up, as it has no carrier to track.
+fn oper_state(iface: &Arc<Iface>) -> OperState {
+    if !iface.flags().contains(InterfaceFlags::UP) {
+        OperState::Down
+    } else if iface.type_() == InterfaceType::LOOPBACK {
+        OperState::Unknown
+    } else {
+        OperState::Up
+    }
+}
+
 fn iface_to_new_link(request_header: &CMsgSegHdr, iface: &Arc<Iface>) -> LinkSegment {
     let header = CMsgSegHdr {
         len: 0,
@@ -177,6 +191,7 @@ fn iface_to_new_link(request_header: &CMsgSegHdr, iface: &Arc<Iface>) -> LinkSeg
     attrs.extend([
         LinkAttr::Name(*iface.name()),
         LinkAttr::TxqLen(DEFAULT_TX_QUEUE_LEN),
+        LinkAttr::OperState(oper_state(iface)),
         LinkAttr::Mtu(iface.mtu() as u32),
     ]);
 

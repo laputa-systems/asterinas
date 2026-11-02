@@ -13,7 +13,7 @@ mod segment;
 pub(super) use attr::{
     AddrAttrClass, LinkAttrClass,
     addr::{AddrAttr, AddrProtocol},
-    link::LinkAttr,
+    link::{LinkAttr, OperState},
     route::RouteAttr,
     rule::RuleAttr,
 };

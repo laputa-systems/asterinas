@@ -3,6 +3,7 @@
 #![short_vis_path::add(route)]
 
 use aster_bigtcp::{iface::InterfaceName, wire::EthernetAddress};
+use zerocopy::Immutable;
 
 use crate::{
     net::socket::netlink::message::{Attribute, CAttrHeader, ContinueAttrRead},
@@ -85,6 +86,17 @@ pub(in route) enum LinkAttrClass {
     PARENT_DEV_BUS_NAME = 57,
 }
 
+/// The RFC 2863 operational state of a link.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if.h>.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Immutable, IntoBytes)]
+pub(crate) enum OperState {
+    Unknown = 0,
+    Down = 2,
+    Up = 6,
+}
+
 #[derive(Debug)]
 pub(crate) enum LinkAttr {
     // FIXME: Linux link-layer addresses have device-specific lengths.
@@ -95,6 +107,7 @@ pub(crate) enum LinkAttr {
     Name(InterfaceName),
     Mtu(u32),
     TxqLen(u32),
+    OperState(OperState),
     LinkMode(u8),
     ExtMask(RtExtFilter),
 }
@@ -107,6 +120,7 @@ impl LinkAttr {
             LinkAttr::Name(_) => LinkAttrClass::IFNAME,
             LinkAttr::Mtu(_) => LinkAttrClass::MTU,
             LinkAttr::TxqLen(_) => LinkAttrClass::TXQLEN,
+            LinkAttr::OperState(_) => LinkAttrClass::OPERSTATE,
             LinkAttr::LinkMode(_) => LinkAttrClass::LINKMODE,
             LinkAttr::ExtMask(_) => LinkAttrClass::EXT_MASK,
         }
@@ -125,6 +139,7 @@ impl Attribute for LinkAttr {
             LinkAttr::Name(name) => name.as_bytes_with_nul(),
             LinkAttr::Mtu(mtu) => mtu.as_bytes(),
             LinkAttr::TxqLen(txq_len) => txq_len.as_bytes(),
+            LinkAttr::OperState(state) => state.as_bytes(),
             LinkAttr::LinkMode(link_mode) => link_mode.as_bytes(),
             LinkAttr::ExtMask(ext_filter) => ext_filter.as_bytes(),
         }
