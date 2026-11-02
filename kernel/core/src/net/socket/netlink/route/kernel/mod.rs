@@ -9,7 +9,7 @@ use super::message::{RtnlMessage, RtnlSegment};
 use crate::{
     net::socket::netlink::{
         addr::PortNum,
-        message::{ErrorSegment, ProtocolSegment},
+        message::{CMsgSegHdr, ErrorSegment, ProtocolSegment, SegHdrCommonFlags},
         table::{NetlinkRouteProtocol, SupportedNetlinkProtocol},
     },
     prelude::*,
@@ -48,6 +48,12 @@ impl NetlinkRouteKernelSocket {
             }
             RtnlSegment::GetAddr(request_segment) => {
                 addr::do_get_addr(request_segment, strict_check)
+            }
+            RtnlSegment::NewAddr(request_segment) => {
+                addr::do_new_addr(request_segment).map(|()| acknowledgement(request_header))
+            }
+            RtnlSegment::DelAddr(request_segment) => {
+                addr::do_del_addr(request_segment).map(|()| acknowledgement(request_header))
             }
             RtnlSegment::GetRoute(request_segment) => {
                 route::do_get_route(request_segment, strict_check)
@@ -108,6 +114,19 @@ impl NetlinkRouteKernelSocket {
         debug!("netlink route error: {:?}", response);
 
         NetlinkRouteProtocol::unicast(dst_port, response).unwrap();
+    }
+}
+
+/// The reply to a request that succeeded: Linux acknowledges it only if the request asked for it.
+fn acknowledgement(request_header: &CMsgSegHdr) -> Vec<RtnlSegment> {
+    if SegHdrCommonFlags::from_bits_truncate(request_header.flags).contains(SegHdrCommonFlags::ACK)
+    {
+        vec![RtnlSegment::Error(ErrorSegment::new_from_request(
+            request_header,
+            None,
+        ))]
+    } else {
+        Vec::new()
     }
 }
 

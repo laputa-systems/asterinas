@@ -7,7 +7,11 @@ use aster_bigtcp::{
 };
 
 use crate::{
-    net::{iface::Iface, route, socket::util::check_port_privilege},
+    net::{
+        iface::{Iface, config},
+        route,
+        socket::util::check_port_privilege,
+    },
     prelude::*,
 };
 
@@ -43,10 +47,14 @@ pub(super) fn get_ephemeral_endpoint(remote_endpoint: &IpEndpoint) -> Result<IpE
     let iface = route::lookup_iface(route_dst)?;
 
     let source = match route_dst {
-        IpAddress::Ipv4(_) => iface
-            .ipv4_cidr()
-            .map(|cidr| IpAddress::Ipv4(cidr.address()))
-            .ok_or_else(|| errno!(EADDRNOTAVAIL, "the route output iface has no IPv4 address",))?,
+        IpAddress::Ipv4(_) => config::primary_ipv4_address(&iface)
+            .map(IpAddress::Ipv4)
+            .ok_or_else(|| {
+                errno!(
+                    EADDRNOTAVAIL,
+                    "the route output iface has no IPv4 address",
+                )
+            })?,
         IpAddress::Ipv6(_) => iface
             .ipv6_cidr()
             .map(|cidr| IpAddress::Ipv6(cidr.address()))

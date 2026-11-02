@@ -56,10 +56,30 @@ pub(crate) enum AddrProtocol {
     KernelLinkLocal = 3,
 }
 
+/// `struct ifa_cacheinfo` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if_addr.h>.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Immutable, IntoBytes)]
+pub(crate) struct AddrCacheInfo {
+    /// The preferred lifetime in seconds, or `u32::MAX` for forever.
+    pub preferred: u32,
+    /// The valid lifetime in seconds, or `u32::MAX` for forever.
+    pub valid: u32,
+    /// The creation time in hundredths of a second since boot.
+    pub created: u32,
+    /// The update time in hundredths of a second since boot.
+    pub updated: u32,
+}
+
+/// The lifetime of an address that does not expire.
+pub(crate) const INFINITE_LIFETIME: u32 = u32::MAX;
+
 #[derive(Debug)]
 pub(crate) enum AddrAttr {
     Address(IpAddr),
     Broadcast(Ipv4Addr),
+    CacheInfo(AddrCacheInfo),
     Flags(AddrMessageFlags),
     Label(CString),
     Local(IpAddr),
@@ -71,12 +91,40 @@ impl AddrAttr {
         match self {
             AddrAttr::Address(_) => AddrAttrClass::ADDRESS,
             AddrAttr::Broadcast(_) => AddrAttrClass::BROADCAST,
+            AddrAttr::CacheInfo(_) => AddrAttrClass::CACHEINFO,
             AddrAttr::Flags(_) => AddrAttrClass::FLAGS,
             AddrAttr::Label(_) => AddrAttrClass::LABEL,
             AddrAttr::Local(_) => AddrAttrClass::LOCAL,
             AddrAttr::Protocol(_) => AddrAttrClass::PROTO,
         }
     }
+}
+
+fn invalid_attr(
+    reader: &mut dyn MultiRead,
+    payload_len: usize,
+    errno: Errno,
+) -> Result<ContinueAttrRead<AddrAttr>> {
+    reader.skip_some(payload_len);
+    Ok(ContinueAttrRead::SkippedInvalid(errno!(
+        errno,
+        "the address attribute is invalid"
+    )))
+}
+
+fn read_ip_addr(payload_len: usize, reader: &mut dyn MultiRead) -> Result<Option<IpAddr>> {
+    Ok(match payload_len {
+        4 => Some(IpAddr::V4(Ipv4Addr::from(
+            reader.read_val_opt::<[u8; 4]>()?.unwrap(),
+        ))),
+        16 => Some(IpAddr::V6(core::net::Ipv6Addr::from(
+            reader.read_val_opt::<[u8; 16]>()?.unwrap(),
+        ))),
+        _ => {
+            reader.skip_some(payload_len);
+            None
+        }
+    })
 }
 
 impl Attribute for AddrAttr {
@@ -88,6 +136,7 @@ impl Attribute for AddrAttr {
         match self {
             AddrAttr::Address(address) => address.as_octets(),
             AddrAttr::Broadcast(address) => address.as_octets(),
+            AddrAttr::CacheInfo(info) => info.as_bytes(),
             AddrAttr::Flags(flags) => flags.as_bytes(),
             AddrAttr::Label(label) => label.as_bytes_with_nul(),
             AddrAttr::Local(address) => address.as_octets(),
@@ -100,36 +149,94 @@ impl Attribute for AddrAttr {
         Self: Sized,
     {
         let payload_len = header.payload_len();
-        reader.skip_some(payload_len);
-
-        // We currently support only GETADDR dump requests.
-        // Attributes are ignored unless strict checking is enabled,
-        // but we still need to inspect them to reject malformed or unsupported attributes
-        // when strict checking is enabled.
-        // TODO: Parse and validate the remaining attributes.
 
         let Ok(class) = AddrAttrClass::try_from(header.type_()) else {
             // Unknown attributes should be ignored.
             // Reference: <https://docs.kernel.org/userspace-api/netlink/intro.html#unknown-attributes>.
+            reader.skip_some(payload_len);
             return Ok(ContinueAttrRead::SkippedUnsupported);
         };
 
-        match (class, payload_len) {
-            (AddrAttrClass::TARGET_NETNSID, 4) => {
-                // TODO: Parse the network namespace ID once we support network namespaces.
-                Ok(ContinueAttrRead::SkippedUnsupported)
+        let attr = match class {
+            AddrAttrClass::ADDRESS | AddrAttrClass::LOCAL => {
+                let Some(address) = read_ip_addr(payload_len, reader)? else {
+                    return Ok(ContinueAttrRead::SkippedInvalid(errno!(
+                        EINVAL,
+                        "the address attribute is invalid",
+                    )));
+                };
+                if class == AddrAttrClass::ADDRESS {
+                    Self::Address(address)
+                } else {
+                    Self::Local(address)
+                }
             }
-            (AddrAttrClass::TARGET_NETNSID, _) => {
-                warn!("address attribute `{:?}` contains invalid payload", class);
-                Ok(ContinueAttrRead::SkippedInvalid(errno!(
-                    ERANGE,
-                    "the address attribute is invalid",
-                )))
+            AddrAttrClass::BROADCAST if payload_len == 4 => {
+                Self::Broadcast(Ipv4Addr::from(reader.read_val_opt::<[u8; 4]>()?.unwrap()))
             }
-            _ => {
-                warn!("address attribute `{:?}` is not supported", class);
-                Ok(ContinueAttrRead::SkippedUnsupported)
+            AddrAttrClass::LABEL if (1..=16).contains(&payload_len) => {
+                let mut label = [0u8; 16];
+                let mut writer = VmWriter::from(&mut label[..payload_len]);
+                reader.read(&mut writer)?;
+                let text_len = label[..payload_len]
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(payload_len);
+                if text_len == 16 {
+                    return Ok(ContinueAttrRead::SkippedInvalid(errno!(
+                        EINVAL,
+                        "the address label is too long",
+                    )));
+                }
+                let Ok(label) = CString::new(&label[..text_len]) else {
+                    return Ok(ContinueAttrRead::SkippedInvalid(errno!(
+                        EINVAL,
+                        "the address label is invalid",
+                    )));
+                };
+                Self::Label(label)
             }
-        }
+            AddrAttrClass::FLAGS if payload_len == 4 => {
+                let bits = reader.read_val_opt::<u32>()?.unwrap();
+                let Some(flags) = AddrMessageFlags::from_bits(bits) else {
+                    return Ok(ContinueAttrRead::SkippedInvalid(errno!(
+                        EINVAL,
+                        "the address flags are invalid",
+                    )));
+                };
+                Self::Flags(flags)
+            }
+            AddrAttrClass::CACHEINFO if payload_len == size_of::<AddrCacheInfo>() => {
+                let [preferred, valid, created, updated] =
+                    reader.read_val_opt::<[u32; 4]>()?.unwrap();
+                Self::CacheInfo(AddrCacheInfo {
+                    preferred,
+                    valid,
+                    created,
+                    updated,
+                })
+            }
+            AddrAttrClass::ADDRESS
+            | AddrAttrClass::LOCAL
+            | AddrAttrClass::BROADCAST
+            | AddrAttrClass::LABEL
+            | AddrAttrClass::FLAGS
+            | AddrAttrClass::CACHEINFO => {
+                return invalid_attr(reader, payload_len, EINVAL);
+            }
+            AddrAttrClass::UNSPEC => {
+                reader.skip_some(payload_len);
+                return Ok(ContinueAttrRead::SkippedUnsupported);
+            }
+            AddrAttrClass::ANYCAST
+            | AddrAttrClass::MULTICAST
+            | AddrAttrClass::RT_PRIORITY
+            | AddrAttrClass::TARGET_NETNSID
+            | AddrAttrClass::PROTO => {
+                return invalid_attr(reader, payload_len, EOPNOTSUPP);
+            }
+        };
+
+        Ok(ContinueAttrRead::Parsed(attr))
     }
 }
