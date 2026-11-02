@@ -108,6 +108,7 @@ pub(crate) enum LinkAttr {
     Mtu(u32),
     TxqLen(u32),
     OperState(OperState),
+    Carrier(u8),
     LinkMode(u8),
     ExtMask(RtExtFilter),
 }
@@ -121,6 +122,7 @@ impl LinkAttr {
             LinkAttr::Mtu(_) => LinkAttrClass::MTU,
             LinkAttr::TxqLen(_) => LinkAttrClass::TXQLEN,
             LinkAttr::OperState(_) => LinkAttrClass::OPERSTATE,
+            LinkAttr::Carrier(_) => LinkAttrClass::CARRIER,
             LinkAttr::LinkMode(_) => LinkAttrClass::LINKMODE,
             LinkAttr::ExtMask(_) => LinkAttrClass::EXT_MASK,
         }
@@ -140,6 +142,7 @@ impl Attribute for LinkAttr {
             LinkAttr::Mtu(mtu) => mtu.as_bytes(),
             LinkAttr::TxqLen(txq_len) => txq_len.as_bytes(),
             LinkAttr::OperState(state) => state.as_bytes(),
+            LinkAttr::Carrier(carrier) => carrier.as_bytes(),
             LinkAttr::LinkMode(link_mode) => link_mode.as_bytes(),
             LinkAttr::ExtMask(ext_filter) => ext_filter.as_bytes(),
         }
