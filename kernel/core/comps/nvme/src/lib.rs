@@ -39,12 +39,13 @@ static NVME_BLOCK_MAJOR_ID: Once<MajorIdOwner> = Once::new();
 
 #[init_component]
 fn nvme_init() -> Result<(), ComponentInitError> {
-    let major = aster_block::allocate_major().map_err(|_| ComponentInitError::Unknown)?;
-    NVME_BLOCK_MAJOR_ID.call_once(|| major);
-
     transport::init();
 
     while let Some(transport) = transport::pci::pop_device_transport() {
+        if NVME_BLOCK_MAJOR_ID.get().is_none() {
+            let major = aster_block::allocate_major().map_err(|_| ComponentInitError::Unknown)?;
+            NVME_BLOCK_MAJOR_ID.call_once(|| major);
+        }
         let res = NvmeBlockDevice::init(transport);
         if res.is_err() {
             ostd::error!("Device initialization error: {:?}", res);
