@@ -11,6 +11,7 @@ use crate::{
         netlink::{
             NetlinkRouteSocket, NetlinkUeventSocket, StandardNetlinkProtocol, is_valid_protocol,
         },
+        packet::PacketSocket,
         unix::{UnixDatagramSocket, UnixStreamSocket},
         vsock::VsockStreamSocket,
     },
@@ -94,6 +95,9 @@ pub(super) fn sys_socket(
                     return Err(errno!(EAFNOSUPPORT, "invalid netlink family"));
                 }
             }
+        }
+        (CSocketAddrFamily::AF_PACKET, _) => {
+            PacketSocket::create(is_nonblocking, sock_type, u16::from_be(protocol as u16))? as Arc<dyn FileLike>
         }
         (CSocketAddrFamily::AF_VSOCK, SockType::SOCK_STREAM) => {
             VsockStreamSocket::new(is_nonblocking)? as Arc<dyn FileLike>
