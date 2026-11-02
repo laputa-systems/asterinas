@@ -38,7 +38,7 @@ pub(super) fn do_get_link(
             FilterBy::Name(name) => *name == iface.name().as_cstr(),
             FilterBy::Dump => true,
         })
-        .map(|iface| iface_to_new_link(request_segment.header(), iface))
+        .map(|iface| iface_to_new_link(request_segment.header(), iface, 0))
         .map(RtnlSegment::NewLink)
         .collect();
 
@@ -165,7 +165,11 @@ fn oper_state(iface: &Arc<Iface>) -> OperState {
     }
 }
 
-fn iface_to_new_link(request_header: &CMsgSegHdr, iface: &Arc<Iface>) -> LinkSegment {
+pub(super) fn iface_to_new_link(
+    request_header: &CMsgSegHdr,
+    iface: &Arc<Iface>,
+    change: u32,
+) -> LinkSegment {
     let header = CMsgSegHdr {
         len: 0,
         type_: CSegmentType::NEWLINK as _,
@@ -180,7 +184,7 @@ fn iface_to_new_link(request_header: &CMsgSegHdr, iface: &Arc<Iface>) -> LinkSeg
         type_: iface.type_() as u16,
         index: iface.index(),
         flags: iface.flags().bits(),
-        change: 0,
+        change,
     };
 
     // Linux may report dozens of attributes in a fixed order.
