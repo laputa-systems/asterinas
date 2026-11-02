@@ -58,6 +58,12 @@ impl NetlinkRouteKernelSocket {
             RtnlSegment::GetRoute(request_segment) => {
                 route::do_get_route(request_segment, strict_check)
             }
+            RtnlSegment::NewRoute(request_segment) => {
+                route::do_new_route(request_segment).map(|()| acknowledgement(request_header))
+            }
+            RtnlSegment::DelRoute(request_segment) => {
+                route::do_del_route(request_segment).map(|()| acknowledgement(request_header))
+            }
             RtnlSegment::GetRule(request_segment) => {
                 rule::do_get_rule(request_segment, strict_check)
             }
