@@ -7,7 +7,7 @@ use crate::{
         file_table::{FdFlags, FileTableInsert},
     },
     net::socket::{
-        ip::{DatagramSocket, IpAddressFamily, StreamSocket},
+        ip::{DatagramSocket, IpAddressFamily, RawIpSocket, StreamSocket},
         netlink::{
             NetlinkRouteSocket, NetlinkUeventSocket, StandardNetlinkProtocol, is_valid_protocol,
         },
@@ -58,6 +58,9 @@ pub(super) fn sys_socket(
                 }
                 _ => return Err(errno!(EAFNOSUPPORT, "unsupported protocol")),
             }
+        }
+        (CSocketAddrFamily::AF_INET, SockType::SOCK_RAW) => {
+            RawIpSocket::create(is_nonblocking, protocol)? as Arc<dyn FileLike>
         }
         (CSocketAddrFamily::AF_INET, SockType::SOCK_DGRAM) => {
             let protocol = Protocol::try_from(protocol)?;
