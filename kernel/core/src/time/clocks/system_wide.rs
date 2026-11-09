@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 use core::time::Duration;
 
-use aster_time::{read_monotonic_time, read_start_time, read_system_time};
+use aster_time::{read_monotonic_time, read_raw_monotonic_time, read_start_time, read_system_time};
 use ostd::{cpu::PinCurrentCpu, cpu_local, sync::SpinLock, task::disable_preempt, timer::Jiffies};
 use paste::paste;
 use spin::Once;
@@ -100,10 +100,8 @@ impl MonotonicCoarseClock {
     }
 }
 
-/// A clock that provides raw monotonic time that is not influenced by NTP corrections.
-///
-/// Note: Currently, we have not implement NTP corrections, so we treat this clock as the
-/// [`MonotonicClock`].
+/// `MonotonicRawClock` provides raw monotonic time that is not influenced by
+/// NTP corrections.
 pub(crate) struct MonotonicRawClock {
     _private: (),
 }
@@ -172,7 +170,7 @@ impl Clock for MonotonicCoarseClock {
 
 impl Clock for MonotonicRawClock {
     fn read_time(&self) -> Duration {
-        read_monotonic_time()
+        read_raw_monotonic_time()
     }
 }
 
