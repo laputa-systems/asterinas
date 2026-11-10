@@ -39,7 +39,7 @@ pub(super) mod rule;
 
 use addr::AddrSegment;
 use addr::CIfaddrMsg;
-use link::LinkSegment;
+use link::{CIfinfoMsg, LinkSegment};
 use route::{CRtMsg, RouteSegment};
 use rule::{CFibRuleHdr, RuleSegment};
 
@@ -119,6 +119,7 @@ impl ProtocolSegment for RtnlSegment {
         // Only a request that reads data may have the shorter legacy body. A request that changes
         // state needs the full body, as Linux validates it against the full body size.
         let required_body_len = match CSegmentType::try_from(header.type_) {
+            Ok(CSegmentType::NEWLINK) => size_of::<CIfinfoMsg>(),
             Ok(CSegmentType::NEWADDR | CSegmentType::DELADDR) => size_of::<CIfaddrMsg>(),
             Ok(CSegmentType::NEWROUTE | CSegmentType::DELROUTE) => size_of::<CRtMsg>(),
             Ok(CSegmentType::NEWRULE | CSegmentType::DELRULE) => size_of::<CFibRuleHdr>(),
@@ -135,6 +136,9 @@ impl ProtocolSegment for RtnlSegment {
                     Errno::EINVAL,
                     "the message body is too small",
                 )
+            }
+            Ok(CSegmentType::NEWLINK) => {
+                LinkSegment::read_from(&header, reader)?.map(RtnlSegment::NewLink)
             }
             Ok(CSegmentType::GETLINK) => {
                 LinkSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::GetLink)
