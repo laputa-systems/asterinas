@@ -591,7 +591,7 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
 
     /// Reads the target of a symbolic link.
     fn read_link(&self) -> Result<SymbolicLink> {
-        Err(errno!(EISDIR))
+        Err(errno!(EINVAL))
     }
 
     /// Flushes inode data and metadata according to the requested synchronization mode.
