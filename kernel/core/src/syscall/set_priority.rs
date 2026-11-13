@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use core::sync::atomic::Ordering;
-
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{
-        Process, ResourceType::RLIMIT_NICE, UserNamespace, credentials::capabilities::CapSet,
-        posix_thread::AsPosixThread,
-    },
+    process::{ResourceType::RLIMIT_NICE, UserNamespace, credentials::capabilities::CapSet, posix_thread::AsPosixThread},
     sched::{Nice, SchedPolicy, UserFairPolicy},
     security::lsm::hooks as lsm_hooks,
     syscall::get_priority::{PriorityTarget, get_processes},
@@ -34,71 +29,42 @@ pub(super) fn sys_set_priority(
     );
 
     let processes = get_processes(prio_target)?;
-    let mut error = None;
     for process in processes.iter() {
-        if let Err(err) = set_priority_one(new_nice, process, ctx) {
-            error = Some(err);
+        let thread = process.main_thread();
+        let same_owner = {
+            let caller = ctx.posix_thread.credentials();
+            let target = thread.as_posix_thread().unwrap().credentials();
+            caller.euid() == target.ruid() || caller.euid() == target.euid()
+        };
+        if !same_owner {
+            let namespace = process.user_ns().lock().clone();
+            lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
+                namespace.as_ref(),
+                ctx.posix_thread,
+                CapSet::SYS_NICE,
+            ))?;
         }
-    }
-
-    if let Some(err) = error {
-        return Err(err);
+        let privileged = lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
+            UserNamespace::get_init_singleton().as_ref(),
+            ctx.posix_thread,
+            CapSet::SYS_NICE,
+        )).is_ok();
+        let limit = process.resource_limits().get_rlimit(RLIMIT_NICE).get_cur();
+        thread.sched_attr().update_user_policy(|policy, mut user| {
+            if new_nice < user.user_nice
+                && (20 - i64::from(new_nice.value().get())) as u64 > limit
+                && !privileged
+            {
+                return Err(errno!(EACCES));
+            }
+            user.user_nice = new_nice;
+            let policy = match policy {
+                SchedPolicy::Fair(_) if user.fair_policy != UserFairPolicy::Idle => SchedPolicy::Fair(new_nice),
+                policy => policy,
+            };
+            Ok((policy, user, ()))
+        })?;
     }
 
     Ok(SyscallReturn::Return(0))
-}
-
-fn set_priority_one(new_nice: Nice, process: &Process, ctx: &Context) -> Result<()> {
-    check_setpriority_permission(process, ctx)?;
-
-    let rlimit = process.resource_limits();
-    let limit = rlimit.get_rlimit(RLIMIT_NICE).get_cur();
-    if new_nice < process.nice().load(Ordering::Relaxed)
-        && (20 - new_nice.value().get()) as u64 > limit
-        && check_nice_capability(ctx).is_err()
-    {
-        return Err(errno!(EACCES, "the nice value reaches the resource limit"));
-    }
-
-    process.main_thread().sched_attr().update_user_policy(|policy, mut user| {
-        user.user_nice = new_nice;
-        let policy = match policy {
-            SchedPolicy::Fair(_) if user.fair_policy != UserFairPolicy::Idle => {
-                SchedPolicy::Fair(new_nice)
-            }
-            policy => policy,
-        };
-        Ok((policy, user, ()))
-    })?;
-    process.nice().store(new_nice, Ordering::Relaxed);
-
-    Ok(())
-}
-
-/// Checks whether the caller may change the target process's nice value.
-fn check_setpriority_permission(target: &Process, ctx: &Context) -> Result<()> {
-    let caller_uid = ctx.posix_thread.credentials().euid();
-    let target_credentials = target
-        .main_thread()
-        .as_posix_thread()
-        .unwrap()
-        .credentials();
-
-    if caller_uid != target_credentials.ruid() && caller_uid != target_credentials.euid() {
-        lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
-            target.user_ns().lock().as_ref(),
-            ctx.posix_thread,
-            CapSet::SYS_NICE,
-        ))?;
-    }
-    Ok(())
-}
-
-/// Checks whether the caller has the `SYS_NICE` capability in the initial user namespace.
-fn check_nice_capability(ctx: &Context) -> Result<()> {
-    lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
-        UserNamespace::get_init_singleton().as_ref(),
-        ctx.posix_thread,
-        CapSet::SYS_NICE,
-    ))
 }
