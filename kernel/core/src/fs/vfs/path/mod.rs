@@ -2,7 +2,6 @@
 
 //! Form file paths within and across FSes with dentries and mount points.
 
-use core::time::Duration;
 use ostd::sync::RwMutexReadGuard;
 
 pub(crate) use dentry::Dentry;
@@ -41,6 +40,7 @@ use crate::{
         Gid, Uid, UserNamespace, credentials::capabilities::CapSet, posix_thread::AsPosixThread,
     },
     security::lsm::hooks as lsm_hooks,
+    time::FileTime,
 };
 
 mod dentry;
@@ -599,12 +599,12 @@ impl Path {
 /// A timestamp update and its associated permission policy.
 pub(crate) enum TimestampUpdate {
     /// Set both timestamps to the current time.
-    Touch(Duration),
+    Touch(FileTime),
     /// Set supplied timestamps, leaving omitted fields unchanged.
     Explicit {
-        atime: Option<Duration>,
-        mtime: Option<Duration>,
-        now: Duration,
+        atime: Option<FileTime>,
+        mtime: Option<FileTime>,
+        now: FileTime,
     },
 }
 
@@ -1076,9 +1076,9 @@ impl Path {
     pub(crate) fn size(&self) -> usize;
     pub(crate) fn owner(&self) -> Result<Uid>;
     pub(crate) fn group(&self) -> Result<Gid>;
-    pub(crate) fn atime(&self) -> Duration;
-    pub(crate) fn mtime(&self) -> Duration;
-    pub(crate) fn ctime(&self) -> Duration;
+    pub(crate) fn atime(&self) -> FileTime;
+    pub(crate) fn mtime(&self) -> FileTime;
+    pub(crate) fn ctime(&self) -> FileTime;
     pub(crate) fn list_xattr(
         &self,
         namespace: XattrNamespace,
@@ -1109,21 +1109,21 @@ impl Path {
     /// Sets the file's access time.
     ///
     /// Use [`Self::update_times`] instead, which will perform permission checks.
-    fn set_atime(&self, time: Duration) {
+    fn set_atime(&self, time: FileTime) {
         self.inode().set_atime(&self.dentry, time)
     }
 
     /// Sets the file's modification time.
     ///
     /// Use [`Self::update_times`] instead, which will perform permission checks.
-    fn set_mtime(&self, time: Duration) {
+    fn set_mtime(&self, time: FileTime) {
         self.inode().set_mtime(&self.dentry, time)
     }
 
     /// Sets the file's change time.
     ///
     /// Use [`Self::update_times`] instead, which will perform permission checks.
-    fn set_ctime(&self, time: Duration) {
+    fn set_ctime(&self, time: FileTime) {
         self.inode().set_ctime(&self.dentry, time)
     }
 

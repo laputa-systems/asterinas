@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use core::time::Duration;
-
 use ostd::mm::VmIo;
 
 use super::{SyscallReturn, constants::MAX_FILENAME_LEN};
@@ -14,7 +12,7 @@ use crate::{
         vfs::path::{AT_FDCWD, EmptyPathStr, FsPath, Path, TimestampUpdate},
     },
     prelude::*,
-    time::{clocks::RealTimeCoarseClock, timespec_t, timeval_t},
+    time::{FileTime, timespec_t, timeval_t},
 };
 
 /// The `sys_utimensat` system call sets the access and modification times of a file.
@@ -175,7 +173,7 @@ impl TimeSpecPair {
 enum TimeSpec {
     Now,
     Omit,
-    Spec(Duration),
+    Spec(FileTime),
 }
 
 impl TimeSpec {
@@ -184,7 +182,7 @@ impl TimeSpec {
     }
 
     /// Converts to a duration, using `now` as [`Self::Now`].
-    fn with_now(self, now: Duration) -> Option<Duration> {
+    fn with_now(self, now: FileTime) -> Option<FileTime> {
         match self {
             Self::Now => Some(now),
             Self::Omit => None,
@@ -197,7 +195,13 @@ impl TryFrom<timeval_t> for TimeSpec {
     type Error = Error;
 
     fn try_from(value: timeval_t) -> Result<Self> {
-        Ok(Self::Spec(Duration::try_from(value)?))
+        if value.usec < 0 || value.usec >= 1_000_000 {
+            return Err(errno!(EINVAL, "invalid time"));
+        }
+        Ok(Self::Spec(FileTime::new(
+            value.sec,
+            (value.usec as u32) * 1000,
+        )))
     }
 }
 
@@ -210,7 +214,7 @@ impl TryFrom<timespec_t> for TimeSpec {
         } else if value.nsec == UTIME_OMIT {
             Ok(Self::Omit)
         } else {
-            Ok(Self::Spec(Duration::try_from(value)?))
+            Ok(Self::Spec(FileTime::try_from(value)?))
         }
     }
 }
@@ -271,7 +275,7 @@ fn do_utimes(
 }
 
 fn vfs_utimes(path: &Path, times: Option<TimeSpecPair>, ctx: &Context) -> Result<SyscallReturn> {
-    let now = RealTimeCoarseClock::get().read_time();
+    let now = FileTime::now();
     let update = match times {
         None => TimestampUpdate::Touch(now),
         Some(times) if times.is_touch() => TimestampUpdate::Touch(now),
