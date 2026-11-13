@@ -2,7 +2,7 @@
 
 use core::sync::atomic::Ordering;
 
-use super::{SyscallReturn, get_ioprio::IoPrioWho};
+use super::{SyscallReturn, get_ioprio::{IoPrioAccess, IoPrioWho}};
 use crate::{
     prelude::*,
     process::{UserNamespace, credentials::capabilities::CapSet, posix_thread::AsPosixThread},
@@ -19,35 +19,23 @@ pub(super) fn sys_ioprio_set(
 
     check_ioprio_class(ioprio, ctx)?;
 
-    let ioprio_who = IoPrioWho::from_which_and_who(which, who, ctx)?;
-
-    match ioprio_who {
-        IoPrioWho::Thread(thread) => {
-            let target = thread.as_posix_thread().unwrap();
-            let target_uid = target.credentials().ruid();
-            let caller_credentials = ctx.posix_thread.credentials();
-
-            if target_uid != caller_credentials.euid() && target_uid != caller_credentials.ruid() {
-                lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
-                    UserNamespace::get_init_singleton().as_ref(),
-                    ctx.posix_thread,
-                    CapSet::SYS_NICE,
-                ))?;
-            }
-
-            target.io_priority().store(ioprio, Ordering::Relaxed);
-
-            Ok(SyscallReturn::Return(0))
-        }
-        IoPrioWho::ProcessGroup(_) => {
-            // TODO: Implement process group support
-            Err(errno!(EINVAL))
-        }
-        IoPrioWho::User(_) => {
-            // TODO: Implement user support
-            Err(errno!(EINVAL))
-        }
+    let threads = IoPrioWho::resolve(which, who, ctx, IoPrioAccess::Write)?.threads();
+    if threads.is_empty() {
+        return Err(errno!(ESRCH));
     }
+    for thread in threads {
+        let target = thread.as_posix_thread().unwrap();
+        let same_owner = {
+            let caller = ctx.posix_thread.credentials();
+            let target = target.credentials();
+            target.ruid() == caller.ruid() || target.ruid() == caller.euid()
+        };
+        if !same_owner && !capable(CapSet::SYS_NICE) {
+            return Err(errno!(EPERM));
+        }
+        target.io_priority().store(ioprio & 0xffff, Ordering::Relaxed);
+    }
+    Ok(SyscallReturn::Return(0))
 }
 
 /// Validates the I/O priority class and checks permission for real-time I/O.
