@@ -84,5 +84,7 @@ fi
 ./job_control
 ./pidfd
 ./pidfd_getfd
+./proc_status_peak
+./proc_wchan
 ./set_tid_address
 ./wait4
