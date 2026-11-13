@@ -1503,7 +1503,12 @@ impl Inode for RamInode {
                 let now = now();
                 DirChange::del(&src_inode).apply(self, now);
                 src_inode.metadata.lock().set_ctime(now);
-                dst_inode.metadata.lock().set_ctime(now);
+                let mut dst_metadata = dst_inode.metadata.lock();
+                dst_metadata.dec_nlinks();
+                if dst_inode.typ == InodeType::Dir {
+                    dst_metadata.dec_nlinks();
+                }
+                dst_metadata.set_ctime(now);
             } else {
                 self_dir.substitute_entry(
                     src_idx,
@@ -1562,7 +1567,13 @@ impl Inode for RamInode {
                 let now = now();
                 DirChange::del(&src_inode).apply(self, now);
                 DirChange::exchange(&dst_inode, &src_inode).apply(new_dir_inode, now);
-                dst_inode.metadata.lock().set_ctime(now);
+                let mut dst_metadata = dst_inode.metadata.lock();
+                dst_metadata.dec_nlinks();
+                if dst_inode.typ == InodeType::Dir {
+                    dst_metadata.dec_nlinks();
+                }
+                dst_metadata.set_ctime(now);
+                drop(dst_metadata);
                 src_inode.metadata.lock().set_ctime(now);
             } else {
                 self_dir.remove_entry(src_idx);
