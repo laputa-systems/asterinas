@@ -23,8 +23,10 @@ use crate::{
 /// Creates a pair of connected pipe file handles with the default capacity.
 pub(crate) fn new_file_pair(
     status_flags: StatusFlags,
+    uid: Uid,
+    gid: Gid,
 ) -> Result<(Arc<InodeHandle>, Arc<InodeHandle>)> {
-    let pipe_inode = Arc::new(AnonPipeInode::new());
+    let pipe_inode = Arc::new(AnonPipeInode::new(uid, gid));
     let path = PipeFs::new_path(pipe_inode);
 
     // Remove `O_DIRECT` for the reader, which conforms to the Linux behavior:
@@ -48,7 +50,7 @@ pub(crate) struct AnonPipeInode {
 }
 
 impl AnonPipeInode {
-    fn new() -> Self {
+    fn new(uid: Uid, gid: Gid) -> Self {
         let pipe = Pipe::new();
         let (uid, gid) = utils::current_fs_ids();
 
