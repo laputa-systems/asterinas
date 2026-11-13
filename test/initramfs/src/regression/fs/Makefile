@@ -14,6 +14,7 @@ SUBDIRS := \
 	name_max \
 	openat2 \
 	overlayfs \
+	posix_acl \
 	procfs \
 	pseudofs \
 	ramfs \
