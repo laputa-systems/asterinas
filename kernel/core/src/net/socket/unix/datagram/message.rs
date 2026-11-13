@@ -133,6 +133,7 @@ pub(super) struct MessageReceiver {
     //
     // This is protected by a mutex because `bind()` requires file I/O.
     addr: Mutex<Option<UnixSocketAddrBound>>,
+    addr: Mutex<Option<UnixSocketAddrBound>>,
     queue: Arc<MessageQueue>,
 }
 
