@@ -9,7 +9,7 @@ use crate::{
         Process, ResourceType::RLIMIT_NICE, UserNamespace, credentials::capabilities::CapSet,
         posix_thread::AsPosixThread,
     },
-    sched::Nice,
+    sched::{Nice, SchedPolicy, UserFairPolicy},
     security::lsm::hooks as lsm_hooks,
     syscall::get_priority::{PriorityTarget, get_processes},
 };
@@ -60,9 +60,16 @@ fn set_priority_one(new_nice: Nice, process: &Process, ctx: &Context) -> Result<
         return Err(errno!(EACCES, "the nice value reaches the resource limit"));
     }
 
-    // FIXME: `setpriority` updates only the per-process nice value. Fair
-    // scheduler state is kept in each thread's `SchedPolicy::Fair`, so it
-    // should be updated from the same source of truth.
+    process.main_thread().sched_attr().update_user_policy(|policy, mut user| {
+        user.user_nice = new_nice;
+        let policy = match policy {
+            SchedPolicy::Fair(_) if user.fair_policy != UserFairPolicy::Idle => {
+                SchedPolicy::Fair(new_nice)
+            }
+            policy => policy,
+        };
+        Ok((policy, user, ()))
+    })?;
     process.nice().store(new_nice, Ordering::Relaxed);
 
     Ok(())
