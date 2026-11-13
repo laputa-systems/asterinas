@@ -24,7 +24,7 @@ use crate::{
             file_system::{FileSystem, FsEventSubscriberStats, SuperBlock},
             inode::{
                 Extension, FallocMode, FileOps, HardLinkability, Inode, Metadata, MknodType,
-                RenameMode, RevalidationPolicy, SymbolicLink,
+                RenameMode, RevalidationPolicy, SymbolicLink, strip_unprivileged_setgid,
             },
             path::{Dentry, is_dot_bytes, is_dot_or_dotdot_bytes, is_dotdot_bytes},
             registry::{FsCreationCtx, FsProperties, FsType},
@@ -932,6 +932,21 @@ impl RamInode {
         Ok(true)
     }
 
+    fn child_attributes(&self, type_: InodeType, mut mode: InodeMode) -> (Uid, Gid, InodeMode) {
+        let (uid, mut gid) = utils::current_fs_ids();
+        {
+            let parent = self.metadata.lock();
+            if parent.mode.has_set_gid() {
+                gid = parent.gid;
+                if type_ == InodeType::Dir {
+                    mode |= InodeMode::S_ISGID;
+                }
+            }
+        }
+        mode = strip_unprivileged_setgid(type_, mode, gid);
+        (uid, gid, mode)
+    }
+
     fn create_impl(
         &self,
         name: &[u8],
@@ -950,7 +965,7 @@ impl RamInode {
         }
 
         let fs = self.fs.upgrade().unwrap();
-        let (uid, gid) = utils::current_fs_ids();
+        let (uid, gid, mode) = self.child_attributes(type_, mode);
         let new_inode = match type_ {
             InodeType::File => RamInode::new_file(&fs, mode, uid, gid, to_be_revalidated),
             InodeType::Socket => RamInode::new_socket(&fs, mode, uid, gid, to_be_revalidated),
@@ -997,7 +1012,12 @@ impl RamInode {
             return Err(errno!(EEXIST, "entry exists"));
         }
 
-        let (uid, gid) = utils::current_fs_ids();
+        let inode_type = match type_ {
+            MknodType::CharDevice(_) => InodeType::CharDevice,
+            MknodType::BlockDevice(_) => InodeType::BlockDevice,
+            MknodType::NamedPipe => InodeType::NamedPipe,
+        };
+        let (uid, gid, mode) = self.child_attributes(inode_type, mode);
         let new_inode = match type_ {
             MknodType::CharDevice(dev_id) | MknodType::BlockDevice(dev_id) => {
                 let dev_type = type_.device_type().unwrap();
@@ -1320,7 +1340,7 @@ impl Inode for RamInode {
         }
 
         let fs = self.fs.upgrade().unwrap();
-        let (uid, gid) = utils::current_fs_ids();
+        let (uid, gid, mode) = self.child_attributes(InodeType::File, mode);
         Ok(RamInode::new_tmpfile(
             &fs,
             mode,
