@@ -149,6 +149,7 @@ impl OverlayFs {
             inodes,
             fs_event_stats: FsEventSubscriberStats::new(),
             self_weak: weak.clone(),
+            dentries: Mutex::new(Vec::new()),
         });
         Ok(overlay_fs)
     }
