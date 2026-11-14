@@ -92,6 +92,15 @@ impl siginfo_t {
         self.siginfo_fields.sigfault_mut().addr = si_addr;
     }
 
+    pub(crate) fn pid_uid(&self) -> (Pid, Uid) {
+        let pid_uid = self.siginfo_fields.common().first.piduid();
+        (pid_uid.pid, pid_uid.uid)
+    }
+
+    pub(crate) fn status(&self) -> i32 {
+        *self.siginfo_fields.common().second.sigchild().status()
+    }
+
     pub(crate) fn si_addr(&self) -> Vaddr {
         self.siginfo_fields.sigfault().addr
     }
