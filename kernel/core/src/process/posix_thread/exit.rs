@@ -134,7 +134,7 @@ fn exit_internal(
     drop_after!(thread_local.remove_ns_proxy());
 
     if is_last_thread {
-        exit_process(&posix_process);
+        exit_process(&posix_process, posix_thread.credentials().ruid());
     }
 }
 
