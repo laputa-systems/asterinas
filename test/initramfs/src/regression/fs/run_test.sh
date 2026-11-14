@@ -150,6 +150,7 @@ TEST_TMPDIR=/ext2 ./name_max/name_max
 
 ./overlayfs/lchown_lower_symlink
 ./overlayfs/link_lower_file
+./overlayfs/deep_teardown /ext2
 ./overlayfs/lifetime /ext2
 ./overlayfs/mknod_whiteout_rejected
 ./overlayfs/ovl_test
