@@ -144,6 +144,7 @@ TEST_TMPDIR=/ext2 TEST_DIRECT=1 ./empty_write/empty_write
 ./mount/mount_move
 ./mount/mount_propagation
 ./mount/mount_readonly
+./mount/umount_busy
 
 TEST_TMPDIR=/tmp ./name_max/name_max
 TEST_TMPDIR=/ext2 ./name_max/name_max
