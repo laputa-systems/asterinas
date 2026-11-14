@@ -123,6 +123,7 @@ TEST_TMPDIR=/ext2 TEST_DIRECT=0 ./empty_write/empty_write
 TEST_TMPDIR=/ext2 TEST_DIRECT=1 ./empty_write/empty_write
 
 ./acl_default/default
+./acl_default/overlay /ext2
 ./exfat/read_eof
 
 ./getcwd/getcwd
