@@ -90,3 +90,4 @@ fi
 ./proc_wchan
 ./set_tid_address
 ./wait4
+./waitid_nohang
