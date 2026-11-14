@@ -49,5 +49,6 @@ sleep 0.2
 ./netlink_padding
 ./netlink_route
 ./netlink_sockoption
+./proc_net_identity/proc_net_identity
 ./rtnl_err
 ./uevent_err
