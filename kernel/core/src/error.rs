@@ -154,6 +154,8 @@ pub enum Errno {
     EHWPOISON = 133, /* Memory page has hardware error */
 
     ERESTARTSYS = 512, /* Restart of an interrupted system call. For kernel internal use only. */
+    ERESTARTNOHAND = 514,
+    ERESTART_RESTARTBLOCK = 516,
 }
 
 /// An error with an error number and a source location.
