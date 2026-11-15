@@ -81,6 +81,10 @@ impl KernelSysNodeRoot {
             SysStr::from("uevent_seqnum"),
             SysPerms::DEFAULT_RO_ATTR_PERMS,
         );
+        builder.add(
+            SysStr::from("profiling"),
+            SysPerms::DEFAULT_RW_ATTR_PERMS,
+        );
         // TODO: Add more kernel-specific attributes.
         let attrs = builder
             .build()
@@ -117,6 +121,11 @@ inherit_sys_branch_node!(KernelSysNodeRoot, fields, {
             "uevent_seqnum" => {
                 let mut printer = VmPrinter::new_skip(writer, offset);
                 writeln!(printer, "{}", aster_device::uevent::current_seqnum())?;
+                Ok(printer.bytes_written())
+            }
+            "profiling" => {
+                let mut printer = VmPrinter::new_skip(writer, offset);
+                writeln!(printer, "0")?;
                 Ok(printer.bytes_written())
             }
             // TODO: Add support for reading other attributes.
