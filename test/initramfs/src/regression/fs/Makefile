@@ -21,6 +21,7 @@ SUBDIRS := \
 	pseudofs \
 	ramfs \
 	rename \
+	statmount \
 	statx \
 	symlink \
 	sync \
