@@ -234,6 +234,10 @@ impl Path {
             ));
         }
 
+        if inode_type == InodeType::Socket && !status_flags.contains(StatusFlags::O_PATH) {
+            return Err(errno!(ENXIO, "cannot open a socket inode"));
+        }
+
         if status_flags.contains(StatusFlags::O_PATH) {
             return InodeHandle::new(self.clone(), open_args.access_mode, *status_flags);
         }
