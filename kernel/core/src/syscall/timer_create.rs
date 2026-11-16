@@ -174,6 +174,7 @@ pub(crate) fn create_timer_for_clock<F: TimerFn>(
         ClockId::CLOCK_PROCESS_CPUTIME_ID => process_timer_manager.create_prof_timer(func),
         ClockId::CLOCK_THREAD_CPUTIME_ID => ctx.posix_thread.create_prof_timer(func),
         ClockId::CLOCK_REALTIME => RealTimeClock::timer_manager().create_timer(func),
+        ClockId::CLOCK_TAI => crate::time::clocks::TaiClock::timer_manager().create_timer(func),
         ClockId::CLOCK_MONOTONIC => MonotonicClock::timer_manager().create_timer(func),
         ClockId::CLOCK_BOOTTIME => BootTimeClock::timer_manager().create_timer(func),
         _ => return Err(errno!(EINVAL, "invalid clock ID")),
