@@ -38,6 +38,8 @@ struct TimerInner {
     expired_time: Option<Duration>,
     // A `Duration::ZERO` denotes that the timer won't repeat.
     interval: Duration,
+    // Whether the timeout is measured against the manager's relative clock rather than its own.
+    relative_clock: bool,
 }
 
 impl<F: TimerFn> Timer<F> {
@@ -81,10 +83,10 @@ impl<F: ?Sized + TimerFn> Timer<F> {
 
 impl<F: ?Sized> Drop for Timer<F> {
     fn drop(&mut self) {
-        let expired_time = self.inner.disable_irq().lock().expired_time;
-        if let Some(expired_time) = expired_time {
+        let inner = self.inner.disable_irq().lock();
+        if let Some(expired_time) = inner.expired_time {
             let key = (expired_time, self as *const Self as *const () as usize);
-            self.timer_manager.remove(key);
+            self.timer_manager.remove(key, inner.relative_clock);
         }
     }
 }
@@ -119,12 +121,13 @@ impl TimerGuard<'_> {
 
 impl<F: ?Sized + TimerFn> TimerGuard<'_, F> {
     fn set_timeout_impl(&mut self, timeout: Timeout, timer_weak: Weak<Timer>) {
-        let expired_time = match timeout {
+        let (expired_time, relative_clock) = match timeout {
             Timeout::After(timeout) => {
-                let now = self.timer.timer_manager.clock.read_time();
-                now + timeout
+                let clock = self.timer.timer_manager.relative_clock.as_ref();
+                let now = clock.unwrap_or(&self.timer.timer_manager.clock).read_time();
+                (now + timeout, clock.is_some())
             }
-            Timeout::When(timeout) => timeout,
+            Timeout::When(timeout) => (timeout, false),
         };
 
         if let Some(old_expired_time) = self.inner.expired_time {
@@ -132,14 +135,18 @@ impl<F: ?Sized + TimerFn> TimerGuard<'_, F> {
                 old_expired_time,
                 Arc::as_ptr(self.timer) as *const () as usize,
             );
-            self.timer.timer_manager.remove(key);
+            self.timer
+                .timer_manager
+                .remove(key, self.inner.relative_clock);
         }
 
         self.inner.expired_time = Some(expired_time);
+        self.inner.relative_clock = relative_clock;
 
         let timer_callback = TimerCallback {
             expired_time,
             timer: timer_weak,
+            relative_clock,
         };
         self.timer.timer_manager.insert(timer_callback);
     }
@@ -159,8 +166,11 @@ impl<F: ?Sized + TimerFn> TimerGuard<'_, F> {
     pub(crate) fn cancel(&mut self) {
         if let Some(expired_time) = self.inner.expired_time {
             let key = (expired_time, Arc::as_ptr(self.timer) as *const () as usize);
-            self.timer.timer_manager.remove(key);
+            self.timer
+                .timer_manager
+                .remove(key, self.inner.relative_clock);
             self.inner.expired_time = None;
+            self.inner.relative_clock = false;
         }
     }
 
@@ -177,7 +187,16 @@ impl<F: ?Sized + TimerFn> TimerGuard<'_, F> {
     /// If the timer has not been set, this method
     /// will return a [`Duration::ZERO`].
     pub(crate) fn remain(&self) -> Duration {
-        let now = self.timer.timer_manager.clock.read_time();
+        let now = if self.inner.relative_clock {
+            self.timer
+                .timer_manager
+                .relative_clock
+                .as_ref()
+                .expect("a relative timer requires a relative clock")
+                .read_time()
+        } else {
+            self.timer.timer_manager.clock.read_time()
+        };
         let expired_time = self.expired_time();
         expired_time.saturating_sub(now)
     }
@@ -212,6 +231,8 @@ where
 pub(crate) struct TimerManager {
     clock: Arc<dyn Clock>,
     timer_callbacks: SpinLock<BTreeMap<TimerKey, TimerCallback>>,
+    relative_clock: Option<Arc<dyn Clock>>,
+    relative_timer_callbacks: SpinLock<BTreeMap<TimerKey, TimerCallback>>,
 }
 
 /// The expiry time of a callback, made unique by the owning timer's address.
@@ -223,6 +244,18 @@ impl TimerManager {
         Arc::new(Self {
             clock,
             timer_callbacks: SpinLock::new(BTreeMap::new()),
+            relative_clock: None,
+            relative_timer_callbacks: SpinLock::new(BTreeMap::new()),
+        })
+    }
+
+    /// Creates a `TimerManager` whose relative timeouts are measured against `relative_clock`.
+    pub(crate) fn new_realtime(clock: Arc<dyn Clock>, relative_clock: Arc<dyn Clock>) -> Arc<Self> {
+        Arc::new(Self {
+            clock,
+            timer_callbacks: SpinLock::new(BTreeMap::new()),
+            relative_clock: Some(relative_clock),
+            relative_timer_callbacks: SpinLock::new(BTreeMap::new()),
         })
     }
 
@@ -242,8 +275,16 @@ impl TimerManager {
         }
     }
 
+    fn queue(&self, relative: bool) -> &SpinLock<BTreeMap<TimerKey, TimerCallback>> {
+        if relative {
+            &self.relative_timer_callbacks
+        } else {
+            &self.timer_callbacks
+        }
+    }
+
     fn insert(&self, timer_callback: TimerCallback) {
-        self.timer_callbacks
+        self.queue(timer_callback.relative_clock)
             .disable_irq()
             .lock()
             .insert(timer_callback.key(), timer_callback);
@@ -251,22 +292,37 @@ impl TimerManager {
 
     /// Removes a callback from the queue so that a cancelled timer does not outlive
     /// the wait that armed it.
-    fn remove(&self, key: TimerKey) {
-        self.timer_callbacks.disable_irq().lock().remove(&key);
+    fn remove(&self, key: TimerKey, relative: bool) {
+        self.queue(relative).disable_irq().lock().remove(&key);
     }
 
     /// Checks and processes the managed timers.
     ///
     /// If any of the timers have timed out, call the corresponding callback functions.
     pub(crate) fn process_expired_timers(&self) {
+        if let Some(clock) = &self.relative_clock {
+            crate::time::timerfd::with_clock_step_lock(|| {
+                self.process_queue(&self.timer_callbacks, &self.clock);
+                self.process_queue(&self.relative_timer_callbacks, clock);
+            });
+        } else {
+            self.process_queue(&self.timer_callbacks, &self.clock);
+        }
+    }
+
+    fn process_queue(
+        &self,
+        queue: &SpinLock<BTreeMap<TimerKey, TimerCallback>>,
+        clock: &Arc<dyn Clock>,
+    ) {
         let callbacks = {
-            let mut timeout_list = self.timer_callbacks.disable_irq().lock();
+            let mut timeout_list = queue.disable_irq().lock();
             if timeout_list.is_empty() {
                 return;
             }
 
             let mut callbacks = Vec::new();
-            let current_time = self.clock.read_time();
+            let current_time = clock.read_time();
             while let Some(entry) = timeout_list.first_entry() {
                 if entry.key().0 > current_time {
                     break;
@@ -291,6 +347,7 @@ impl TimerManager {
 struct TimerCallback {
     expired_time: Duration,
     timer: Weak<Timer>,
+    relative_clock: bool,
 }
 
 impl TimerCallback {
@@ -312,7 +369,12 @@ impl TimerCallback {
 
         let interval = timer_guard.interval();
         if interval != Duration::ZERO {
-            timer_guard.set_timeout(Timeout::After(interval));
+            let next = if !self.relative_clock && timer.timer_manager.relative_clock.is_some() {
+                Timeout::When(timer.timer_manager.clock.read_time() + interval)
+            } else {
+                Timeout::After(interval)
+            };
+            timer_guard.set_timeout(next);
         } else {
             timer_guard.cancel();
         }

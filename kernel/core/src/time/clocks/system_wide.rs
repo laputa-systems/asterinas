@@ -36,8 +36,23 @@ impl RealTimeClock {
     }
 }
 
-/// A clock that measures time in a way that is monotonically increasing
-/// since the system was booted.
+pub(crate) struct TaiClock {
+    _private: (),
+}
+
+impl TaiClock {
+    pub(crate) fn get() -> &'static Arc<TaiClock> {
+        CLOCK_TAI_INSTANCE.get().unwrap()
+    }
+
+    pub(crate) fn timer_manager() -> &'static Arc<TimerManager> {
+        let guard = disable_preempt();
+        CLOCK_TAI_MANAGER.get_on_cpu(guard.current_cpu()).get().unwrap()
+    }
+}
+
+/// `MonotonicClock` represents a clock that measures time in a way that is
+/// monotonically increasing since the system was booted.
 pub(crate) struct MonotonicClock {
     _private: (),
 }
@@ -150,6 +165,12 @@ impl Clock for RealTimeClock {
     }
 }
 
+impl Clock for TaiClock {
+    fn read_time(&self) -> Duration {
+        aster_time::disciplined_time_at(aster_time::read_raw_monotonic_time()).tai
+    }
+}
+
 impl Clock for MonotonicClock {
     fn read_time(&self) -> Duration {
         read_monotonic_time()
@@ -218,7 +239,11 @@ macro_rules! define_timer_managers {
         fn _init_system_wide_timer_managers() {
             $(
                 let clock = paste! {[<$clock_id _INSTANCE>].get().unwrap().clone()};
-                let timer_manager = TimerManager::new(clock);
+                let timer_manager = if (stringify!($clock_id) == "CLOCK_REALTIME" || stringify!($clock_id) == "CLOCK_TAI") {
+                    TimerManager::new_realtime(clock, MonotonicClock::get().clone())
+                } else {
+                    TimerManager::new(clock)
+                };
                 for cpu in ostd::cpu::all_cpus() {
                     paste! {
                         [<$clock_id _MANAGER>].get_on_cpu(cpu).call_once(|| timer_manager.clone());
@@ -239,6 +264,7 @@ macro_rules! define_timer_managers {
 
 define_system_clocks! {
     CLOCK_REALTIME          => RealTimeClock,
+    CLOCK_TAI               => TaiClock,
     CLOCK_REALTIME_COARSE   => RealTimeCoarseClock,
     CLOCK_MONOTONIC         => MonotonicClock,
     CLOCK_MONOTONIC_COARSE  => MonotonicCoarseClock,
@@ -246,7 +272,7 @@ define_system_clocks! {
     CLOCK_BOOTTIME          => BootTimeClock,
 }
 
-define_timer_managers![CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_BOOTTIME,];
+define_timer_managers![CLOCK_REALTIME, CLOCK_TAI, CLOCK_MONOTONIC, CLOCK_BOOTTIME,];
 
 /// Initializes the system-wide clocks.
 fn init_system_wide_clocks() {
