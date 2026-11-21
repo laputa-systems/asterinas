@@ -8,6 +8,7 @@ use aster_device::{
     bus::{self, Bus, BusDevice, BusHandle},
     class::{self, Class, ClassDevice, ClassHandle},
     common::{AnyDevice, Attr, BareDevice, DevNum, DeviceType as ModelDeviceType},
+    uevent::UeventVars,
 };
 use aster_nvme::NvmeBlockDevice;
 use aster_virtio::{
@@ -136,6 +137,14 @@ impl Bus for VirtioBus {
     fn dev_attrs(&self) -> &'static [Attr<BusDevice<Self>>] {
         &[]
     }
+
+    fn append_uevent_vars(
+        &self,
+        _dev: &BusDevice<Self>,
+        _vars: &mut UeventVars,
+    ) -> aster_device::common::Result<()> {
+        Ok(())
+    }
 }
 
 static VIRTIO_BUS: spin::Once<Arc<BusHandle<VirtioBus>>> = spin::Once::new();
@@ -192,16 +201,20 @@ impl Class for BlockClass {
     const NAME: &'static str = "block";
     type Device = BlockEntry;
 
-    fn uevent_environment(&self, dev: &ClassDevice<Self>) -> Vec<(String, String)> {
+    fn append_uevent_vars(
+        &self,
+        dev: &ClassDevice<Self>,
+        vars: &mut UeventVars,
+    ) -> aster_device::common::Result<()> {
         let entry = dev.payload();
-        let mut environment = vec![("DISKSEQ".to_owned(), entry.disk_sequence.to_string())];
+        vars.add("DISKSEQ", entry.disk_sequence)?;
         if let Some(number) = entry.device.partition_number() {
-            environment.push(("PARTN".to_owned(), number.to_string()));
+            vars.add("PARTN", number)?;
         }
         if let Some(uuid) = entry.device.partition_uuid() {
-            environment.push(("PARTUUID".to_owned(), uuid));
+            vars.add("PARTUUID", uuid)?;
         }
-        environment
+        Ok(())
     }
 
     fn dev_attrs(&self) -> &'static [Attr<ClassDevice<Self>>] {
@@ -218,6 +231,7 @@ static PARTITION_TYPE: ModelDeviceType<ClassDevice<BlockClass>> = ModelDeviceTyp
     attrs: &[Attr::ro("partition", show_partition_number)],
     devnode: None,
     has_device_link: true,
+    append_uevent_vars_fn: None,
 };
 
 fn show_partition_number(
