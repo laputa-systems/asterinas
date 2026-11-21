@@ -549,8 +549,8 @@ mod test {
             0,
             Request {
                 modes: ADJ_STATUS | ADJ_MAXERROR,
-                status: STA_INS,
                 max_error: 1_000,
+                status: STA_INS,
                 ..Request::default()
             },
         )
@@ -576,8 +576,8 @@ mod test {
             0,
             Request {
                 modes: ADJ_STATUS | ADJ_MAXERROR,
-                status: STA_DEL,
                 max_error: 1_000,
+                status: STA_DEL,
                 ..Request::default()
             },
         )
