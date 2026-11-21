@@ -160,7 +160,7 @@ fn sleep_until(block: SleepRestartBlock, ctx: &Context) -> Result<SyscallReturn>
             }
 
             ctx.thread_local.restart_block().set(Some(block));
-            Err(errno!(ERESTART_RESTARTBLOCK, "sleep was interrupted"))
+            Err(errno!(ErestartRestartblock, "sleep was interrupted"))
         }
         Ok(()) | Err(_) => unreachable!(),
     }

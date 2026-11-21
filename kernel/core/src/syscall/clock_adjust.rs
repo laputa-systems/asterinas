@@ -2,12 +2,11 @@
 
 use aster_time::adjust::{self, Reply, Request};
 use ostd::mm::VmIo;
-use ostd_pod::Pod;
 
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{UserNamespace, credentials::capabilities::CapSet, posix_thread::AsPosixThread},
+    process::{UserNamespace, credentials::capabilities::CapSet},
     security::lsm::hooks as lsm_hooks,
     time::{clockid_t, timespec_t},
 };
@@ -80,8 +79,8 @@ pub(super) fn sys_clock_adjtime(
 ) -> Result<SyscallReturn> {
     match clockid {
         CLOCK_REALTIME => adjust_realtime(timex_addr, ctx),
-        1..=11 => return Err(errno!(EOPNOTSUPP, "the clock does not support adjustment")),
-        _ => return Err(errno!(EINVAL, "the clock does not exist")),
+        1..=11 => Err(errno!(EOPNOTSUPP, "the clock does not support adjustment")),
+        _ => Err(errno!(EINVAL, "the clock does not exist")),
     }
 }
 

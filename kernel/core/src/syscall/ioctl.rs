@@ -135,7 +135,7 @@ fn clone_file(source: &Arc<dyn FileLike>, destination: &Arc<dyn FileLike>) -> Re
         return Err(errno!(EINVAL, "both files must be regular files"));
     }
 
-    return Err(errno!(EOPNOTSUPP, "the file system cannot clone files"));
+    Err(errno!(EOPNOTSUPP, "the file system cannot clone files"))
 }
 
 fn handle_file_ioctl(file: &dyn FileLike, raw_ioctl: RawIoctl) -> Option<Result<()>> {

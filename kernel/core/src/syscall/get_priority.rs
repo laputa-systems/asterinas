@@ -57,7 +57,7 @@ impl PriorityTarget {
             0 => Ok(Self::Thread(if who == 0 { ctx.posix_thread.tid() } else { who })),
             1 => Ok(Self::ProcessGroup(if who == 0 { ctx.process.pgid() } else { who })),
             2 => Ok(Self::User(if who == 0 { ctx.posix_thread.credentials().ruid() } else { Uid::new(who) })),
-            _ => return Err(errno!(EINVAL)),
+            _ => Err(errno!(EINVAL)),
         }
     }
 }

@@ -36,9 +36,9 @@ pub(super) fn sys_syslog(action: i32, buf: Vaddr, len: i32, ctx: &Context) -> Re
         }
         SYSLOG_ACTION_SIZE_BUFFER => Ok(SyscallReturn::Return(LOG_BUF_LEN as isize)),
         2 | 4 | 5 | 6 | 7 | 8 | 9 => {
-            return Err(errno!(ENOSYS, "the syslog action is not supported"))
+            Err(errno!(ENOSYS, "the syslog action is not supported"))
         }
-        _ => return Err(errno!(EINVAL, "the syslog action is invalid")),
+        _ => Err(errno!(EINVAL, "the syslog action is invalid")),
     }
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use aster_time::read_system_time;
-use ostd::{mm::VmIo, sync::SpinLock};
+use ostd::mm::VmIo;
 
 use super::{SyscallReturn, clock_adjust::{adjust_error, may_set_time}};
 use crate::{
