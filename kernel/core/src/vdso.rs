@@ -189,15 +189,7 @@ impl VdsoData {
 
     #[cfg(ktest)]
     fn realtime_duration(instant: Instant) -> Duration {
-        #[cfg(ktest)]
-        {
-            return test::TEST_START_OFFSET + Duration::new(instant.secs(), instant.nanos());
-        }
-
-        #[cfg(not(ktest))]
-        {
-            aster_time::disciplined_time_at(Duration::new(instant.secs(), instant.nanos())).wall
-        }
+        test::TEST_START_OFFSET + Duration::new(instant.secs(), instant.nanos())
     }
 }
 
