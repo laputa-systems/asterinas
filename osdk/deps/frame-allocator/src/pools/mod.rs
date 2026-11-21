@@ -197,7 +197,7 @@ impl Drop for OnDemandGlobalLock {
 
 #[cfg(ktest)]
 mod test {
-    use ostd::{irq, mm::PAGE_SIZE, prelude::ktest};
+    use ostd::{cpu::PinCurrentCpu, irq, mm::PAGE_SIZE, prelude::ktest};
 
     use super::*;
 
