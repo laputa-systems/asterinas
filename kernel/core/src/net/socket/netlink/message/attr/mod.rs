@@ -104,6 +104,9 @@ pub(crate) enum AttrValidation {
     Strict,
     /// Rejects the request if a recognized attribute fails validation.
     LegacyQuery,
+    /// Rejects malformed attributes and recognized attributes that fail validation,
+    /// while ignoring unrecognized ones, as state-changing requests do.
+    LegacyChange,
     /// Allows the request to proceed with attributes parsed before the first validation error.
     LegacyDump,
 }
@@ -157,7 +160,8 @@ pub(crate) trait Attribute: Debug + Send + Sync {
         // for more details.
 
         let mut error = None;
-        let mut should_report_error = validation == AttrValidation::Strict;
+        let mut should_report_error =
+            matches!(validation, AttrValidation::Strict | AttrValidation::LegacyChange);
         while total_len > 0 {
             // Validate the remaining length for the attribute header length.
             if total_len < size_of::<CAttrHeader>() {

@@ -62,7 +62,25 @@ impl<Body: SegmentBody, Attr: Attribute> SegmentCommon<Body, Attr> {
         reader: &mut dyn MultiRead,
         strict_check: bool,
     ) -> Result<ContinueRead<Self>> {
-        let segment = Self::read_payload(header, reader, strict_check)?;
+        Self::read_with(header, reader, strict_check, false)
+    }
+
+    /// Reads a state-changing request, whose malformed attributes fail it even without strict checking.
+    pub(in netlink) fn read_change_from(
+        header: &CMsgSegHdr,
+        reader: &mut dyn MultiRead,
+        strict_check: bool,
+    ) -> Result<ContinueRead<Self>> {
+        Self::read_with(header, reader, strict_check, true)
+    }
+
+    fn read_with(
+        header: &CMsgSegHdr,
+        reader: &mut dyn MultiRead,
+        strict_check: bool,
+        change: bool,
+    ) -> Result<ContinueRead<Self>> {
+        let segment = Self::read_payload(header, reader, strict_check, change)?;
 
         // Message padding is outside the payload;
         // even invalid messages must leave the reader at the next header.
@@ -76,6 +94,7 @@ impl<Body: SegmentBody, Attr: Attribute> SegmentCommon<Body, Attr> {
         header: &CMsgSegHdr,
         reader: &mut dyn MultiRead,
         strict_check: bool,
+        change: bool,
     ) -> Result<ContinueRead<Self>> {
         let (body, remain_len) =
             match <Body as SegmentBody>::read_from(header, reader, strict_check)? {
@@ -85,6 +104,8 @@ impl<Body: SegmentBody, Attr: Attribute> SegmentCommon<Body, Attr> {
 
         let attr_validation = if strict_check {
             AttrValidation::Strict
+        } else if change {
+            AttrValidation::LegacyChange
         } else if GetRequestFlags::from_bits_truncate(header.flags).contains(GetRequestFlags::DUMP)
         {
             AttrValidation::LegacyDump

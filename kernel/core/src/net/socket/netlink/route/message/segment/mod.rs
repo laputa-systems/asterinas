@@ -135,7 +135,7 @@ impl ProtocolSegment for RtnlSegment {
                 ContinueRead::SkippedInvalid(errno!(EINVAL, "the message body is too small"))
             }
             Ok(CSegmentType::NEWLINK) => {
-                LinkSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::NewLink)
+                LinkSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::NewLink)
             }
             Ok(CSegmentType::GETLINK) => {
                 LinkSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::GetLink)
@@ -144,28 +144,28 @@ impl ProtocolSegment for RtnlSegment {
                 AddrSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::GetAddr)
             }
             Ok(CSegmentType::NEWADDR) => {
-                AddrSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::NewAddr)
+                AddrSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::NewAddr)
             }
             Ok(CSegmentType::DELADDR) => {
-                AddrSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::DelAddr)
+                AddrSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::DelAddr)
             }
             Ok(CSegmentType::GETROUTE) => {
                 RouteSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::GetRoute)
             }
             Ok(CSegmentType::NEWROUTE) => {
-                RouteSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::NewRoute)
+                RouteSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::NewRoute)
             }
             Ok(CSegmentType::DELROUTE) => {
-                RouteSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::DelRoute)
+                RouteSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::DelRoute)
             }
             Ok(CSegmentType::GETRULE) => {
                 RuleSegment::read_from_ignoring_attrs(&header, reader, strict_check)?.map(RtnlSegment::GetRule)
             }
             Ok(CSegmentType::NEWRULE) => {
-                RuleSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::NewRule)
+                RuleSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::NewRule)
             }
             Ok(CSegmentType::DELRULE) => {
-                RuleSegment::read_from(&header, reader, strict_check)?.map(RtnlSegment::DelRule)
+                RuleSegment::read_change_from(&header, reader, strict_check)?.map(RtnlSegment::DelRule)
             }
             _ => {
                 let payload_len = header.calc_payload_len_with_padding(reader)?;
