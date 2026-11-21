@@ -104,7 +104,6 @@ impl Xattr {
     /// Creates a new xattr handle for the block referenced by `InodeDesc.file_acl`.
     pub(super) fn new(bid: Ext2Bid, inode: Weak<Inode>, fs: Weak<Ext2>) -> Self {
         Self {
-            fs: fs.clone(),
             cache: RwMutex::new(XattrCache {
                 block_buf: None,
                 entries: Vec::new(),
@@ -113,6 +112,7 @@ impl Xattr {
                 inode,
                 fs,
             }),
+            fs: fs.clone(),
         }
     }
 

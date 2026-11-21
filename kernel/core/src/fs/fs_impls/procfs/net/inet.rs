@@ -10,13 +10,13 @@ use crate::{fs::{file::mkmod, procfs::template::{ProcFile, ProcFileOps}, vfs::in
 pub(super) struct InetFileOps { tcp: bool, ipv6: bool }
 
 impl InetFileOps {
-    fn new(parent: Weak<dyn Inode>, tcp: bool, ipv6: bool) -> Arc<dyn Inode> {
+    fn new_file(parent: Weak<dyn Inode>, tcp: bool, ipv6: bool) -> Arc<dyn Inode> {
         ProcFile::new(Self { tcp, ipv6 }, parent, mkmod!(a+r))
     }
-    pub(super) fn tcp(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new(parent, true, false) }
-    pub(super) fn tcp6(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new(parent, true, true) }
-    pub(super) fn udp(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new(parent, false, false) }
-    pub(super) fn udp6(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new(parent, false, true) }
+    pub(super) fn tcp(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new_file(parent, true, false) }
+    pub(super) fn tcp6(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new_file(parent, true, true) }
+    pub(super) fn udp(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new_file(parent, false, false) }
+    pub(super) fn udp6(parent: Weak<dyn Inode>) -> Arc<dyn Inode> { Self::new_file(parent, false, true) }
 }
 
 fn address(addr: IpAddress) -> String {
@@ -38,7 +38,19 @@ fn state(state: TcpState) -> u8 {
     }
 }
 
-fn row(printer: &mut VmPrinter, index: usize, local: IpEndpoint, remote: IpEndpoint, state: u8, tx: u32, rx: u32, uid: u32, inode: u64) -> Result<()> {
+struct SocketRow {
+    index: usize,
+    local: IpEndpoint,
+    remote: IpEndpoint,
+    state: u8,
+    tx: u32,
+    rx: u32,
+    uid: u32,
+    inode: u64,
+}
+
+fn row(printer: &mut VmPrinter, row: SocketRow) -> Result<()> {
+    let SocketRow { index, local, remote, state, tx, rx, uid, inode } = row;
     writeln!(printer, "{:4}: {}:{:04X} {}:{:04X} {:02X} {:08X}:{:08X} 00:00000000 00000000 {:5} 0 {} 0 0000000000000000", index, address(local.addr), local.port, address(remote.addr), remote.port, state, tx, rx, uid, inode)?;
     Ok(())
 }
@@ -57,7 +69,7 @@ impl ProcFileOps for InetFileOps {
                     let count = page.len();
                     for socket in page {
                         if (socket.family == TcpAddressFamily::Ipv6) != self.ipv6 { continue; }
-                        row(&mut printer, index, socket.local, socket.remote, state(socket.state), socket.write_queue, socket.read_queue, socket.uid, socket.inode)?;
+                        row(&mut printer, SocketRow { index, local: socket.local, remote: socket.remote, state: state(socket.state), tx: socket.write_queue, rx: socket.read_queue, uid: socket.uid, inode: socket.inode })?;
                         index += 1;
                         if printer.bytes_written() == capacity { return Ok(capacity); }
                     }
@@ -77,7 +89,7 @@ impl ProcFileOps for InetFileOps {
                     if matches!(socket.local.addr, IpAddress::Ipv6(_)) != self.ipv6 { continue; }
                     let unspecified = match socket.local.addr { IpAddress::Ipv4(_) => IpAddress::Ipv4(Ipv4Address::UNSPECIFIED), IpAddress::Ipv6(_) => IpAddress::Ipv6(Ipv6Address::UNSPECIFIED) };
                     let remote = socket.remote.unwrap_or(IpEndpoint::new(unspecified, 0));
-                    row(&mut printer, index, socket.local, remote, if socket.remote.is_some() { 1 } else { 7 }, socket.write_queue, socket.read_queue, socket.uid, socket.inode)?;
+                    row(&mut printer, SocketRow { index, local: socket.local, remote, state: if socket.remote.is_some() { 1 } else { 7 }, tx: socket.write_queue, rx: socket.read_queue, uid: socket.uid, inode: socket.inode })?;
                     index += 1;
                     if printer.bytes_written() == capacity { return Ok(capacity); }
                 }

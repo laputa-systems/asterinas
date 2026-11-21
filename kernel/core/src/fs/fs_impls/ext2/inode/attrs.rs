@@ -298,7 +298,7 @@ impl Inode {
 fn encode_disk_acl(wire: &[u8]) -> Vec<u8> {
     let mut disk = Vec::with_capacity(wire.len());
     disk.extend_from_slice(&1u32.to_le_bytes());
-    for entry in wire[4..].chunks_exact(8) {
+    for entry in wire[4..].as_chunks::<8>().0 {
         let tag = u16::from_le_bytes(entry[..2].try_into().unwrap());
         disk.extend_from_slice(&entry[..if matches!(tag, 2 | 8) { 8 } else { 4 }]);
     }

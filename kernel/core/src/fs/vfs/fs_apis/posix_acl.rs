@@ -39,7 +39,7 @@ impl PosixAcl {
         if data.is_empty() {
             return Ok(None);
         }
-        if data.len() < 4 || (data.len() - 4) % 8 != 0 {
+        if data.len() < 4 || !(data.len() - 4).is_multiple_of(8) {
             return Err(errno!(EINVAL, "invalid POSIX ACL size"));
         }
         if u32::from_le_bytes(data[..4].try_into().unwrap()) != 2 {
@@ -51,7 +51,7 @@ impl PosixAcl {
         let mut phase = Phase::Owner;
         let mut needs_mask = false;
         let mut entries = Vec::with_capacity((data.len() - 4) / 8);
-        for raw in data[4..].chunks_exact(8) {
+        for raw in data[4..].as_chunks::<8>().0 {
             let tag = u16::from_le_bytes(raw[..2].try_into().unwrap());
             let permissions = u16::from_le_bytes(raw[2..4].try_into().unwrap());
             let id = u32::from_le_bytes(raw[4..8].try_into().unwrap());

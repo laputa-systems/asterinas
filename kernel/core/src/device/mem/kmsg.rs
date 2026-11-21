@@ -44,7 +44,7 @@ fn render(record: &RecordCopy) -> Vec<u8> {
 
 fn escape_into(line: &mut Vec<u8>, text: &[u8]) {
     for &byte in text {
-        if byte < b' ' || byte >= 0x7f || byte == b'\\' {
+        if !(b' '..0x7f).contains(&byte) || byte == b'\\' {
             line.extend_from_slice(format!("\\x{:02x}", byte).as_bytes());
         } else {
             line.push(byte);

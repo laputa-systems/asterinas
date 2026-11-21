@@ -686,13 +686,13 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
 
     /// Returns the first data byte at or after `offset`, or `ENXIO` if none exists.
     fn seek_data(&self, _offset: usize) -> Result<usize> {
-        return Err(errno!(EINVAL, "data seeking is not supported"));
+        Err(errno!(EINVAL, "data seeking is not supported"))
     }
 
     /// Returns the first hole at or after `offset`, including the implicit hole at EOF.
     /// An offset at or beyond EOF fails with `ENXIO`.
     fn seek_hole(&self, _offset: usize) -> Result<usize> {
-        return Err(errno!(EINVAL, "hole seeking is not supported"));
+        Err(errno!(EINVAL, "hole seeking is not supported"))
     }
 
     /// Gets the extension of this inode.
@@ -784,8 +784,8 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
             .then(|| self.fs_lock_context_or_init().ownership_lock().lock());
         let metadata = if _ownership.is_some() { self.metadata()? } else { metadata };
         let mode = metadata.mode;
-        if metadata.uid != creds.fsuid() {
-            if let Some(acl) = self.access_acl()? {
+        if metadata.uid != creds.fsuid()
+            && let Some(acl) = self.access_acl()? {
                 let wanted = (perm.bits() & 7) as u8;
                 let allowed = acl.permits(creds.fsuid(), metadata.uid, metadata.gid,
                     |gid| gid == creds.fsgid() || creds.groups().contains(&gid), wanted);
@@ -793,7 +793,6 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
                     Err(errno!(EACCES, "POSIX ACL permission check failed"))
                 };
             }
-        }
         if metadata.uid == creds.fsuid() {
             if (perm.may_read() && !mode.is_owner_readable())
                 || (perm.may_write() && !mode.is_owner_writable())

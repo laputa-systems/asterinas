@@ -774,7 +774,7 @@ pub(crate) mod ino {
         dir_ino + (attr_id as Ino) + 1
     }
 
-    pub(crate) fn from_node_kind(inner: &SysTreeNodeKind) -> Ino {
+    pub(in crate::fs) fn from_node_kind(inner: &SysTreeNodeKind) -> Ino {
         match inner {
             SysTreeNodeKind::Branch(branch_node) => from_sysnode_id(branch_node.id()),
             SysTreeNodeKind::Leaf(leaf_node) => from_sysnode_id(leaf_node.id()),

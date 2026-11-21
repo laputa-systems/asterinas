@@ -40,7 +40,7 @@ impl ProcDirOps for RandomDirOps {
             return Ok(child);
         }
 
-        return Err(errno!(ENOENT, "the file does not exist"));
+        Err(errno!(ENOENT, "the file does not exist"))
     }
 
     fn visit_entries_from_offset<'a, F>(&'a self, offset: usize, visit_fn: F) -> Result<()>

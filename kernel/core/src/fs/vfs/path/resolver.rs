@@ -785,7 +785,6 @@ impl PathResolver {
     /// If `follow_tail_link` is true and the trailing component is a symlink,
     /// it will be followed.
     /// Symlinks in earlier components of the path will always be followed.
-    #[expect(clippy::redundant_closure)]
     fn lookup_from_parent(
         &self,
         parent: &Path,

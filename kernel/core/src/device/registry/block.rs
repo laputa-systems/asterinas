@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::{borrow::ToOwned, format, string::ToString};
+use alloc::{borrow::ToOwned, format};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use aster_block::{BLOCK_SIZE, BlockDevice, SECTOR_SIZE, bio::BioStatus};

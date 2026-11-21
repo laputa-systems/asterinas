@@ -68,7 +68,7 @@ impl Inode {
         match kind {
             ExtentKind::Hole => Ok(size),
             ExtentKind::Data => {
-                return Err(errno!(ENXIO, "no data at or after the offset"))
+                Err(errno!(ENXIO, "no data at or after the offset"))
             }
         }
     }

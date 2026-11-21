@@ -255,24 +255,6 @@ impl Inode {
         Ok(())
     }
 
-    /// Renames or moves an entry from this directory to directory referred by `new_dir_inode`.
-    pub(in ext2) fn rename(
-        &self,
-        old_name: &str,
-        old_inode: &Inode,
-        new_dir_inode: &Inode,
-        new_name: &str,
-        replaced_inode: Option<&Inode>,
-    ) -> Result<()> {
-        self.rename_bytes(
-            old_name.as_bytes(),
-            old_inode,
-            new_dir_inode,
-            new_name.as_bytes(),
-            replaced_inode,
-        )
-    }
-
     pub(in ext2) fn rename_bytes(
         &self,
         old_name: &[u8],
