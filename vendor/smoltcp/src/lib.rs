@@ -1,5 +1,8 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![deny(unsafe_code)]
+// Vendored smoltcp 0.11.0 built with the kernel's reduced feature set: items gated on
+// unused features leave these warnings, which the workspace `-Dwarnings` lint must not fail on.
+#![allow(unused_imports, unused_variables, dead_code, mismatched_lifetime_syntaxes)]
 
 //! The _smoltcp_ library is built in a layered structure, with the layers corresponding
 //! to the levels of API abstraction. Only the highest layers would be used by a typical
