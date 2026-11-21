@@ -142,7 +142,7 @@ impl IpPacketSocket {
         check_current_net_raw()?;
         let protocol = u8::try_from(protocol).map_err(|_| Errno::EPROTONOSUPPORT)?;
         if protocol == 0 || protocol == 255 {
-            return_errno_with_message!(Errno::EPROTONOSUPPORT, "unsupported raw IP protocol");
+            return Err(errno!(EPROTONOSUPPORT, "unsupported raw IP protocol"));
         }
         Ok(Self::new(is_nonblocking, IpSocketKind::Raw(protocol)))
     }
@@ -174,13 +174,13 @@ impl IpPacketSocket {
         let mut state = self.tap.state.lock();
         if let Some(id) = state.ping_id {
             if bind_address.is_none() { return Ok(id); }
-            return_errno_with_message!(Errno::EINVAL, "ping socket is already bound");
+            return Err(errno!(EINVAL, "ping socket is already bound"));
         }
         let local = bind_address.unwrap_or(state.local);
         let mut ids = PING_IDS.lock();
         let id = if requested != 0 {
             if ids.get(&requested).is_some_and(|bindings| !reuse || bindings.iter().any(|binding| !binding.reuse)) {
-                return_errno_with_message!(Errno::EADDRINUSE, "ping identifier is in use");
+                return Err(errno!(EADDRINUSE, "ping identifier is in use"));
             }
             requested
         } else {
@@ -189,7 +189,7 @@ impl IpPacketSocket {
             loop {
                 if !ids.contains_key(&id) { break id; }
                 id = if id == u16::MAX { 1 } else { id + 1 };
-                if id == start { return_errno_with_message!(Errno::EAGAIN, "no ping identifier is available"); }
+                if id == start { return Err(errno!(EAGAIN, "no ping identifier is available")); }
             }
         };
         ids.entry(id).or_default().push(PingBinding { tap: Arc::downgrade(&self.tap), local, reuse });
@@ -276,16 +276,16 @@ impl Pollable for IpPacketSocket {
 
 impl Socket for IpPacketSocket {
     fn bind(&self, address: SocketAddr) -> Result<()> {
-        let SocketAddr::IPv4(address, port) = address else { return_errno_with_message!(Errno::EAFNOSUPPORT, "expected an IPv4 address"); };
+        let SocketAddr::IPv4(address, port) = address else { return Err(errno!(EAFNOSUPPORT, "expected an IPv4 address")); };
         if self.tap.kind == IpSocketKind::Ping && is_broadcast_endpoint(&IpEndpoint::new(address.into(), port)) {
-            return_errno_with_message!(Errno::EADDRNOTAVAIL, "ping socket cannot bind a broadcast address");
+            return Err(errno!(EADDRNOTAVAIL, "ping socket cannot bind a broadcast address"));
         }
         if !address.is_unspecified() { lookup_local_iface(IpAddress::Ipv4(address))?; }
         if self.tap.kind == IpSocketKind::Ping {
             self.assign_ping_id(port, Some(address))?;
         } else {
             let mut state = self.tap.state.lock();
-            if state.peer.is_some() { return_errno_with_message!(Errno::EINVAL, "connected raw socket cannot bind"); }
+            if state.peer.is_some() { return Err(errno!(EINVAL, "connected raw socket cannot bind")); }
             state.local = address;
         }
         Ok(())
@@ -293,21 +293,21 @@ impl Socket for IpPacketSocket {
 
     fn connect(&self, address: SocketAddr) -> Result<()> {
         let endpoint: IpEndpoint = map_unspecified_to_localhost(address.try_into()?);
-        let IpAddress::Ipv4(peer) = endpoint.addr else { return_errno_with_message!(Errno::EAFNOSUPPORT, "expected an IPv4 address"); };
+        let IpAddress::Ipv4(peer) = endpoint.addr else { return Err(errno!(EAFNOSUPPORT, "expected an IPv4 address")); };
         let mark = self.options.read().mark;
         let (iface, _, _) = lookup_output_route(endpoint.addr, mark, false, None)?;
         if is_broadcast_endpoint(&endpoint) && !self.options.read().socket.broadcast() {
-            return_errno_with_message!(Errno::EACCES, "broadcast requires SO_BROADCAST");
+            return Err(errno!(EACCES, "broadcast requires SO_BROADCAST"));
         }
         let local = self.tap.state.lock().local;
         if local.is_loopback() && iface.type_() != InterfaceType::LOOPBACK {
-            return_errno_with_message!(Errno::EINVAL, "loopback source requires a loopback route");
+            return Err(errno!(EINVAL, "loopback source requires a loopback route"));
         }
         let source = get_ephemeral_endpoint_on(&iface, &endpoint)?.addr;
         if self.tap.kind == IpSocketKind::Ping { self.assign_ping_id(0, None)?; }
         let mut state = self.tap.state.lock();
         if state.local.is_loopback() && iface.type_() != InterfaceType::LOOPBACK {
-            return_errno_with_message!(Errno::EINVAL, "loopback source requires a loopback route");
+            return Err(errno!(EINVAL, "loopback source requires a loopback route"));
         }
         if state.local.is_unspecified() && let IpAddress::Ipv4(source) = source {
             state.local = source;
@@ -332,36 +332,36 @@ impl Socket for IpPacketSocket {
     fn sendmsg(&self, reader: &mut dyn MultiRead, message: MessageHeader, flags: SendFlags) -> Result<usize> {
         if let Some(error) = self.take_pending_error() { return Err(error.into()); }
         if flags.bits() & !(SendFlags::MSG_DONTWAIT | SendFlags::MSG_NOSIGNAL).bits() != 0 {
-            return_errno_with_message!(Errno::EOPNOTSUPP, "unsupported raw IPv4 send flags");
+            return Err(errno!(EOPNOTSUPP, "unsupported raw IPv4 send flags"));
         }
-        if !message.control_messages.is_empty() { return_errno_with_message!(Errno::EOPNOTSUPP, "raw IP control messages are not supported"); }
+        if !message.control_messages.is_empty() { return Err(errno!(EOPNOTSUPP, "raw IP control messages are not supported")); }
         let destination = match message.addr {
             Some(SocketAddr::IPv4(address, _)) => address,
-            Some(_) => return_errno_with_message!(Errno::EAFNOSUPPORT, "expected an IPv4 address"),
+            Some(_) => return Err(errno!(EAFNOSUPPORT, "expected an IPv4 address")),
             None => self.tap.state.lock().peer.ok_or_else(|| Error::from(Errno::EDESTADDRREQ))?,
         };
         let endpoint = map_unspecified_to_localhost(IpEndpoint::new(destination.into(), 0));
         let mark = self.options.read().mark;
         let (iface, next_hop, route) = lookup_output_route(endpoint.addr, mark, false, None)?;
         if is_broadcast_endpoint(&endpoint) && !self.options.read().socket.broadcast() {
-            return_errno_with_message!(Errno::EACCES, "broadcast requires SO_BROADCAST");
+            return Err(errno!(EACCES, "broadcast requires SO_BROADCAST"));
         }
         let local = self.tap.state.lock().local;
         if local.is_loopback() && iface.type_() != InterfaceType::LOOPBACK {
-            return_errno_with_message!(Errno::EINVAL, "loopback source requires a loopback route");
+            return Err(errno!(EINVAL, "loopback source requires a loopback route"));
         }
         let source = if local.is_unspecified() { get_ephemeral_endpoint_on(&iface, &endpoint)?.addr } else { local.into() };
-        let IpAddress::Ipv4(source) = source else { return_errno_with_message!(Errno::EAFNOSUPPORT, "expected an IPv4 source"); };
-        let IpAddress::Ipv4(destination) = endpoint.addr else { return_errno_with_message!(Errno::EAFNOSUPPORT, "expected an IPv4 destination"); };
+        let IpAddress::Ipv4(source) = source else { return Err(errno!(EAFNOSUPPORT, "expected an IPv4 source")); };
+        let IpAddress::Ipv4(destination) = endpoint.addr else { return Err(errno!(EAFNOSUPPORT, "expected an IPv4 destination")); };
         let ping_id = if self.tap.kind == IpSocketKind::Ping { Some(self.assign_ping_id(0, None)?) } else { None };
         let size = reader.sum_lens();
-        if size > u16::MAX as usize - 20 { return_errno_with_message!(Errno::EMSGSIZE, "raw IPv4 datagram is too large"); }
+        if size > u16::MAX as usize - 20 { return Err(errno!(EMSGSIZE, "raw IPv4 datagram is too large")); }
         let mut packet = vec![0u8; size + 20];
         let copied = reader.read(&mut VmWriter::from(&mut packet[20..])).map_err(|(err, _)| err)?;
         packet.truncate(copied + 20);
         if let Some(id) = ping_id {
             if copied < 8 || packet[20] != 8 || packet[21] != 0 {
-                return_errno_with_message!(Errno::EINVAL, "ping datagrams must be ICMP echo requests");
+                return Err(errno!(EINVAL, "ping datagrams must be ICMP echo requests"));
             }
             packet[22..24].fill(0);
             packet[24..26].copy_from_slice(&id.to_be_bytes());
@@ -379,12 +379,12 @@ impl Socket for IpPacketSocket {
         packet[12..16].copy_from_slice(&source.octets()); packet[16..20].copy_from_slice(&destination.octets());
         let checksum = internet_checksum(&packet[..20]); packet[10..12].copy_from_slice(&checksum.to_be_bytes());
         drop(options);
-        iface.send_ipv4_packet(&packet, path.mtu, next_hop).map_err(|error| Error::with_message(match error {
+        iface.send_ipv4_packet(&packet, path.mtu, next_hop).map_err(|error| Error::new(match error {
             aster_bigtcp::errors::LinkSendError::Down => Errno::ENETDOWN,
             aster_bigtcp::errors::LinkSendError::TooLong => Errno::EMSGSIZE,
             aster_bigtcp::errors::LinkSendError::Busy | aster_bigtcp::errors::LinkSendError::NoMemory => Errno::ENOBUFS,
             _ => Errno::EINVAL,
-        }, "cannot enqueue raw IPv4 packet"))?;
+        }))?;
         iface.poll();
         Ok(copied)
     }
@@ -392,7 +392,7 @@ impl Socket for IpPacketSocket {
     fn recvmsg(&self, writer: &mut dyn MultiWrite, flags: RecvFlags) -> Result<(RecvOutput, MessageHeader)> {
         if flags.contains(RecvFlags::MSG_ERRQUEUE) { return self.recv_error_queue(writer, flags); }
         if flags.bits() & !(RecvFlags::MSG_DONTWAIT | RecvFlags::MSG_PEEK | RecvFlags::MSG_TRUNC | RecvFlags::MSG_CMSG_CLOEXEC).bits() != 0 {
-            return_errno_with_message!(Errno::EOPNOTSUPP, "unsupported raw IPv4 receive flags");
+            return Err(errno!(EOPNOTSUPP, "unsupported raw IPv4 receive flags"));
         }
         if flags.contains(RecvFlags::MSG_DONTWAIT) { self.try_recv(writer, flags) }
         else { self.block_on(IoEvents::IN, self.timeouts.recv_timeout(), || self.try_recv(writer, flags)) }
@@ -420,13 +420,13 @@ impl Socket for IpPacketSocket {
                 return Ok(());
             }
             pktinfo @ Pktinfo => {
-                if *pktinfo.get().unwrap() { return_errno_with_message!(Errno::ENOPROTOOPT, "raw IPv4 packet information is not supported"); }
+                if *pktinfo.get().unwrap() { return Err(errno!(ENOPROTOOPT, "raw IPv4 packet information is not supported")); }
             }
             recverr @ Recverr => {
-                if *recverr.get().unwrap() && self.tap.kind != IpSocketKind::Ping { return_errno_with_message!(Errno::ENOPROTOOPT, "raw IPv4 error queues are not supported"); }
+                if *recverr.get().unwrap() && self.tap.kind != IpSocketKind::Ping { return Err(errno!(ENOPROTOOPT, "raw IPv4 error queues are not supported")); }
             }
             timestamping @ Timestamping => {
-                if *timestamping.get().unwrap() != 0 { return_errno_with_message!(Errno::ENOPROTOOPT, "raw IPv4 timestamping is not supported"); }
+                if *timestamping.get().unwrap() != 0 { return Err(errno!(ENOPROTOOPT, "raw IPv4 timestamping is not supported")); }
             }
             _ => (),
         });
@@ -452,7 +452,7 @@ impl Socket for IpPacketSocket {
 
 impl SetIpLevelOption for IpPacketSocket {
     fn set_hdrincl(&self, hdrincl: bool) -> Result<()> {
-        if hdrincl { return_errno_with_message!(Errno::ENOPROTOOPT, "raw IPv4 header inclusion is not supported"); }
+        if hdrincl { return Err(errno!(ENOPROTOOPT, "raw IPv4 header inclusion is not supported")); }
         Ok(())
     }
 }

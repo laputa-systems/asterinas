@@ -100,15 +100,15 @@ pub(super) fn do_new_link(request_segment: &LinkSegment) -> Result<()> {
     let request_flags = NewRequestFlags::from_bits_truncate(request_segment.header().flags);
     let Some(iface) = iface else {
         if request_flags.contains(NewRequestFlags::CREATE) {
-            return_errno_with_message!(Errno::EOPNOTSUPP, "creating a link is not supported");
+            return Err(errno!(EOPNOTSUPP, "creating a link is not supported"));
         }
-        return_errno_with_message!(Errno::ENODEV, "no link found");
+        return Err(errno!(ENODEV, "no link found"));
     };
     if request_flags.contains(NewRequestFlags::EXCL) {
-        return_errno_with_message!(Errno::EEXIST, "the link already exists");
+        return Err(errno!(EEXIST, "the link already exists"));
     }
     if request_flags.contains(NewRequestFlags::REPLACE) {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "replacing a link is not supported");
+        return Err(errno!(EOPNOTSUPP, "replacing a link is not supported"));
     }
 
     for attr in attrs {
@@ -123,10 +123,7 @@ pub(super) fn do_new_link(request_segment: &LinkSegment) -> Result<()> {
             _ => true,
         };
         if !unchanged {
-            return_errno_with_message!(
-                Errno::EOPNOTSUPP,
-                "only the up flag of a link can be changed"
-            );
+            return Err(errno!(EOPNOTSUPP, "only the up flag of a link can be changed"));
         }
     }
 

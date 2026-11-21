@@ -42,14 +42,14 @@ pub(super) fn sys_settimeofday(
     let timezone = if timezone_addr != 0 {
         let tz = ctx.user_space().read_val::<timezone_t>(timezone_addr)?;
         if !(-900..=900).contains(&tz.tz_minuteswest) {
-            return_errno_with_message!(Errno::EINVAL, "invalid timezone");
+            return Err(errno!(EINVAL, "invalid timezone"));
         }
         Some(tz)
     } else {
         None
     };
     if !may_set_time(ctx) {
-        return_errno_with_message!(Errno::EPERM, "changing the clock needs CAP_SYS_TIME");
+        return Err(errno!(EPERM, "changing the clock needs CAP_SYS_TIME"));
     }
     if let Some(tz) = timezone {
         let mut state = TIMEZONE.lock();

@@ -23,7 +23,7 @@ impl BoundDevice {
         iter_all_ifaces()
             .find(|iface| iface.name() == name)
             .map(|iface| Self(Some(iface.index())))
-            .ok_or_else(|| Error::with_message(Errno::ENODEV, "no interface has this name"))
+            .ok_or_else(|| errno!(ENODEV, "no interface has this name"))
     }
 
     pub(crate) fn is_bound(&self) -> bool {
@@ -39,7 +39,7 @@ impl BoundDevice {
         iter_all_ifaces()
             .find(|iface| iface.index() == index)
             .map(Some)
-            .ok_or_else(|| Error::with_message(Errno::ENODEV, "the interface is gone"))
+            .ok_or_else(|| errno!(ENODEV, "the interface is gone"))
     }
 
     pub(crate) fn name(&self) -> Result<Option<InterfaceName>> {

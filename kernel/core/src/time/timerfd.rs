@@ -234,7 +234,7 @@ impl TimerfdFile {
     fn try_read(&self, writer: &mut VmWriter) -> Result<()> {
         if self.cancellation.cancelled.swap(false, Ordering::AcqRel) {
             self.ticks.store(0, Ordering::Relaxed);
-            return_errno_with_message!(Errno::ECANCELED, "realtime clock was set");
+            return Err(errno!(ECANCELED, "realtime clock was set"));
         }
         let ticks = self.ticks.fetch_and(0, Ordering::Relaxed);
         self.pollee.invalidate();

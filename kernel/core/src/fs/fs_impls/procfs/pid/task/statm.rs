@@ -29,7 +29,7 @@ impl ProcFileOps for StatmFileOps {
 
     fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         let Some((_, process)) = self.0.thread_and_process() else {
-            return_errno_with_message!(Errno::ESRCH, "the thread or the process does not exist");
+            return Err(errno!(ESRCH, "the thread or the process does not exist"));
         };
         let (size, resident, shared, text, data) = {
             let vmar = process.lock_vmar();

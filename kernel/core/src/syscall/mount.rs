@@ -246,7 +246,7 @@ fn do_new_mount(
             .read_cstring(src_name_addr, MAX_FILENAME_LEN)?;
         let source = String::from(source_cstr
             .to_str()
-            .map_err(|_| Error::with_message(Errno::EILSEQ, "mount source is not UTF-8"))?);
+            .map_err(|_| errno!(EILSEQ, "mount source is not UTF-8"))?);
         Some(source)
     };
 

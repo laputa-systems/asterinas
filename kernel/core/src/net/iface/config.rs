@@ -113,7 +113,7 @@ impl Ipv4AddressLifetimes {
 
     pub(in crate::net) fn new(preferred: u32, valid: u32) -> Result<Self> {
         if valid == 0 || preferred > valid {
-            return_errno_with_message!(Errno::EINVAL, "the address lifetimes are invalid");
+            return Err(errno!(EINVAL, "the address lifetimes are invalid"));
         }
         let preferred = if valid == u32::MAX && preferred != 0 { u32::MAX } else { preferred };
         Ok(Self { preferred, valid })
@@ -234,10 +234,7 @@ const USER_CHANGEABLE_FLAGS: InterfaceFlags = InterfaceFlags::UP
 pub(in crate::net) fn change_flags(iface: &Arc<Iface>, requested: InterfaceFlags) -> Result<()> {
     let changed = (requested ^ iface.flags()) & USER_CHANGEABLE_FLAGS;
     if !(changed - InterfaceFlags::UP).is_empty() {
-        return_errno_with_message!(
-            Errno::EOPNOTSUPP,
-            "only the up flag of an interface can be changed"
-        );
+        return Err(errno!(EOPNOTSUPP, "only the up flag of an interface can be changed"));
     }
     if changed.contains(InterfaceFlags::UP) {
         set_administratively_up(iface, requested.contains(InterfaceFlags::UP));
@@ -359,10 +356,7 @@ pub(in crate::net) fn set_labeled_ipv4_netmask(
         .find(|address| Arc::ptr_eq(&address.iface, iface) && selector.matches(address))
         .cloned()
     else {
-        return_errno_with_message!(
-            Errno::EADDRNOTAVAIL,
-            "the interface does not have the address"
-        );
+        return Err(errno!(EADDRNOTAVAIL, "the interface does not have the address"));
     };
     if existing.cidr().prefix_len() == prefix_len {
         return Ok(());
@@ -440,13 +434,10 @@ fn insert_address_locked(
         .filter(|address| same_network(&address.cidr, &new_address.cidr))
     {
         if address.address() == new_address.cidr.address() {
-            return_errno_with_message!(Errno::EEXIST, "the interface already has the address");
+            return Err(errno!(EEXIST, "the interface already has the address"));
         }
         if address.scope != new_address.scope {
-            return_errno_with_message!(
-                Errno::EINVAL,
-                "an address on the same network has another scope"
-            );
+            return Err(errno!(EINVAL, "an address on the same network has another scope"));
         }
         secondary = true;
     }
@@ -521,10 +512,7 @@ fn remove_locked(
         .iter()
         .find(|address| Arc::ptr_eq(&address.iface, iface) && selector.matches(address))
     else {
-        return_errno_with_message!(
-            Errno::EADDRNOTAVAIL,
-            "the interface does not have the address"
-        );
+        return Err(errno!(EADDRNOTAVAIL, "the interface does not have the address"));
     };
     let removed = removed.clone();
 
@@ -576,7 +564,7 @@ fn commit(
         .map(InterfaceAddress::cidr)
         .collect();
     iface.set_ipv4_cidrs(&cidrs).map_err(|_| {
-        Error::with_message(Errno::ENOBUFS, "the interface cannot hold more addresses")
+        errno!(ENOBUFS, "the interface cannot hold more addresses")
     })?;
 
     *addresses = updated;

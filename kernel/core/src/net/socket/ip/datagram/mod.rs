@@ -104,7 +104,7 @@ struct PacketOptions {
 impl PacketOptions {
     fn parse(input: &[u8]) -> Result<Option<Self>> {
         if input.is_empty() { return Ok(None); }
-        if input.len() > 40 { return_errno_with_message!(Errno::EINVAL, "IPv4 options exceed 40 bytes"); }
+        if input.len() > 40 { return Err(errno!(EINVAL, "IPv4 options exceed 40 bytes")); }
         let mut bytes = input.to_vec();
         bytes.resize(bytes.len().next_multiple_of(4), 0);
         let mut offset = 0;
@@ -115,16 +115,16 @@ impl PacketOptions {
                 1 => offset += 1,
                 131 => {
                     if source_route.is_some() || offset + 3 > bytes.len() {
-                        return_errno_with_message!(Errno::EINVAL, "invalid source route option");
+                        return Err(errno!(EINVAL, "invalid source route option"));
                     }
                     let len = usize::from(bytes[offset + 1]);
                     if len < 7 || (len - 3) % 4 != 0 || bytes[offset + 2] != 4 || offset + len > bytes.len() {
-                        return_errno_with_message!(Errno::EINVAL, "invalid source route option");
+                        return Err(errno!(EINVAL, "invalid source route option"));
                     }
                     source_route = Some(offset);
                     offset += len;
                 }
-                _ => return_errno_with_message!(Errno::EOPNOTSUPP, "unsupported IPv4 option"),
+                _ => return Err(errno!(EOPNOTSUPP, "unsupported IPv4 option")),
             }
         }
         if source_route.is_some() { check_current_net_raw()?; }
@@ -184,7 +184,7 @@ impl DatagramSocket {
         }
         let result = match &*self.inner.read() {
             Inner::Unbound(_) => {
-                return_errno_with_message!(Errno::EAGAIN, "the socket is not bound")
+                return Err(errno!(EAGAIN, "the socket is not bound"))
             }
             Inner::Bound(bound_datagram) => {
                 let (output, meta) = bound_datagram.try_recv_with_meta(writer, flags)?;
@@ -291,7 +291,7 @@ impl DatagramSocket {
             Inner::Bound(bound_datagram) => bound_datagram.pop_tx_timestamp(),
             Inner::Unbound(_) => None,
         }
-        .ok_or_else(|| Error::with_message(Errno::EAGAIN, "the error queue is empty"))?;
+        .ok_or_else(|| errno!(EAGAIN, "the error queue is empty"))?;
         self.pollee.invalidate();
 
         let tx_id = stamp.tag.wrapping_sub(1);
@@ -315,7 +315,7 @@ impl DatagramSocket {
             return Err(error);
         }
         if reader.sum_lens() > IPV4_MAX_UDP_PAYLOAD {
-            return_errno_with_message!(Errno::EMSGSIZE, "the UDP datagram exceeds the IPv4 length limit");
+            return Err(errno!(EMSGSIZE, "the UDP datagram exceeds the IPv4 length limit"));
         }
         let tx_tag = self.next_tx_tag();
         let (tos, dont_route, mtu_discovery, packet_options, can_broadcast, mark, device) = {
@@ -324,7 +324,7 @@ impl DatagramSocket {
         };
         let option_len = packet_options.as_ref().map_or(0, |options| options.bytes.len());
         if reader.sum_lens() + option_len > IPV4_MAX_UDP_PAYLOAD {
-            return_errno_with_message!(Errno::EMSGSIZE, "IPv4 options and UDP datagram exceed the IPv4 length limit");
+            return Err(errno!(EMSGSIZE, "IPv4 options and UDP datagram exceed the IPv4 length limit"));
         }
         let (sent_bytes, iface_to_poll) = select_remote_and_bind(
             &self.inner,
@@ -339,7 +339,7 @@ impl DatagramSocket {
                 let remote_endpoint = map_unspecified_to_localhost(*remote_endpoint);
                 let route_endpoint = IpEndpoint::new(packet_options.as_ref().and_then(PacketOptions::first_hop).map_or(remote_endpoint.addr, IpAddress::Ipv4), remote_endpoint.port);
                 if !can_broadcast && is_broadcast_endpoint(&route_endpoint) {
-                    return_errno_with_message!(Errno::EACCES, "broadcast requires SO_BROADCAST");
+                    return Err(errno!(EACCES, "broadcast requires SO_BROADCAST"));
                 }
                 let device = device.iface()?.map(|iface| iface.index());
                 let (iface, next_hop, route) = lookup_output_route(route_endpoint.addr, mark, dont_route, device)?;
@@ -355,7 +355,7 @@ impl DatagramSocket {
                 if matches!(mtu_discovery, PathMtuDiscovery::Do | PathMtuDiscovery::Probe | PathMtuDiscovery::Interface)
                     && reader.sum_lens() + IPV4_HEADER_LEN + UDP_HEADER_LEN + option_len > mtu
                 {
-                    return_errno_with_message!(Errno::EMSGSIZE, "the UDP datagram exceeds the path MTU");
+                    return Err(errno!(EMSGSIZE, "the UDP datagram exceeds the path MTU"));
                 }
                 let local = bound_datagram.local_endpoint();
                 let source = if local.addr.is_unspecified() || is_broadcast_endpoint(&local) {
@@ -371,7 +371,7 @@ impl DatagramSocket {
                 };
                 let ipv4_options = match (&packet_options, remote_endpoint.addr) {
                     (Some(options), IpAddress::Ipv4(destination)) => Some(options.wire_options(destination).ok_or_else(|| Error::from(Errno::EINVAL))?),
-                    (Some(_), _) => return_errno_with_message!(Errno::EAFNOSUPPORT, "IPv4 options require an IPv4 destination"),
+                    (Some(_), _) => return Err(errno!(EAFNOSUPPORT, "IPv4 options require an IPv4 destination")),
                     (None, _) => None,
                 };
                 let sent_bytes = bound_datagram.try_send_tagged(reader, &remote_endpoint, &iface, source, route, tx_tag, tos, next_hop, fragmentation, ipv4_options)?;
@@ -417,10 +417,7 @@ impl DatagramSocket {
             check_current_net_raw()?;
         }
         if matches!(&*inner, Inner::Bound(_)) {
-            return_errno_with_message!(
-                Errno::EOPNOTSUPP,
-                "a bound socket cannot change the device it is restricted to"
-            );
+            return Err(errno!(EOPNOTSUPP, "a bound socket cannot change the device it is restricted to"));
         }
 
         options.device = device;
@@ -511,7 +508,7 @@ impl Socket for DatagramSocket {
             if matches!(local, IpAddress::Ipv4(address) if address.is_loopback())
                 && iface.type_() != InterfaceType::LOOPBACK
             {
-                return_errno_with_message!(Errno::EINVAL, "a loopback source cannot use a non-loopback route");
+                return Err(errno!(EINVAL, "a loopback source cannot use a non-loopback route"));
             }
             if local.is_unspecified() {
                 bound.set_connected_source(get_ephemeral_endpoint_on(&iface, &route_endpoint)?.addr);
@@ -623,7 +620,7 @@ impl Socket for DatagramSocket {
                 let remote = *self.inner.read().peer_addr().ok_or_else(|| Error::from(Errno::ENOTCONN))?;
                 let (dont_route, first_hop, mark) = {
                     let options = self.options.read();
-                    if !options.route_valid { return_errno_with_message!(Errno::ENOTCONN, "the socket has no cached route"); }
+                    if !options.route_valid { return Err(errno!(ENOTCONN, "the socket has no cached route")); }
                     (options.dont_route, options.packet_options.as_ref().and_then(PacketOptions::first_hop), options.mark)
                 };
                 let route = IpEndpoint::new(first_hop.map_or(remote.addr, IpAddress::Ipv4), remote.port);

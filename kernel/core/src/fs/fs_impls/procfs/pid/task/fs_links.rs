@@ -36,7 +36,7 @@ impl ProcSymOps for FsLinkOps {
 
     fn read_link(&self) -> Result<SymbolicLink> {
         let Some((thread, process)) = self.0.thread_and_process() else {
-            return_errno_with_message!(Errno::ESRCH, "the thread does not exist");
+            return Err(errno!(ESRCH, "the thread does not exist"));
         };
         let vmar_guard = process.lock_vmar();
         let posix_thread = thread.as_posix_thread().unwrap();
@@ -46,9 +46,9 @@ impl ProcSymOps for FsLinkOps {
                 AlienAccessMode::READ_WITH_FS_CREDS,
                 &vmar_guard,
             )
-            .map_err(|_| Error::with_message(Errno::EACCES, "alien access is denied"))?;
+            .map_err(|_| errno!(EACCES, "alien access is denied"))?;
         if thread.is_exited() {
-            return_errno_with_message!(Errno::ENOENT, "the thread has exited");
+            return Err(errno!(ENOENT, "the thread has exited"));
         }
         let fs = posix_thread.read_fs();
         let resolver = fs.resolver().read();

@@ -32,7 +32,7 @@ pub(super) fn sys_copy_file_range(
     );
 
     if flags != 0 {
-        return_errno_with_message!(Errno::EINVAL, "no flags are defined");
+        return Err(errno!(EINVAL, "no flags are defined"));
     }
 
     let (in_file, out_file) = ctx
@@ -50,24 +50,24 @@ pub(super) fn sys_copy_file_range(
         || out_file.status_flags().contains(StatusFlags::O_PATH)
         || out_file.status_flags().contains(StatusFlags::O_APPEND)
     {
-        return_errno_with_message!(Errno::EBADF, "the files are not open for copying");
+        return Err(errno!(EBADF, "the files are not open for copying"));
     }
 
     let (Some(in_handle), Some(out_handle)) = (
         in_file.downcast_ref::<InodeHandle>(),
         out_file.downcast_ref::<InodeHandle>(),
     ) else {
-        return_errno_with_message!(Errno::EINVAL, "both files must be regular files");
+        return Err(errno!(EINVAL, "both files must be regular files"));
     };
     let (in_inode, out_inode) = (in_handle.path().inode(), out_handle.path().inode());
     if in_inode.type_() == InodeType::Dir || out_inode.type_() == InodeType::Dir {
-        return_errno_with_message!(Errno::EISDIR, "a file is a directory");
+        return Err(errno!(EISDIR, "a file is a directory"));
     }
     if in_inode.type_() != InodeType::File || out_inode.type_() != InodeType::File {
-        return_errno_with_message!(Errno::EINVAL, "both files must be regular files");
+        return Err(errno!(EINVAL, "both files must be regular files"));
     }
     if !Arc::ptr_eq(&in_inode.fs(), &out_inode.fs()) {
-        return_errno_with_message!(Errno::EXDEV, "the files are on different file systems");
+        return Err(errno!(EXDEV, "the files are on different file systems"));
     }
 
     let explicit_in = read_position(in_offset_ptr, ctx)?;
@@ -97,14 +97,14 @@ pub(super) fn sys_copy_file_range(
     if in_pos.checked_add(len).is_none_or(|end| end > i64::MAX as usize)
         || out_pos.checked_add(len).is_none_or(|end| end > i64::MAX as usize)
     {
-        return_errno_with_message!(Errno::EOVERFLOW, "a position overflows");
+        return Err(errno!(EOVERFLOW, "a position overflows"));
     }
 
     let in_size = in_handle.path().size();
     let len = len.min(in_size.saturating_sub(in_pos));
 
     if Arc::ptr_eq(in_inode, out_inode) && out_pos + len > in_pos && out_pos < in_pos + len {
-        return_errno_with_message!(Errno::EINVAL, "the ranges overlap in one file");
+        return Err(errno!(EINVAL, "the ranges overlap in one file"));
     }
 
     let mut buffer = vec![0u8; BUFFER_SIZE.min(len)].into_boxed_slice();
@@ -160,5 +160,5 @@ fn read_position(offset_ptr: Vaddr, ctx: &Context) -> Result<Option<usize>> {
     let offset: i64 = ctx.user_space().read_val(offset_ptr)?;
     usize::try_from(offset)
         .map(Some)
-        .map_err(|_| Error::with_message(Errno::EOVERFLOW, "a negative offset"))
+        .map_err(|_| errno!(EOVERFLOW, "a negative offset"))
 }

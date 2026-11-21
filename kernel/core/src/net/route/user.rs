@@ -68,7 +68,7 @@ pub(super) fn add_ipv4_route(
     addresses: &[InterfaceAddress],
 ) -> Result<RouteRecord> {
     if request.destination != request.destination.network() {
-        return_errno_with_message!(Errno::EINVAL, "the route destination is not a network");
+        return Err(errno!(EINVAL, "the route destination is not a network"));
     }
 
     let type_ = match request.action {
@@ -78,15 +78,15 @@ pub(super) fn add_ipv4_route(
 
     let iface = route_iface(&request, addresses)?;
     if request.scope != HOST_SCOPE && !iface.flags().contains(InterfaceFlags::UP) {
-        return_errno_with_message!(Errno::ENETDOWN, "the route interface is down");
+        return Err(errno!(ENETDOWN, "the route interface is down"));
     }
 
     if let Some(gateway) = request.gateway {
         if request.scope >= FIRST_SCOPE_WITHOUT_GATEWAY {
-            return_errno_with_message!(Errno::EINVAL, "a route with a gateway has a narrow scope");
+            return Err(errno!(EINVAL, "a route with a gateway has a narrow scope"));
         }
         if !is_on_connected_network(&iface, addresses, gateway) {
-            return_errno_with_message!(Errno::ENETUNREACH, "the gateway is not reachable");
+            return Err(errno!(ENETUNREACH, "the gateway is not reachable"));
         }
     }
 
@@ -121,10 +121,7 @@ pub(super) fn add_ipv4_route(
 /// Installs a route that refuses packets, which Linux accepts without a gateway or a device.
 fn add_reject_route(request: &NewIpv4Route, rejection: Rejection) -> Result<RouteRecord> {
     if request.gateway.is_some() || request.iface_index.is_some() {
-        return_errno_with_message!(
-            Errno::EINVAL,
-            "a route of this type cannot have a gateway or a device"
-        );
+        return Err(errno!(EINVAL, "a route of this type cannot have a gateway or a device"));
     }
 
     let entry = RouteEntry::reject(
@@ -165,14 +162,11 @@ pub(super) fn remove_ipv4_route(selector: &Ipv4RouteSelector) -> Result<RouteRec
                 .scope
                 .is_none_or(|scope| scope == ANY_SCOPE || scope == entry.origin().scope.get())
     }) else {
-        return_errno_with_message!(Errno::ESRCH, "no such route");
+        return Err(errno!(ESRCH, "no such route"));
     };
 
     if entry.origin().protocol == RouteProtocol::KERNEL {
-        return_errno_with_message!(
-            Errno::EOPNOTSUPP,
-            "a route that the kernel derives from an address cannot be removed"
-        );
+        return Err(errno!(EOPNOTSUPP, "a route that the kernel derives from an address cannot be removed"));
     }
 
     manager.remove_route(table_id, &selector.destination, entry.metric());
@@ -197,12 +191,12 @@ fn route_iface(request: &NewIpv4Route, addresses: &[InterfaceAddress]) -> Result
                 } else {
                     Errno::ENODEV
                 };
-                Error::with_message(errno, "no interface found")
+                Error::new(errno)
             });
     }
 
     let Some(gateway) = request.gateway else {
-        return_errno_with_message!(Errno::EINVAL, "a route needs an interface or a gateway");
+        return Err(errno!(EINVAL, "a route needs an interface or a gateway"));
     };
     addresses
         .iter()
@@ -211,7 +205,7 @@ fn route_iface(request: &NewIpv4Route, addresses: &[InterfaceAddress]) -> Result
                 && address.cidr().contains_addr(&gateway)
         })
         .map(|address| address.iface().clone())
-        .ok_or_else(|| Error::with_message(Errno::ENETUNREACH, "the gateway is not reachable"))
+        .ok_or_else(|| errno!(ENETUNREACH, "the gateway is not reachable"))
 }
 
 fn is_on_connected_network(

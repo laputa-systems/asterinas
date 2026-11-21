@@ -182,7 +182,7 @@ fn ethtool(ifreq: &CIfReq) -> Result<()> {
     let iface = ifreq.get_iface_by_name()?;
     let subcommand = if command == ETHTOOL_PERQUEUE {
         let subcommand_address = address.checked_add(size_of::<u32>())
-            .ok_or_else(|| Error::with_message(Errno::EFAULT, "invalid ethtool payload"))?;
+            .ok_or_else(|| errno!(EFAULT, "invalid ethtool payload"))?;
         user_space.read_val(subcommand_address)?
     } else {
         command
@@ -198,7 +198,7 @@ fn ethtool(ifreq: &CIfReq) -> Result<()> {
         check_current_privileged()?;
     }
     if command != ETHTOOL_GLINK {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "ethtool command is not supported");
+        return Err(errno!(EOPNOTSUPP, "ethtool command is not supported"));
     }
     let mut value: CEthtoolValue = user_space.read_val(address)?;
     value.data = u32::from(iface.flags().contains(InterfaceFlags::UP) && iface.carrier().on);
@@ -230,14 +230,11 @@ fn set_iface_address(ifreq: &CIfReq) -> Result<()> {
     let address = ifreq.data.addr().ipv4()?;
     let iface = ifreq.get_iface_by_name()?;
     if iface.flags().contains(InterfaceFlags::POINTOPOINT) {
-        return_errno_with_message!(
-            Errno::EOPNOTSUPP,
-            "point-to-point interfaces are not supported"
-        );
+        return Err(errno!(EOPNOTSUPP, "point-to-point interfaces are not supported"));
     }
 
     let prefix_len = classful_prefix_len(address).ok_or_else(|| {
-        Error::with_message(Errno::EINVAL, "the address has no classful network")
+        errno!(EINVAL, "the address has no classful network")
     })?;
     let cidr = Ipv4Cidr::new(address, prefix_len);
     let broadcast = if iface.flags().contains(InterfaceFlags::BROADCAST) && prefix_len < 31 {
@@ -274,13 +271,10 @@ fn set_iface_netmask(ifreq: &CIfReq) -> Result<()> {
         .iter()
         .any(|address| address.label() == &ifreq.name)
     {
-        return_errno_with_message!(
-            Errno::EADDRNOTAVAIL,
-            "the interface does not have the address"
-        );
+        return Err(errno!(EADDRNOTAVAIL, "the interface does not have the address"));
     }
     let prefix_len = mask_prefix_len(mask)
-        .ok_or_else(|| Error::with_message(Errno::EINVAL, "the netmask is not contiguous"))?;
+        .ok_or_else(|| errno!(EINVAL, "the netmask is not contiguous"))?;
 
     config::set_labeled_ipv4_netmask(iface, &ifreq.name, prefix_len, RequestOrigin::KERNEL)
 }
@@ -371,16 +365,13 @@ struct ParsedRoute {
 /// <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/fib_frontend.c>.
 fn parse_route(rtentry: &CRtEntry, adding: bool) -> Result<ParsedRoute> {
     if rtentry.dst.family != CSocketAddrFamily::AF_INET as u16 {
-        return_errno_with_message!(
-            Errno::EAFNOSUPPORT,
-            "the route destination is not an IPv4 address"
-        );
+        return Err(errno!(EAFNOSUPPORT, "the route destination is not an IPv4 address"));
     }
     if rtentry.flags & RTF_REJECT != 0 {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "reject routes are not supported");
+        return Err(errno!(EOPNOTSUPP, "reject routes are not supported"));
     }
     if rtentry.flags & (RTF_MTU | RTF_WINDOW | RTF_IRTT) != 0 {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "route metrics are not supported");
+        return Err(errno!(EOPNOTSUPP, "route metrics are not supported"));
     }
 
     let address = rtentry.dst.ipv4_unchecked();
@@ -390,18 +381,15 @@ fn parse_route(rtentry: &CRtEntry, adding: bool) -> Result<ParsedRoute> {
         if rtentry.genmask.family != CSocketAddrFamily::AF_INET as u16
             && (rtentry.genmask.family != 0 || !mask.is_unspecified())
         {
-            return_errno_with_message!(
-                Errno::EAFNOSUPPORT,
-                "the route netmask is not an IPv4 address"
-            );
+            return Err(errno!(EAFNOSUPPORT, "the route netmask is not an IPv4 address"));
         }
 
         let mask_bits = u32::from_be_bytes(mask.octets());
         if u32::from_be_bytes(address.octets()) & !mask_bits != 0 {
-            return_errno_with_message!(Errno::EINVAL, "the route destination has host bits set");
+            return Err(errno!(EINVAL, "the route destination has host bits set"));
         }
         if is_bad_mask(mask_bits) {
-            return_errno_with_message!(Errno::EINVAL, "the route netmask is not contiguous");
+            return Err(errno!(EINVAL, "the route netmask is not contiguous"));
         }
         prefix_len = mask_bits.leading_ones() as u8;
     }
@@ -410,7 +398,7 @@ fn parse_route(rtentry: &CRtEntry, adding: bool) -> Result<ParsedRoute> {
         Some(name) => Some(
             iter_all_ifaces()
                 .find(|iface| iface.name() == &name)
-                .ok_or_else(|| Error::with_message(Errno::ENODEV, "no interface found"))?
+                .ok_or_else(|| errno!(ENODEV, "no interface found"))?
                 .index(),
         ),
         None => None,
@@ -420,7 +408,7 @@ fn parse_route(rtentry: &CRtEntry, adding: bool) -> Result<ParsedRoute> {
         .then(|| rtentry.gateway.ipv4_unchecked())
         .filter(|gateway| !gateway.is_unspecified());
     if adding && rtentry.flags & RTF_GATEWAY != 0 && gateway.is_none() {
-        return_errno_with_message!(Errno::EINVAL, "a gateway route needs a gateway");
+        return Err(errno!(EINVAL, "a gateway route needs a gateway"));
     }
 
     let scope = if rtentry.flags & RTF_GATEWAY != 0 && gateway.is_some() {
@@ -459,7 +447,7 @@ fn read_device_name(dev: Vaddr) -> Result<Option<InterfaceName>> {
     let mut name = [0u8; IFNAMSIZ - 1];
     user_space.read_bytes(dev, &mut name)?;
     if name.contains(&b':') {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "interface aliases are not supported");
+        return Err(errno!(EOPNOTSUPP, "interface aliases are not supported"));
     }
 
     Ok(Some(InterfaceName::from_bytes_until_nul(&name)))
@@ -602,7 +590,7 @@ struct CSocketAddr {
 impl CSocketAddr {
     fn ipv4(&self) -> Result<Ipv4Address> {
         if self.family != CSocketAddrFamily::AF_INET as u16 {
-            return_errno_with_message!(Errno::EINVAL, "the address family is not AF_INET");
+            return Err(errno!(EINVAL, "the address family is not AF_INET"));
         }
         Ok(self.ipv4_unchecked())
     }

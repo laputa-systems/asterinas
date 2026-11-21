@@ -84,7 +84,7 @@ impl FsType for TmpFsType {
 
     fn create(&self, fs_creation_ctx: &mut FsCreationCtx) -> Result<Arc<dyn FileSystem>> {
         let ctx = fs_creation_ctx.ctx().ok_or_else(|| {
-            Error::with_message(Errno::EINVAL, "the tmpfs mount has no task context")
+            errno!(EINVAL, "the tmpfs mount has no task context")
         })?;
         let credentials = ctx.posix_thread.credentials();
         let mut attributes = RootAttributes {
@@ -131,16 +131,16 @@ fn parse_mount_u32(value: &str, base: u32) -> Result<u32> {
         (value, 10)
     };
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return_errno_with_message!(Errno::EINVAL, "invalid tmpfs root attribute");
+        return Err(errno!(EINVAL, "invalid tmpfs root attribute"));
     }
     u32::from_str_radix(digits, radix)
-        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid tmpfs root attribute"))
+        .map_err(|_| errno!(EINVAL, "invalid tmpfs root attribute"))
 }
 
 fn parse_owner_id(value: &str) -> Result<u32> {
     let id = parse_mount_u32(value, 0)?;
     if id == u32::MAX {
-        return_errno_with_message!(Errno::EINVAL, "invalid tmpfs root owner");
+        return Err(errno!(EINVAL, "invalid tmpfs root owner"));
     }
     Ok(id)
 }

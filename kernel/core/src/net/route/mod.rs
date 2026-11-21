@@ -411,7 +411,7 @@ fn sync_gateway_routes(manager: &RouteManager<Ipv4Address>, iface: &Arc<Iface>) 
         }
     }
     iface.set_ipv4_gateway_routes(&routes).map_err(|_| {
-        Error::with_message(Errno::ENOBUFS, "the interface cannot hold more gateway routes")
+        errno!(ENOBUFS, "the interface cannot hold more gateway routes")
     })
 }
 
@@ -431,14 +431,14 @@ pub(in crate::net) fn lookup_ipv4_route(query: &Ipv4RouteQuery) -> Result<(Route
         let iface = iface::iter_all_ifaces().find(|iface| iface.index() == index)
             .ok_or_else(|| Error::from(Errno::ENODEV))?;
         if !iface.flags().contains(InterfaceFlags::UP) {
-            return_errno_with_message!(Errno::ENETUNREACH, "the output interface is down");
+            return Err(errno!(ENETUNREACH, "the output interface is down"));
         }
     }
     if let Some(source) = query.source.filter(|source| !source.is_unspecified()) {
         let local = IPV4_ROUTE_MANAGER.get().unwrap().read()
             .lookup_in_local_table(&RouteLookupKey::new(source));
         if !local.is_some_and(|route| route.type_ == RouteType::Local) {
-            return_errno_with_message!(Errno::ENETUNREACH, "the source address is not local unicast");
+            return Err(errno!(ENETUNREACH, "the source address is not local unicast"));
         }
     }
     let destination = if query.destination.is_unspecified() {
@@ -452,7 +452,7 @@ pub(in crate::net) fn lookup_ipv4_route(query: &Ipv4RouteQuery) -> Result<(Route
         Err(error) => {
             let Some(index) = query.device else { return Err(error); };
             if matches!(query.mode, Ipv4RouteQueryMode::FibMatch) {
-                return_errno_with_message!(Errno::EHOSTUNREACH, "the direct output path has no FIB entry");
+                return Err(errno!(EHOSTUNREACH, "the direct output path has no FIB entry"));
             }
             let iface = iface::iter_all_ifaces().find(|iface| iface.index() == index).unwrap();
             RouteEntry::new(Ipv4Cidr::new(destination, 32), None, iface.clone(), RouteTableId::MAIN,

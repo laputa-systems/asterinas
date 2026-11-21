@@ -62,10 +62,7 @@ impl SystemTime {
     /// Returns the duration since an earlier time. Return error if `earlier` is later than self.
     pub(crate) fn duration_since(&self, earlier: &SystemTime) -> Result<Duration> {
         if self.0 < earlier.0 {
-            return_errno_with_message!(
-                Errno::EINVAL,
-                "duration_since can only accept an earlier time"
-            );
+            return Err(errno!(EINVAL, "duration_since can only accept an earlier time"));
         }
         let duration = self.0 - earlier.0;
         Ok(convert_to_core_duration(duration))
@@ -85,11 +82,11 @@ impl SystemTime {
 fn convert_system_time(system_time: aster_time::SystemTime) -> Result<SystemTime> {
     let month = match Month::try_from(system_time.month) {
         Ok(month) => month,
-        Err(_) => return_errno_with_message!(Errno::EINVAL, "unknown month in system time"),
+        Err(_) => return Err(errno!(EINVAL, "unknown month in system time")),
     };
     let date = match Date::from_calendar_date(system_time.year as _, month, system_time.day) {
         Ok(date) => date,
-        Err(_) => return_errno_with_message!(Errno::EINVAL, "Invalid system date"),
+        Err(_) => return Err(errno!(EINVAL, "Invalid system date")),
     };
     let time_ = match Time::from_hms_nano(
         system_time.hour,
@@ -98,7 +95,7 @@ fn convert_system_time(system_time: aster_time::SystemTime) -> Result<SystemTime
         system_time.nanos.try_into().unwrap(),
     ) {
         Ok(time_) => time_,
-        Err(_) => return_errno_with_message!(Errno::EINVAL, "Invalid system time"),
+        Err(_) => return Err(errno!(EINVAL, "Invalid system time")),
     };
     Ok(SystemTime(PrimitiveDateTime::new(date, time_)))
 }

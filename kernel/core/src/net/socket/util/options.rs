@@ -228,7 +228,7 @@ impl SocketOptionSet {
             socket_debug @ SocketDebug => {
                 let debug = *socket_debug.get().unwrap();
                 if debug && check_current_privileged().is_err() {
-                    return_errno_with_message!(Errno::EACCES, "SO_DEBUG requires CAP_NET_ADMIN");
+                    return Err(errno!(EACCES, "SO_DEBUG requires CAP_NET_ADMIN"));
                 }
                 self.set_debug(debug);
             }
@@ -308,10 +308,7 @@ impl SocketOptionSet {
                     || (flags & timestamping::OPT_TSONLY != 0
                         && flags & timestamping::TX_SOFTWARE == 0)
                 {
-                    return_errno_with_message!(
-                        Errno::EINVAL,
-                        "the timestamping flags are not supported"
-                    );
+                    return Err(errno!(EINVAL, "the timestamping flags are not supported"));
                 }
                 self.set_timestamping(flags);
             }

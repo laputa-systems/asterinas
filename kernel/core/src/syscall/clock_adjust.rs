@@ -54,10 +54,10 @@ pub(super) fn sys_clock_settime(
 ) -> Result<SyscallReturn> {
     let timespec = ctx.user_space().read_val::<timespec_t>(timespec_addr)?;
     if timespec.sec < 0 || !(0..1_000_000_000).contains(&timespec.nsec) {
-        return_errno_with_message!(Errno::EINVAL, "the time is not a valid time of day");
+        return Err(errno!(EINVAL, "the time is not a valid time of day"));
     }
     if clockid != CLOCK_REALTIME {
-        return_errno_with_message!(Errno::EINVAL, "only the realtime clock can be set");
+        return Err(errno!(EINVAL, "only the realtime clock can be set"));
     }
 
     let wall = core::time::Duration::new(timespec.sec as u64, timespec.nsec as u32);
@@ -80,11 +80,8 @@ pub(super) fn sys_clock_adjtime(
 ) -> Result<SyscallReturn> {
     match clockid {
         CLOCK_REALTIME => adjust_realtime(timex_addr, ctx),
-        1..=11 => return_errno_with_message!(
-            Errno::EOPNOTSUPP,
-            "the clock does not support adjustment"
-        ),
-        _ => return_errno_with_message!(Errno::EINVAL, "the clock does not exist"),
+        1..=11 => return Err(errno!(EOPNOTSUPP, "the clock does not support adjustment")),
+        _ => return Err(errno!(EINVAL, "the clock does not exist")),
     }
 }
 
@@ -155,10 +152,10 @@ pub(super) fn may_set_time(ctx: &Context) -> bool {
 pub(super) fn adjust_error(error: adjust::Error) -> Error {
     match error {
         adjust::Error::Permission => {
-            Error::with_message(Errno::EPERM, "changing the clock needs CAP_SYS_TIME")
+            errno!(EPERM, "changing the clock needs CAP_SYS_TIME")
         }
         adjust::Error::Invalid => {
-            Error::with_message(Errno::EINVAL, "the clock adjustment is not supported")
+            errno!(EINVAL, "the clock adjustment is not supported")
         }
     }
 }

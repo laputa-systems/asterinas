@@ -10,7 +10,7 @@ pub(super) fn sys_getcwd(buf: Vaddr, len: usize, ctx: &Context) -> Result<Syscal
         let fs_ref = ctx.thread_local.borrow_fs();
         let path_resolver = fs_ref.resolver().read();
         if path_resolver.cwd().metadata()?.nr_hard_links == 0 {
-            return_errno_with_message!(Errno::ENOENT, "the current directory has been removed");
+            return Err(errno!(ENOENT, "the current directory has been removed"));
         }
         path_resolver.make_abs_path(path_resolver.cwd())
     };

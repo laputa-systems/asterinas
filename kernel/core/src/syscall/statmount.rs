@@ -50,19 +50,19 @@ struct Statmount {
 
 pub(super) fn sys_statmount(req_ptr: Vaddr, buf_ptr: Vaddr, buf_size: usize, flags: u32, ctx: &Context) -> Result<SyscallReturn> {
     if flags != 0 {
-        return_errno_with_message!(Errno::EINVAL, "invalid statmount flags");
+        return Err(errno!(EINVAL, "invalid statmount flags"));
     }
     let user = ctx.user_space();
     let req: MntIdReq = user.read_val(req_ptr)?;
     if !matches!(req.size, 24 | 32) || req.spare != 0 || req.id < MNT_UNIQUE_ID_MIN {
-        return_errno_with_message!(Errno::EINVAL, "invalid mount request");
+        return Err(errno!(EINVAL, "invalid mount request"));
     }
     if req.size == 32 && user.read_val::<u64>(req_ptr + 24)? != 0 {
-        return_errno_with_message!(Errno::EINVAL, "unsupported mount namespace");
+        return Err(errno!(EINVAL, "unsupported mount namespace"));
     }
     let ns_proxy = ctx.thread_local.borrow_ns_proxy();
     let ns = ns_proxy.unwrap().mnt_ns();
-    let mount = ns.lookup_by_unique_id(req.id).ok_or_else(|| Error::with_message(Errno::ENOENT, "no such mount"))?;
+    let mount = ns.lookup_by_unique_id(req.id).ok_or_else(|| errno!(ENOENT, "no such mount"))?;
     let fs = ctx.thread_local.borrow_fs();
     let resolver = fs.resolver().read();
     let parent = mount.parent().and_then(|parent| parent.upgrade());
@@ -98,7 +98,7 @@ pub(super) fn sys_statmount(req_ptr: Vaddr, buf_ptr: Vaddr, buf_size: usize, fla
     }
     let size = FIXED_SIZE + strings.len();
     if size > buf_size {
-        return_errno_with_message!(Errno::EOVERFLOW, "statmount buffer too small");
+        return Err(errno!(EOVERFLOW, "statmount buffer too small"));
     }
     result.size = size as u32;
     user.write_val(buf_ptr, &result)?;

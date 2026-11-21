@@ -51,7 +51,7 @@ impl TryFrom<i32> for PathMtuDiscovery {
             3 => Ok(Self::Probe),
             4 => Ok(Self::Interface),
             5 => Ok(Self::Omit),
-            _ => return_errno_with_message!(Errno::EINVAL, "invalid path MTU discovery mode"),
+            _ => return Err(errno!(EINVAL, "invalid path MTU discovery mode")),
         }
     }
 }

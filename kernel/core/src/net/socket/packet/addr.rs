@@ -97,10 +97,7 @@ impl TryFrom<SocketAddr> for PacketSocketAddr {
     fn try_from(value: SocketAddr) -> Result<Self> {
         match value {
             SocketAddr::Packet(addr) => Ok(addr),
-            _ => return_errno_with_message!(
-                Errno::EINVAL,
-                "the address is not a packet socket address"
-            ),
+            _ => return Err(errno!(EINVAL, "the address is not a packet socket address")),
         }
     }
 }

@@ -146,7 +146,7 @@ impl TryFrom<timespec_t> for FileTime {
 
     fn try_from(value: timespec_t) -> Result<Self> {
         if value.nsec < 0 || value.nsec >= NSEC_PER_SEC {
-            return_errno_with_message!(Errno::EINVAL, "timespec_t nsec is out of range");
+            return Err(errno!(EINVAL, "timespec_t nsec is out of range"));
         }
 
         Ok(FileTime::new(value.sec, value.nsec as u32))

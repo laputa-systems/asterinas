@@ -107,7 +107,7 @@ impl<A: RouteAddressFamily> RouteManager<A> {
             .entry(entry.table_id())
             .or_insert_with(RouteTable::new);
         if table.get(entry.dst(), entry.metric()).is_some() {
-            return_errno_with_message!(Errno::EEXIST, "the route already exists");
+            return Err(errno!(EEXIST, "the route already exists"));
         }
         table.insert(entry);
         Ok(())
@@ -145,7 +145,7 @@ impl<A: RouteAddressFamily> RouteManager<A> {
 
     pub(super) fn insert_rule(&mut self, rule: Rule, exclusive: bool) -> Result<()> {
         let rules = self.rules.entry(rule.priority()).or_default();
-        if exclusive && rules.contains(&rule) { return_errno_with_message!(Errno::EEXIST, "the rule already exists"); }
+        if exclusive && rules.contains(&rule) { return Err(errno!(EEXIST, "the rule already exists")); }
         rules.push(rule);
         Ok(())
     }
@@ -191,13 +191,13 @@ impl<A: RouteAddressFamily> RouteManager<A> {
                             RouteMatch::Resolved(_) => return Ok(route),
                             RouteMatch::Rejected(Rejection::Throw) => continue,
                             RouteMatch::Rejected(Rejection::Blackhole) => {
-                                return_errno_with_message!(Errno::EINVAL, "the route discards the packet");
+                                return Err(errno!(EINVAL, "the route discards the packet"));
                             }
                             RouteMatch::Rejected(Rejection::Unreachable) => {
-                                return_errno_with_message!(Errno::EHOSTUNREACH, "the route rejects the packet");
+                                return Err(errno!(EHOSTUNREACH, "the route rejects the packet"));
                             }
                             RouteMatch::Rejected(Rejection::Prohibit) => {
-                                return_errno_with_message!(Errno::EACCES, "the route prohibits the packet");
+                                return Err(errno!(EACCES, "the route prohibits the packet"));
                             }
                         }
                     }

@@ -608,7 +608,7 @@ impl Credentials_ {
         }
 
         let Some(capability) = CapSet::from_capability_number(capability) else {
-            return_errno_with_message!(Errno::EINVAL, "invalid capability number");
+            return Err(errno!(EINVAL, "invalid capability number"));
         };
 
         let new_bounding_capset = self.bounding_capset() - capability;

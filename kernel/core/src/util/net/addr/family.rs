@@ -181,7 +181,7 @@ pub(crate) fn read_socket_addr_from_user(addr: Vaddr, addr_len: usize) -> Result
         }
         Ok(CSocketAddrFamily::AF_PACKET) => {
             if addr_len < size_of::<CSocketAddrPacket>() {
-                return_errno_with_message!(Errno::EINVAL, "the socket address length is too small");
+                return Err(errno!(EINVAL, "the socket address length is too small"));
             }
             let addr = CSocketAddrPacket::from_first_bytes(storage.as_bytes());
             SocketAddr::Packet(addr.into())

@@ -38,12 +38,12 @@ impl Inode {
 
     fn seek_extent(&self, offset: usize, kind: ExtentKind) -> Result<usize> {
         if self.type_ != InodeType::File {
-            return_errno_with_message!(Errno::EINVAL, "extent seeking requires a regular file");
+            return Err(errno!(EINVAL, "extent seeking requires a regular file"));
         }
         let inner = self.inner.read();
         let size = inner.file_size();
         if offset >= size {
-            return_errno_with_message!(Errno::ENXIO, "no extent at or after the offset");
+            return Err(errno!(ENXIO, "no extent at or after the offset"));
         }
         let first = (offset / BLOCK_SIZE) as Iblock;
         let end = size.div_ceil(BLOCK_SIZE) as Iblock;
@@ -68,7 +68,7 @@ impl Inode {
         match kind {
             ExtentKind::Hole => Ok(size),
             ExtentKind::Data => {
-                return_errno_with_message!(Errno::ENXIO, "no data at or after the offset")
+                return Err(errno!(ENXIO, "no data at or after the offset"))
             }
         }
     }

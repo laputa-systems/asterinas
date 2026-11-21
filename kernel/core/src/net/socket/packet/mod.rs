@@ -74,10 +74,7 @@ impl PacketSocket {
     ) -> Result<Arc<Self>> {
         check_current_net_raw()?;
         if socket_type != SockType::SOCK_RAW && socket_type != SockType::SOCK_DGRAM {
-            return_errno_with_message!(
-                Errno::ESOCKTNOSUPPORT,
-                "the packet socket type is not supported"
-            );
+            return Err(errno!(ESOCKTNOSUPPORT, "the packet socket type is not supported"));
         }
 
         let pollee = Pollee::new();
@@ -136,22 +133,19 @@ impl PacketSocket {
 }
 
 fn no_such_device() -> Error {
-    Error::with_message(Errno::ENXIO, "there is no such interface")
+    errno!(ENXIO, "there is no such interface")
 }
 
 fn link_send_error(error: LinkSendError) -> Error {
     match error {
-        LinkSendError::Down => Error::with_message(Errno::ENETDOWN, "the interface is down"),
+        LinkSendError::Down => errno!(ENETDOWN, "the interface is down"),
         LinkSendError::TooShort => {
-            Error::with_message(Errno::EINVAL, "the frame is shorter than a link-layer header")
+            errno!(EINVAL, "the frame is shorter than a link-layer header")
         }
-        LinkSendError::TooLong => Error::with_message(Errno::EMSGSIZE, "the frame is too long"),
-        LinkSendError::UnsupportedProtocol => Error::with_message(
-            Errno::EOPNOTSUPP,
-            "the interface does not carry frames of this EtherType",
-        ),
+        LinkSendError::TooLong => errno!(EMSGSIZE, "the frame is too long"),
+        LinkSendError::UnsupportedProtocol => errno!(EOPNOTSUPP, "the interface does not carry frames of this EtherType"),
         LinkSendError::Busy | LinkSendError::NoMemory => {
-            Error::with_message(Errno::ENOBUFS, "the interface cannot take the frame now")
+            errno!(ENOBUFS, "the interface cannot take the frame now")
         }
     }
 }
@@ -178,7 +172,7 @@ impl Socket for PacketSocket {
             0 => None,
             ifindex => Some(
                 find_iface(ifindex)
-                    .ok_or_else(|| Error::with_message(Errno::ENODEV, "the interface does not exist"))?,
+                    .ok_or_else(|| errno!(ENODEV, "the interface does not exist"))?,
             ),
         };
 
@@ -236,10 +230,7 @@ impl Socket for PacketSocket {
             Some(addr) => {
                 let addr = PacketSocketAddr::try_from(addr)?;
                 if addr.link_addr_len() as usize > MAX_LINK_ADDR_LEN {
-                    return_errno_with_message!(
-                        Errno::EINVAL,
-                        "the link-layer address in the socket address is too long"
-                    );
+                    return Err(errno!(EINVAL, "the link-layer address in the socket address is too long"));
                 }
                 (
                     find_iface(addr.ifindex()).ok_or_else(no_such_device)?,
@@ -249,29 +240,26 @@ impl Socket for PacketSocket {
             }
         };
         if !iface.flags().contains(InterfaceFlags::UP) {
-            return_errno_with_message!(Errno::ENETDOWN, "the interface is down");
+            return Err(errno!(ENETDOWN, "the interface is down"));
         }
         if let Some(errno) = self.tap.take_error() {
-            return Err(Error::with_message(errno, "the packet socket has a pending error"));
+            return Err(Error::new(errno));
         }
 
         let payload_len = reader.sum_lens();
         let frame = match self.socket_type {
             SockType::SOCK_RAW => {
                 if payload_len > iface.mtu() + ETHERNET_HEADER_LEN {
-                    return_errno_with_message!(Errno::EMSGSIZE, "the frame is too long");
+                    return Err(errno!(EMSGSIZE, "the frame is too long"));
                 }
                 read_all(reader, payload_len, 0)?
             }
             _ => {
                 if payload_len > iface.mtu() {
-                    return_errno_with_message!(Errno::EMSGSIZE, "the frame is too long");
+                    return Err(errno!(EMSGSIZE, "the frame is too long"));
                 }
                 let Some(destination) = destination else {
-                    return_errno_with_message!(
-                        Errno::EINVAL,
-                        "a cooked packet socket needs a destination address"
-                    );
+                    return Err(errno!(EINVAL, "a cooked packet socket needs a destination address"));
                 };
                 let mut frame = read_all(reader, payload_len, ETHERNET_HEADER_LEN)?;
                 frame[..6].copy_from_slice(&destination.link_addr()[..6]);

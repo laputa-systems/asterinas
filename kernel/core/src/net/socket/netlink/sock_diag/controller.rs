@@ -260,7 +260,7 @@ fn done(request: &CMsgSegHdr, port: PortNum, error: Option<Errno>) -> Result<()>
 fn error(request: &CMsgSegHdr, payload: &[u8], port: PortNum, error: Option<Errno>) -> Result<()> {
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(36 + if error.is_some() { payload.len() } else { 0 }).map_err(|_| {
-        Error::with_message(Errno::ENOMEM, "cannot allocate the socket diagnostic error")
+        errno!(ENOMEM, "cannot allocate the socket diagnostic error")
     })?;
     header(&mut bytes, 2, if error.is_none() { 0x100 } else { 0 }, request.seq, port);
     bytes.extend_from_slice(&error.map_or(0, |error| -(error as i32)).to_ne_bytes());

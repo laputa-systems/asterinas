@@ -269,7 +269,7 @@ impl Mount {
             for (index, target) in unmounted_mounts.iter().enumerate() {
                 let expected = if index == 0 { 3 } else { 2 };
                 if Arc::strong_count(target) > expected || !target.children.read().is_empty() {
-                    return_errno_with_message!(Errno::EBUSY, "the mount is busy");
+                    return Err(errno!(EBUSY, "the mount is busy"));
                 }
             }
         }

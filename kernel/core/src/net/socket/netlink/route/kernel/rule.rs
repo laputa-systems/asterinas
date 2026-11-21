@@ -26,7 +26,7 @@ const NO_SUPPRESSED_PREFIX_LEN: u32 = u32::MAX;
 pub(super) fn do_get_rule(request_segment: &RuleSegment) -> Result<Vec<RtnlSegment>> {
     let flags = GetRequestFlags::from_bits_truncate(request_segment.header().flags);
     if !flags.contains(GetRequestFlags::DUMP) {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "GETRULE only supports dump requests");
+        return Err(errno!(EOPNOTSUPP, "GETRULE only supports dump requests"));
     }
 
     let requested_family = i32::from(request_segment.body().family);
@@ -47,7 +47,7 @@ pub(super) fn do_new_rule(segment: &RuleSegment) -> Result<()> {
     check_current_privileged()?;
     let flags = NewRequestFlags::from_bits_truncate(segment.header().flags);
     if flags.intersects(NewRequestFlags::REPLACE | NewRequestFlags::APPEND) {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "rule replacement and append are unsupported");
+        return Err(errno!(EOPNOTSUPP, "rule replacement and append are unsupported"));
     }
     config::add_ipv4_rule(parse_rule(segment, false)?, flags.contains(NewRequestFlags::EXCL), RequestOrigin::request(segment.header()))
 }
@@ -60,10 +60,10 @@ pub(super) fn do_del_rule(segment: &RuleSegment) -> Result<()> {
 fn parse_rule(segment: &RuleSegment, deleting: bool) -> Result<Ipv4RuleRequest> {
     let body = segment.body();
     if body.family != CSocketAddrFamily::AF_INET as u8 {
-        return_errno_with_message!(Errno::EAFNOSUPPORT, "only IPv4 policy rules can be changed");
+        return Err(errno!(EAFNOSUPPORT, "only IPv4 policy rules can be changed"));
     }
     if body.dst_len != 0 || body.src_len != 0 || body.tos != 0 || body.flags != 0 || body.res1 != 0 || body.res2 != 0 {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "the policy rule selector is unsupported");
+        return Err(errno!(EOPNOTSUPP, "the policy rule selector is unsupported"));
     }
     let mut priority = None;
     let mut table = u32::from(body.table);
@@ -78,24 +78,24 @@ fn parse_rule(segment: &RuleSegment, deleting: bool) -> Result<Ipv4RuleRequest> 
             RuleAttr::Mask(value) => mask = Some(*value),
             RuleAttr::Protocol(value) => protocol = Some(*value),
             RuleAttr::SuppressPrefixLen(value) if *value == u32::MAX => (),
-            RuleAttr::Invalid(_) => return_errno_with_message!(Errno::EINVAL, "invalid rule attribute"),
-            _ => return_errno_with_message!(Errno::EOPNOTSUPP, "the policy rule attribute is unsupported"),
+            RuleAttr::Invalid(_) => return Err(errno!(EINVAL, "invalid rule attribute")),
+            _ => return Err(errno!(EOPNOTSUPP, "the policy rule attribute is unsupported")),
         }
     }
     let outcome = match body.action {
         0 if deleting => None,
         1 if table != 0 => Some(RuleOutcome::Lookup { table }),
-        1 => return_errno_with_message!(Errno::EOPNOTSUPP, "automatic rule tables are unsupported"),
+        1 => return Err(errno!(EOPNOTSUPP, "automatic rule tables are unsupported")),
         6 => Some(RuleOutcome::Blackhole),
         7 => Some(RuleOutcome::Unreachable),
         8 => Some(RuleOutcome::Prohibit),
-        _ => return_errno_with_message!(Errno::EOPNOTSUPP, "the policy rule action is unsupported"),
+        _ => return Err(errno!(EOPNOTSUPP, "the policy rule action is unsupported")),
     };
     let value = mark.unwrap_or(0);
     let mask = mask.unwrap_or(if value == 0 { 0 } else { u32::MAX });
     let mark = if value != 0 || mask != 0 { Some(MarkSelector { value, mask }) } else { None };
     if table != 0 && outcome.is_some_and(|outcome| !matches!(outcome, RuleOutcome::Lookup { .. })) {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "a table is unsupported for this rule action");
+        return Err(errno!(EOPNOTSUPP, "a table is unsupported for this rule action"));
     }
     let table = (table != 0 && outcome.is_none()).then_some(table);
     let protocol = if deleting { protocol.filter(|value| *value != 0) } else { protocol };

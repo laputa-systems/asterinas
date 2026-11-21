@@ -33,7 +33,7 @@ impl NsCommonOps for PidNamespace {
     }
 
     fn parent(&self) -> Result<&Arc<Self>> {
-        return_errno_with_message!(Errno::EPERM, "the initial PID namespace has no parent");
+        return Err(errno!(EPERM, "the initial PID namespace has no parent"));
     }
 
     fn stashed_dentry(&self) -> &StashedDentry {
