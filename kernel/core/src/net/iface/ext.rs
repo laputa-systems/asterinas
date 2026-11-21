@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::sync::Arc;
 use aster_bigtcp::iface::ScheduleNextPoll;
 
 use super::{iter_all_ifaces, sched::PollScheduler};

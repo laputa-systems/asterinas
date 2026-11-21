@@ -7,7 +7,7 @@ use crate::{
         file::{AccessMode, InodeHandle, InodeMode, InodeType, PerOpenFileOps, StatusFlags, mkmod},
         pipe::Pipe,
         pseudofs::{PipeFs, PseudoInode, PseudoInodeType},
-        vfs:{
+        vfs::{
             file_system::FileSystem,
             inode::{Extension, FileOps, Inode, Metadata},
             path::Dentry,

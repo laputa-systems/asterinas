@@ -110,9 +110,9 @@ impl Xattr {
                 bid,
                 dirty: false,
                 inode,
-                fs,
+                fs: fs.clone(),
             }),
-            fs: fs.clone(),
+            fs,
         }
     }
 
