@@ -562,7 +562,6 @@ impl<E: Ext> UdpSocket<E> {
 #[cfg(ktest)]
 mod test {
     use ostd::prelude::ktest;
-    use smoltcp::wire::Ipv4Address;
     use super::*;
 
     struct TestExt;

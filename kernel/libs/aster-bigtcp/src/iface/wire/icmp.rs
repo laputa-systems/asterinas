@@ -143,7 +143,7 @@ mod test {
 
     use super::*;
 
-    fn packet() -> alloc::vec::Vec<u8> {
+    fn packet() -> vec::Vec<u8> {
         let mut packet = vec![0u8; 41];
         packet[0] = 3;
         packet[1] = 3;
