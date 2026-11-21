@@ -1086,8 +1086,8 @@ impl<L: BlockLog> Debug for MhtDisplayer<'_, L> {
                     .unwrap();
                 debug_struct.field("\n node_entry", entry);
                 debug_struct.field("\n -> mht_node", &node);
-                for entry in node.entries.iter().take(node.num_valid_entries()) {
-                    level_entries.push(*entry);
+                for i in 0..node.num_valid_entries() {
+                    level_entries.push(node.entries[i]);
                 }
             }
             level_entries.drain(..level_size);

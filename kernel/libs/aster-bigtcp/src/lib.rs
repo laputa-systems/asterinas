@@ -12,6 +12,7 @@
 
 #![no_std]
 #![deny(unsafe_code)]
+#![feature(smart_pointer_try_map)]
 // Rustdoc does not render methods of public type aliases that reference private types,
 // so links pointing to them cannot be resolved.
 // See <https://github.com/rust-lang/rust/issues/132952>.
