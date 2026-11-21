@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.head_ref || github.run_id }}"
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  firecracker:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    container:
+      image: asterinas/kernel-dev@sha256:b2cc0b29cbd7355fc4587f3d2a2a44cac6f7e69839f023cf0f49ce2a4f1f65ed
+      options: --platform linux/amd64 -v /dev:/dev --privileged
+    env:
+      FC_SERIAL_LOG: /tmp/fc-serial.log
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: unit tests
+        run: make test
+      - name: build the PVH kernel Laputa boots
+        run: make kernel BOOT_METHOD=vmm-direct BOOT_PROTOCOL=pvh
+      - name: boot to userspace under Firecracker
+        run: |
+          firecracker $(./tools/firecracker_args.sh ci-boot) > "$FC_SERIAL_LOG" 2>&1 &
+          fc_pid=$!
+          trap 'kill "$fc_pid" 2>/dev/null || true; wait "$fc_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if grep -q '^Entered userspace' "$FC_SERIAL_LOG"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$FC_SERIAL_LOG"
+          exit 1
