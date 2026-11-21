@@ -5,7 +5,7 @@ pub(crate) use cpu_clock::ProfClock;
 pub(crate) use system_wide::init_for_ktest;
 pub(crate) use system_wide::{
     BootTimeClock, JIFFIES_TIMER_MANAGER, MonotonicClock, MonotonicCoarseClock, MonotonicRawClock,
-    RealTimeClock, RealTimeCoarseClock,
+    RealTimeClock, RealTimeCoarseClock, TaiClock,
 };
 
 mod cpu_clock;
