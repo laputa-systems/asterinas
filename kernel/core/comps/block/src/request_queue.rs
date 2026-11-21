@@ -256,7 +256,6 @@ impl BioRequest {
 
         Self {
             type_: bio.type_(),
-            records,
             sid_range,
             num_segments: bio.segments().len(),
             bios: {
@@ -264,6 +263,7 @@ impl BioRequest {
                 bios.push_front(bio);
                 bios
             },
+            records,
         }
     }
 }
