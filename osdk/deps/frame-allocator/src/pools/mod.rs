@@ -9,7 +9,7 @@ use core::{
 };
 
 use ostd::{
-    cpu::{PinCurrentCpu, all_cpus},
+    cpu::all_cpus,
     cpu_local,
     irq::DisabledLocalIrqGuard,
     mm::Paddr,

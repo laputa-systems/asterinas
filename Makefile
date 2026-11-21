@@ -500,6 +500,10 @@ format:
 	@$(MAKE) --no-print-directory -C test/initramfs format
 	@$(MAKE) --no-print-directory -C test/nixos format
 
+.PHONY: lint
+lint: $(CARGO_OSDK)
+	@./tools/clippy_check.sh workspace
+
 .PHONY: check
 check: private WORKSPACE_MEMBER_DIRS = \
 	$(shell ./tools/print_workspace_members.sh)
