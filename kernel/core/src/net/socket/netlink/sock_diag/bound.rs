@@ -4,7 +4,9 @@ use super::{controller, message::SockDiagMessage};
 use crate::{
     events::IoEvents,
     net::socket::{
-        netlink::{NetlinkSocketAddr, common::BoundNetlink, message::CMsgSegHdr},
+        netlink::{
+            NetlinkSocketAddr, common::BoundNetlink, message::CMsgSegHdr, options::NetlinkOptionSet,
+        },
         util::{RecvFlags, RecvOutput, SendFlags, datagram_common},
     },
     prelude::*,
@@ -13,13 +15,20 @@ use crate::{
 
 impl datagram_common::Bound for BoundNetlink<SockDiagMessage> {
     type Endpoint = NetlinkSocketAddr;
+    type SendOptions = NetlinkOptionSet;
 
     fn local_endpoint(&self) -> Self::Endpoint { self.handle.addr() }
     fn bind(&mut self, endpoint: &Self::Endpoint) -> Result<()> { self.bind_common(endpoint) }
     fn remote_endpoint(&self) -> Option<&Self::Endpoint> { Some(&self.remote_addr) }
     fn set_remote_endpoint(&mut self, endpoint: &Self::Endpoint) { self.remote_addr = *endpoint; self.connected = true; }
 
-    fn try_send(&self, reader: &mut dyn MultiRead, remote: &Self::Endpoint, _flags: SendFlags) -> Result<usize> {
+    fn try_send(
+        &self,
+        reader: &mut dyn MultiRead,
+        remote: &Self::Endpoint,
+        _flags: SendFlags,
+        _options: Self::SendOptions,
+    ) -> Result<usize> {
         if *remote != NetlinkSocketAddr::new_unspecified() {
             return Err(errno!(ECONNREFUSED, "socket diagnostic netlink destination is not the kernel"));
         }

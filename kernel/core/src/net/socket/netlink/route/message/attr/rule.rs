@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::{
-    net::socket::netlink::message::{Attribute, CAttrHeader, ContinueRead},
+    net::socket::netlink::message::{Attribute, CAttrHeader, ContinueAttrRead},
     prelude::*,
     util::MultiRead,
 };
@@ -40,7 +40,7 @@ impl Attribute for RuleAttr {
         }
     }
 
-    fn read_from(header: &CAttrHeader, reader: &mut dyn MultiRead) -> Result<ContinueRead<Self>> {
+    fn read_from(header: &CAttrHeader, reader: &mut dyn MultiRead) -> Result<ContinueAttrRead<Self>> {
         let kind = header.type_();
         let len = header.payload_len();
         let value = match (kind, len) {
@@ -53,6 +53,6 @@ impl Attribute for RuleAttr {
             (6 | 10 | 14 | 15 | 16 | 21, _) => { reader.skip_some(len); Self::Invalid(kind) }
             _ => { reader.skip_some(len); Self::Unsupported(kind) }
         };
-        Ok(ContinueRead::Parsed(value))
+        Ok(ContinueAttrRead::Parsed(value))
     }
 }

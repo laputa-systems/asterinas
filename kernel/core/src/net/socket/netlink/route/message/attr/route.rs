@@ -3,7 +3,7 @@
 use core::net::IpAddr;
 
 use crate::{
-    net::socket::netlink::message::{Attribute, CAttrHeader, ContinueRead},
+    net::socket::netlink::message::{Attribute, CAttrHeader, ContinueAttrRead},
     prelude::*,
     util::MultiRead,
 };
@@ -102,7 +102,7 @@ impl Attribute for RouteAttr {
         }
     }
 
-    fn read_from(header: &CAttrHeader, reader: &mut dyn MultiRead) -> Result<ContinueRead<Self>>
+    fn read_from(header: &CAttrHeader, reader: &mut dyn MultiRead) -> Result<ContinueAttrRead<Self>>
     where
         Self: Sized,
     {
@@ -112,7 +112,7 @@ impl Attribute for RouteAttr {
             // Unknown attributes should be ignored.
             // Reference: <https://docs.kernel.org/userspace-api/netlink/intro.html#unknown-attributes>.
             reader.skip_some(payload_len);
-            return Ok(ContinueRead::Skipped);
+            return Ok(ContinueAttrRead::SkippedUnsupported);
         };
 
         let attr = match (class, payload_len) {
@@ -155,24 +155,18 @@ impl Attribute for RouteAttr {
                 _,
             ) => {
                 reader.skip_some(payload_len);
-                return Ok(ContinueRead::skipped_with_error(
-                    Errno::EINVAL,
-                    "the route attribute is invalid",
-                ));
+                return Ok(ContinueAttrRead::SkippedInvalid(errno!(EINVAL, "the route attribute is invalid")));
             }
             (RouteAttrClass::UNSPEC | RouteAttrClass::CACHEINFO, _) => {
                 reader.skip_some(payload_len);
-                return Ok(ContinueRead::Skipped);
+                return Ok(ContinueAttrRead::SkippedUnsupported);
             }
             (_, _) => {
                 reader.skip_some(payload_len);
-                return Ok(ContinueRead::skipped_with_error(
-                    Errno::EOPNOTSUPP,
-                    "the route attribute is not supported",
-                ));
+                return Ok(ContinueAttrRead::SkippedInvalid(errno!(EOPNOTSUPP, "the route attribute is not supported")));
             }
         };
 
-        Ok(ContinueRead::Parsed(attr))
+        Ok(ContinueAttrRead::Parsed(attr))
     }
 }

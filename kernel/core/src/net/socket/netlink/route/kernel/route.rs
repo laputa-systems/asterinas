@@ -6,7 +6,10 @@ use core::net::{IpAddr, Ipv4Addr};
 
 use aster_bigtcp::wire::Ipv4Cidr;
 
-use super::{notify::RequestOrigin, util::finish_response};
+use super::{
+    notify::RequestOrigin,
+    util::{ResponseMode, finish_response},
+};
 use crate::{
     net::{
         iface::config,
@@ -19,7 +22,7 @@ use crate::{
                 message::{
                     CMsgSegHdr, CSegmentType, GetRequestFlags, NewRequestFlags, SegHdrCommonFlags,
                 },
-                route::message::{RouteAttr, RouteSegment, RouteSegmentBody, RtnlSegment},
+                route::message::{CRtMsg, RouteAttr, RouteSegment, RtnlSegment},
             },
             util::options::check_current_privileged,
         },
@@ -51,7 +54,7 @@ pub(super) fn do_get_route(request_segment: &RouteSegment) -> Result<Vec<RtnlSeg
         })
         .collect();
 
-    finish_response(request_segment.header(), true, &mut response_segments);
+    finish_response(request_segment.header(), ResponseMode::Dump, &mut response_segments);
 
     Ok(response_segments)
 }
@@ -113,7 +116,7 @@ fn do_lookup_route(request: &RouteSegment) -> Result<Vec<RtnlSegment>> {
         if query.mark != 0 { attrs.push(RouteAttr::Mark(query.mark)); }
         if let Some(uid) = uid { attrs.push(RouteAttr::Uid(uid)); }
         attrs.push(RouteAttr::empty_cache_info());
-        let body = RouteSegmentBody {
+        let body = CRtMsg {
             family: CSocketAddrFamily::AF_INET as u8,
             dst_len: 32, src_len: if query.source.is_some() { 32 } else { 0 }, tos: body.tos,
             table: u8::try_from(table).unwrap_or(252), protocol: 0, scope: 0,
@@ -313,7 +316,7 @@ pub(super) fn record_to_route(
         IpAddr::V6(_) => CSocketAddrFamily::AF_INET6,
     };
 
-    let body = RouteSegmentBody {
+    let body = CRtMsg {
         family: family as u8,
         dst_len: record.destination_prefix_len,
         src_len: 0,

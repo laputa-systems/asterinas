@@ -2,14 +2,17 @@
 
 //! Handle policy-rule requests.
 
-use super::{notify::RequestOrigin, util::finish_response};
+use super::{
+    notify::RequestOrigin,
+    util::{ResponseMode, finish_response},
+};
 use crate::{
     net::{
         iface::config,
         route::{Ipv4RuleRequest, MarkSelector, RuleOutcome, RuleRecord, dump_rules},
         socket::netlink::{
             message::{CMsgSegHdr, CSegmentType, GetRequestFlags, NewRequestFlags, SegHdrCommonFlags},
-            route::message::{RtnlSegment, RuleAttr, RuleSegment, RuleSegmentBody},
+            route::message::{CFibRuleHdr, RtnlSegment, RuleAttr, RuleSegment},
         },
     },
     prelude::*,
@@ -38,7 +41,7 @@ pub(super) fn do_get_rule(request_segment: &RuleSegment) -> Result<Vec<RtnlSegme
         .map(|record| RtnlSegment::NewRule(record_to_rule(request_segment.header(), CSegmentType::NEWRULE, record)))
         .collect();
 
-    finish_response(request_segment.header(), true, &mut response_segments);
+    finish_response(request_segment.header(), ResponseMode::Dump, &mut response_segments);
 
     Ok(response_segments)
 }
@@ -123,7 +126,7 @@ pub(super) fn record_to_rule(request_header: &CMsgSegHdr, type_: CSegmentType, r
         RuleOutcome::Blackhole => (0, 6),
     };
 
-    let body = RuleSegmentBody {
+    let body = CFibRuleHdr {
         family: family as u8,
         table: u8::try_from(table).unwrap_or(252),
         action,
