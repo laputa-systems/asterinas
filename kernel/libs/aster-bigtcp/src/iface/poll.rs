@@ -50,15 +50,15 @@ fn send_frame(
 
 /// Arguments for [`PollContext::new`], bundled so the constructor takes a single parameter.
 pub(super) struct PollContextArgs<'a, E: Ext> {
-    iface: PollableIfaceMut<'a, E>,
-    sockets: &'a SocketTable<E>,
-    udp_sockets: &'a [Arc<UdpSocketBg<E>>],
-    network_registry: &'a super::NetworkRegistry<E>,
-    ip_taps: &'a super::ip_tap::IpTaps,
-    raw_ip_tx: &'a SpinLock<VecDeque<TxPacketWithDst>, BottomHalfDisabled>,
-    link_state: &'a LinkState,
-    ifindex: u32,
-    actions: &'a mut Vec<SocketTableAction<E>>,
+    pub(super) iface: PollableIfaceMut<'a, E>,
+    pub(super) sockets: &'a SocketTable<E>,
+    pub(super) udp_sockets: &'a [Arc<UdpSocketBg<E>>],
+    pub(super) network_registry: &'a super::NetworkRegistry<E>,
+    pub(super) ip_taps: &'a super::ip_tap::IpTaps,
+    pub(super) raw_ip_tx: &'a SpinLock<VecDeque<TxPacketWithDst>, BottomHalfDisabled>,
+    pub(super) link_state: &'a LinkState,
+    pub(super) ifindex: u32,
+    pub(super) actions: &'a mut Vec<SocketTableAction<E>>,
 }
 
 pub(super) struct PollContext<'a, E: Ext> {
