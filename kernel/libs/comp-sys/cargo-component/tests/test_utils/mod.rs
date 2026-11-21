@@ -21,7 +21,10 @@ macro_rules! run_cargo_component_cmd {
 }
 
 static CARGO_COMPONENT_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
-    PathBuf::from(env!("CARGO_BIN_EXE_cargo-component"))
+    let mut path = std::env::current_exe().unwrap();
+    assert!(path.pop()); // deps
+    path.set_file_name("cargo-component");
+    path
 });
 
 pub fn run_cargo_component(test_name: &str) -> String {

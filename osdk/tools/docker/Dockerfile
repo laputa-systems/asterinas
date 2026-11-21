@@ -246,7 +246,7 @@ RUN cargo prototyper build \
 FROM osdk-base AS osdk-final
 
 # Install klint. Pin the Klint commit compatible with the Asterinas toolchain.
-RUN cargo install klint --git https://github.com/Rust-for-Linux/klint --rev 3b092315
+RUN cargo install klint --git https://github.com/Rust-for-Linux/klint --rev d2a4d60
 
 # Install QEMU built from the previous stages
 COPY --from=qemu /usr/local/qemu /usr/local/qemu

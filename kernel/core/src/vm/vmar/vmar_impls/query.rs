@@ -43,6 +43,10 @@ impl VmarQueryGuard<'_> {
             last_mapping_end = mapping.map_end();
         }
 
-        last_mapping_end >= self.range.end
+        if last_mapping_end < self.range.end {
+            return false;
+        }
+
+        true
     }
 }
