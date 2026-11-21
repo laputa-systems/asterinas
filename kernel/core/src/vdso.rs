@@ -187,6 +187,7 @@ impl VdsoData {
         }
     }
 
+    #[cfg(ktest)]
     fn realtime_duration(instant: Instant) -> Duration {
         #[cfg(ktest)]
         {

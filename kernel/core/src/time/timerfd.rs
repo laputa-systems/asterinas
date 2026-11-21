@@ -7,10 +7,8 @@ use core::{
 };
 
 use atomic_integer_wrapper::define_atomic_version_of_integer_like_type;
-use alloc::sync::Weak;
-use ostd::sync::SpinLock;
 
-use crate::{
+use crate:{
     events::IoEvents,
     fs::{
         file::{AccessMode, CreationFlags, FileCommon, FileLike, StatusFlags, file_table::FdFlags},
@@ -167,13 +165,13 @@ impl TimerfdFile {
         });
         Ok(TimerfdFile {
             clockid: clock_id as clockid_t,
-            cancellation,
             timer,
             ticks,
             pollee,
             settime_flags: AtomicTFDSetTimeFlags::default(),
             // Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/timerfd.c#L436>.
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, status_flags),
+            cancellation,
         })
     }
 

@@ -58,8 +58,8 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
             Errno::ERESTARTSYS
         } else if ret == -(Errno::ERESTARTNOHAND as i32) as usize {
             Errno::ERESTARTNOHAND
-        } else if ret == -(Errno::ERESTART_RESTARTBLOCK as i32) as usize {
-            Errno::ERESTART_RESTARTBLOCK
+        } else if ret == -(Errno::ErestartRestartblock as i32) as usize {
+            Errno::ErestartRestartblock
         } else {
             return None;
         };
@@ -161,7 +161,7 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
                 if kind == Errno::ERESTARTSYS && flags.contains(SigActionFlags::SA_RESTART) {
                     restart_syscall(user_ctx, original, false);
                 }
-                if kind == Errno::ERESTART_RESTARTBLOCK {
+                if kind == Errno::ErestartRestartblock {
                     ctx.thread_local.restart_block().set(None);
                 }
             }
@@ -217,11 +217,10 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
 }
 
 fn restart_without_handler(user_ctx: &mut UserContext, restart: Option<(Errno, usize)>) {
-    if let Some((kind, original)) = restart {
-        if kind == Errno::ERESTARTNOHAND || kind == Errno::ERESTART_RESTARTBLOCK {
-            restart_syscall(user_ctx, original, kind == Errno::ERESTART_RESTARTBLOCK);
+    if let Some((kind, original)) = restart
+        && (kind == Errno::ERESTARTNOHAND || kind == Errno::ErestartRestartblock) {
+            restart_syscall(user_ctx, original, kind == Errno::ErestartRestartblock);
         }
-    }
 }
 
 fn restart_syscall(user_ctx: &mut UserContext, original: usize, restart_block: bool) {

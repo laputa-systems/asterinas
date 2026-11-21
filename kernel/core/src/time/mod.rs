@@ -93,8 +93,6 @@ pub(crate) struct FileTime {
 }
 
 impl FileTime {
-    pub(crate) const ZERO: Self = Self { sec: 0, nsec: 0 };
-
     pub(crate) const fn new(sec: i64, nsec: u32) -> Self {
         debug_assert!(nsec < NSEC_PER_SEC as u32);
         Self { sec, nsec }

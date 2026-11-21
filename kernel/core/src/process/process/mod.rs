@@ -245,10 +245,10 @@ impl Process {
 
             Self {
                 pid,
-                has_executed: AtomicBool::new(false),
                 vmar: Mutex::new(Some(vmar)),
                 children_wait_queue,
                 pidfile_pollee: Pollee::new(),
+                has_executed: AtomicBool::new(false),
                 tasks: Mutex::new(TaskSet::new()),
                 status: ProcessStatus::default(),
                 parent: ParentProcess::new(Weak::new()),

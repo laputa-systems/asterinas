@@ -167,7 +167,7 @@ impl Clock for RealTimeClock {
 
 impl Clock for TaiClock {
     fn read_time(&self) -> Duration {
-        aster_time::disciplined_time_at(aster_time::read_raw_monotonic_time()).tai
+        aster_time::disciplined_time_at(read_raw_monotonic_time()).tai
     }
 }
 

@@ -2,8 +2,7 @@
 
 use core::time::Duration;
 
-use alloc::sync::Arc;
-use ostd::sync::{LocalIrqDisabled, SpinLock};
+use ostd::sync::LocalIrqDisabled;
 
 use crate::{
     prelude::*,

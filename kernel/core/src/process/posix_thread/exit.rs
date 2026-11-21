@@ -90,15 +90,14 @@ fn exit_internal(
         if let Some(sibling) = tasks.as_slice().iter().find_map(|task| {
             let thread = task.as_thread().unwrap();
             (!thread.is_exited()).then_some(thread)
-        }) {
-            if let Some(children) = children.as_mut() {
+        })
+            && let Some(children) = children.as_mut() {
                 for relation in children.values_mut() {
                     if relation.parent_thread.as_ptr() == Arc::as_ptr(current_thread) {
                         relation.parent_thread = Arc::downgrade(sibling);
                     }
                 }
             }
-        }
         is_last
     };
 

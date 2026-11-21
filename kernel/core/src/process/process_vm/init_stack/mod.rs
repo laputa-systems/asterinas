@@ -247,6 +247,9 @@ impl InitStack {
     }
 }
 
+/// Ranges of auxv, argv and envp in the init stack, plus the saved auxiliary vector bytes.
+type InitStackContent = (Range<Vaddr>, Range<Vaddr>, Range<Vaddr>, Vec<u8>);
+
 /// A writer to initialize the content of an `InitStack`.
 struct InitStackWriter<'a> {
     pos: &'a AtomicUsize,
@@ -262,7 +265,7 @@ impl InitStackWriter<'_> {
     /// Writes the content to the init stack.
     ///
     /// Returns the range of auxv, argv and envp in the init stack.
-    fn write(mut self) -> Result<(Range<Vaddr>, Range<Vaddr>, Range<Vaddr>, Vec<u8>)> {
+    fn write(mut self) -> Result<InitStackContent> {
         // FIXME: Some OSes may put the first page of the executable file here
         // for interpreting ELF headers.
 
