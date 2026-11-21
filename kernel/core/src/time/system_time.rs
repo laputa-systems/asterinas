@@ -20,7 +20,6 @@ pub(super) fn init() {
     START_TIME_AS_DURATION
         .call_once(|| start_time.duration_since(&SystemTime::UNIX_EPOCH).unwrap());
     START_TIME.call_once(|| start_time);
-    aster_time::init_wall_clock(*START_TIME_AS_DURATION.get().unwrap());
 }
 
 impl SystemTime {

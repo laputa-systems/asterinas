@@ -43,7 +43,8 @@ fn calibrate() {
     let clock = CLOCK.get().unwrap();
     let cycles = clock.read_cycles();
     clock.calibrate(cycles);
-    START_TIME.call_once(|| crate::RTC_DRIVER.get().unwrap().read_rtc());
+    let start_time = *START_TIME.call_once(|| crate::RTC_DRIVER.get().unwrap().read_rtc());
+    crate::init_wall_clock(start_time.since_epoch());
 }
 
 /// Reads an `Instant` of the TSC clocksource.
