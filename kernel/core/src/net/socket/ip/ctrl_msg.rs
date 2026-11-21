@@ -154,7 +154,7 @@ fn write_payload<T: Pod>(
     payload: &T,
 ) -> Result<(CControlHeader, RecvFlags)> {
     if CControlHeader::payload_len_from_total(writer.avail())? < size_of::<T>() {
-        return_errno_with_message!(Errno::EINVAL, "the control message buffer is too small");
+        return Err(errno!(EINVAL, "the control message buffer is too small"));
     }
 
     let header = CControlHeader::new(level, type_, size_of::<T>());

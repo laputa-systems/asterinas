@@ -32,7 +32,7 @@ pub trait DirentVisitor {
     /// implement the syscall ABI can override this method to preserve every byte.
     fn visit_bytes(&mut self, name: &[u8], ino: u64, type_: InodeType, offset: usize) -> Result<()> {
         let name = core::str::from_utf8(name)
-            .map_err(|_| Error::with_message(Errno::EILSEQ, "directory entry name is not UTF-8"))?;
+            .map_err(|_| errno!(EILSEQ, "directory entry name is not UTF-8"))?;
         self.visit(name, ino, type_, offset)
     }
 }

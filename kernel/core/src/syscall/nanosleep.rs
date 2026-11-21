@@ -25,7 +25,7 @@ pub(crate) struct SleepRestartBlock {
 
 pub(super) fn sys_restart_syscall(ctx: &Context) -> Result<SyscallReturn> {
     let Some(block) = ctx.thread_local.restart_block().take() else {
-        return_errno_with_message!(Errno::EINTR, "no sleep to restart");
+        return Err(errno!(EINTR, "no sleep to restart"));
     };
     sleep_until(block, ctx)
 }

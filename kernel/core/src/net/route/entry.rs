@@ -98,7 +98,7 @@ impl<A: RouteAddressFamily> RouteEntry<A> {
             | RouteType::Unreachable
             | RouteType::Prohibit
             | RouteType::Throw => {
-                return_errno_with_message!(Errno::EINVAL, "the route type has no interface")
+                return Err(errno!(EINVAL, "the route type has no interface"))
             }
         };
         let target = RouteTarget::Iface {

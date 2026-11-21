@@ -1275,7 +1275,7 @@ impl Path {
         self.check_mount_writable()?;
         if self.type_() != InodeType::Dir {
             if acl.is_some() {
-                return_errno_with_message!(Errno::EACCES, "default ACLs apply only to directories");
+                return Err(errno!(EACCES, "default ACLs apply only to directories"));
             }
             return Ok(());
         }
@@ -1306,7 +1306,7 @@ impl Path {
                 return Ok(value.len());
             }
             if value_writer.avail() < value.len() {
-                return_errno!(Errno::ERANGE);
+                return Err(errno!(ERANGE));
             }
             VmReader::from(value.as_slice()).read_fallible(value_writer)?;
             return Ok(value.len());

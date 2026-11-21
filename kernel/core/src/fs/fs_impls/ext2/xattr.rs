@@ -204,7 +204,7 @@ impl Xattr {
             XattrNamespace::System => match name.full_name() {
                 "system.posix_acl_access" => XattrNameIndex::PosixAclAccess,
                 "system.posix_acl_default" => XattrNameIndex::PosixAclDefault,
-                _ => return_errno!(Errno::EOPNOTSUPP),
+                _ => return Err(errno!(EOPNOTSUPP)),
             },
         };
         let stripped_name = name_index.strip_prefix(name.full_name())?;
@@ -277,7 +277,7 @@ impl XattrCache {
         let required = XATTR_HEADER_SIZE + XATTR_TERMINATOR_SIZE + retained_size
             + xattr_entry_len(target_name.len()) + xattr_value_size(value.len());
         if required > BLOCK_SIZE {
-            return_errno_with_message!(Errno::ENOSPC, "insufficient xattr block space");
+            return Err(errno!(ENOSPC, "insufficient xattr block space"));
         }
         if self.bid == 0 {
             self.alloc_block()?;

@@ -31,7 +31,7 @@ impl NsCommonOps for NetNamespace {
     }
 
     fn parent(&self) -> Result<&Arc<Self>> {
-        return_errno_with_message!(Errno::EINVAL, "a network namespace does not have a parent namespace");
+        return Err(errno!(EINVAL, "a network namespace does not have a parent namespace"));
     }
 
     fn stashed_dentry(&self) -> &StashedDentry {

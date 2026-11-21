@@ -665,10 +665,10 @@ impl Socket for StreamSocket {
                 let remote = match state.as_ref() {
                     State::Connecting(stream) => stream.remote_endpoint(),
                     State::Connected(stream) => stream.remote_endpoint(),
-                    _ => return_errno_with_message!(Errno::ENOTCONN, "the socket is not connected"),
+                    _ => return Err(errno!(ENOTCONN, "the socket is not connected")),
                 };
                 if !state.set_raw_option(|socket| socket.route_valid()).unwrap_or(false) {
-                    return_errno_with_message!(Errno::ENOTCONN, "the socket has no cached route");
+                    return Err(errno!(ENOTCONN, "the socket has no cached route"));
                 }
                 let mark = self.options.read().mark;
                 let (iface, _, route) = lookup_output_route(remote.addr, mark, false, None)?;

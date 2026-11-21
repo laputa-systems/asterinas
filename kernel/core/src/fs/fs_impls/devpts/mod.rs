@@ -166,7 +166,7 @@ impl MountOptions {
                 "gid" => {
                     let gid = parse_mount_u32(value, 0)?;
                     if gid == u32::MAX {
-                        return_errno_with_message!(Errno::EINVAL, "invalid devpts gid");
+                        return Err(errno!(EINVAL, "invalid devpts gid"));
                     }
                     options.gid = Some(Gid::from(gid));
                 }
@@ -190,10 +190,10 @@ fn parse_mount_u32(value: &str, base: u32) -> Result<u32> {
         (value, 10)
     };
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return_errno_with_message!(Errno::EINVAL, "invalid devpts mount option");
+        return Err(errno!(EINVAL, "invalid devpts mount option"));
     }
     u32::from_str_radix(digits, radix)
-        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid devpts mount option"))
+        .map_err(|_| errno!(EINVAL, "invalid devpts mount option"))
 }
 
 struct DevPtsType;

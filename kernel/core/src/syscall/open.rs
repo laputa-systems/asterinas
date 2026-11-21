@@ -85,36 +85,36 @@ pub(super) fn sys_openat2(
     ctx: &Context,
 ) -> Result<SyscallReturn> {
     if size < size_of::<OpenHow>() {
-        return_errno_with_message!(Errno::EINVAL, "open_how is too small");
+        return Err(errno!(EINVAL, "open_how is too small"));
     }
     if size > PAGE_SIZE {
-        return_errno_with_message!(Errno::E2BIG, "open_how is too large");
+        return Err(errno!(E2BIG, "open_how is too large"));
     }
 
     let how = ctx.user_space().read_val_compat::<OpenHow>(how_addr, size)?;
     if how.flags > u32::MAX as u64 {
-        return_errno_with_message!(Errno::EINVAL, "open flags contain unsupported bits");
+        return Err(errno!(EINVAL, "open flags contain unsupported bits"));
     }
     let flags = how.flags as u32;
     if flags & !OPENAT2_SUPPORTED_FLAGS != 0 {
-        return_errno_with_message!(Errno::EINVAL, "open flags contain unsupported bits");
+        return Err(errno!(EINVAL, "open flags contain unsupported bits"));
     }
     if flags & StatusFlags::O_PATH.bits() != 0 && flags & !OPENAT2_PATH_FLAGS != 0 {
-        return_errno_with_message!(Errno::EINVAL, "O_PATH is combined with unsupported flags");
+        return Err(errno!(EINVAL, "O_PATH is combined with unsupported flags"));
     }
     let Some(resolve) = OpenResolveFlags::from_bits(how.resolve) else {
-        return_errno_with_message!(Errno::EINVAL, "resolve flags contain unsupported bits");
+        return Err(errno!(EINVAL, "resolve flags contain unsupported bits"));
     };
     if resolve.contains(OpenResolveFlags::BENEATH | OpenResolveFlags::IN_ROOT) {
-        return_errno_with_message!(Errno::EINVAL, "BENEATH and IN_ROOT cannot be combined");
+        return Err(errno!(EINVAL, "BENEATH and IN_ROOT cannot be combined"));
     }
     let creates_file = flags & (CreationFlags::O_CREAT.bits() | CreationFlags::O_TMPFILE.bits()) != 0;
     if creates_file {
         if how.mode & !OPENAT2_MODE_MASK != 0 {
-            return_errno_with_message!(Errno::EINVAL, "mode contains unsupported bits");
+            return Err(errno!(EINVAL, "mode contains unsupported bits"));
         }
     } else if how.mode != 0 {
-        return_errno_with_message!(Errno::EINVAL, "mode requires O_CREAT or O_TMPFILE");
+        return Err(errno!(EINVAL, "mode requires O_CREAT or O_TMPFILE"));
     }
 
     let path = ctx.user_space().read_cstring(path_addr, MAX_FILENAME_LEN)?;
@@ -212,7 +212,7 @@ fn do_open_resolved(
         let dir_path = match lookup_res {
             LookupResult::Resolved(path) => path,
             LookupResult::AtParent(_) => {
-                return_errno_with_message!(Errno::ENOENT, "the directory does not exist");
+                return Err(errno!(ENOENT, "the directory does not exist"));
             }
         };
         return do_open_tmpfile(&dir_path, &open_args, umask);

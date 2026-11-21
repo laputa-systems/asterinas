@@ -13,7 +13,7 @@ pub(super) fn sys_sched_setparam(tid: Tid, addr: Vaddr, ctx: &Context) -> Result
     let prio: i32 = ctx.user_space().read_val(addr)?;
 
     let priority = u32::try_from(prio)
-        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid scheduling priority"))?;
+        .map_err(|_| errno!(EINVAL, "invalid scheduling priority"))?;
     change_sched_attr(tid, ctx, SchedChange::Priority(priority))?;
 
     Ok(SyscallReturn::Return(0))

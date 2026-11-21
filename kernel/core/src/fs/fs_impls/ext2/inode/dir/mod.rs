@@ -325,16 +325,16 @@ impl Inode {
 
         if !same_dir {
             if old_is_dir && guards.inner(old_inode.ino()).find_entry_info(b"..")?.ino != self.ino {
-                return_errno!(Errno::EIO);
+                return Err(errno!(EIO));
             }
             if new_is_dir && guards.inner(new_inode.ino()).find_entry_info(b"..")?.ino != new_dir_inode.ino {
-                return_errno!(Errno::EIO);
+                return Err(errno!(EIO));
             }
         }
         if !same_dir && old_is_dir != new_is_dir {
             let receiving = if old_is_dir { new_dir_inode } else { self };
             if guards.inner(receiving.ino).link_count() >= MAX_LINK_COUNT {
-                return_errno!(Errno::EMLINK);
+                return Err(errno!(EMLINK));
             }
         }
         guards.inner_mut(self.ino).overwrite_entry(old_name, new_inode.ino(), DirEntryFileType::from(new_inode.type_))?;

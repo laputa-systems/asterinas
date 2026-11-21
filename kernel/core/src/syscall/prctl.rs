@@ -237,7 +237,7 @@ impl PrctlCmd {
                     None
                 } else {
                     let value = u8::try_from(arg2)
-                        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid signal number"))?;
+                        .map_err(|_| errno!(EINVAL, "invalid signal number"))?;
                     Some(SigNum::try_from(value)?)
                 };
                 Ok(PrctlCmd::PR_SET_PDEATHSIG(signum))
@@ -245,7 +245,7 @@ impl PrctlCmd {
             PR_GET_PDEATHSIG => Ok(PrctlCmd::PR_GET_PDEATHSIG(arg2 as _)),
             PR_GET_AUXV => {
                 if arg4 != 0 || arg5 != 0 {
-                    return_errno_with_message!(Errno::EINVAL, "invalid PR_GET_AUXV arguments");
+                    return Err(errno!(EINVAL, "invalid PR_GET_AUXV arguments"));
                 }
                 Ok(PrctlCmd::PR_GET_AUXV(arg2 as _, arg3 as _))
             }

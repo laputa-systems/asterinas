@@ -40,10 +40,10 @@ impl PosixAcl {
             return Ok(None);
         }
         if data.len() < 4 || (data.len() - 4) % 8 != 0 {
-            return_errno_with_message!(Errno::EINVAL, "invalid POSIX ACL size");
+            return Err(errno!(EINVAL, "invalid POSIX ACL size"));
         }
         if u32::from_le_bytes(data[..4].try_into().unwrap()) != 2 {
-            return_errno_with_message!(Errno::EOPNOTSUPP, "unsupported POSIX ACL version");
+            return Err(errno!(EOPNOTSUPP, "unsupported POSIX ACL version"));
         }
         if data.len() == 4 {
             return Ok(None);
@@ -56,7 +56,7 @@ impl PosixAcl {
             let permissions = u16::from_le_bytes(raw[2..4].try_into().unwrap());
             let id = u32::from_le_bytes(raw[4..8].try_into().unwrap());
             if permissions > 7 {
-                return_errno_with_message!(Errno::EINVAL, "invalid POSIX ACL permissions");
+                return Err(errno!(EINVAL, "invalid POSIX ACL permissions"));
             }
             let permissions = permissions as u8;
             let entry = match (phase, tag) {
@@ -84,12 +84,12 @@ impl PosixAcl {
                     phase = Phase::End;
                     Entry::Other(permissions)
                 }
-                _ => return_errno_with_message!(Errno::EINVAL, "invalid POSIX ACL entry order"),
+                _ => return Err(errno!(EINVAL, "invalid POSIX ACL entry order")),
             };
             entries.push(entry);
         }
         if !matches!(phase, Phase::End) {
-            return_errno_with_message!(Errno::EINVAL, "incomplete POSIX ACL");
+            return Err(errno!(EINVAL, "incomplete POSIX ACL"));
         }
         Ok(Some(Self { entries }))
     }
@@ -239,7 +239,7 @@ impl AccessAclUpdate {
 
 pub(crate) fn read_user_acl(reader: &mut VmReader) -> Result<Option<PosixAcl>> {
     if reader.remain() > XATTR_VALUE_MAX_LEN {
-        return_errno!(Errno::E2BIG);
+        return Err(errno!(E2BIG));
     }
     let mut bytes = vec![0; reader.remain()];
     reader.read_fallible(&mut VmWriter::from(bytes.as_mut_slice()))?;
@@ -257,13 +257,13 @@ pub(crate) fn read_stored_acl(inode: &dyn Inode) -> Result<Option<PosixAcl>> {
         Err(error) => return Err(error),
     };
     if length > XATTR_VALUE_MAX_LEN {
-        return_errno_with_message!(Errno::EIO, "stored POSIX ACL exceeds the attribute limit");
+        return Err(errno!(EIO, "stored POSIX ACL exceeds the attribute limit"));
     }
     let mut bytes = vec![0; length];
     let mut writer = VmWriter::from(bytes.as_mut_slice()).to_fallible();
     let actual = inode.get_xattr(name, &mut writer)?;
     if actual != length {
-        return_errno_with_message!(Errno::EIO, "stored POSIX ACL changed during a locked read");
+        return Err(errno!(EIO, "stored POSIX ACL changed during a locked read"));
     }
     PosixAcl::decode(&bytes)
 }

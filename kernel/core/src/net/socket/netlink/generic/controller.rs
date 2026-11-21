@@ -80,11 +80,11 @@ fn error(request: &CMsgSegHdr, payload: &[u8], port: PortNum, errno: Option<Errn
     let capped = errno.is_none();
     let capacity = 36usize.checked_add(if capped { 0 } else { payload.len() })
         .and_then(|length| length.checked_add(3)).map(|length| length & !3).ok_or_else(|| {
-        Error::with_message(Errno::ENOMEM, "the generic netlink error is too large")
+        errno!(ENOMEM, "the generic netlink error is too large")
     })?;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(capacity).map_err(|_| {
-        Error::with_message(Errno::ENOMEM, "cannot allocate the generic netlink error")
+        errno!(ENOMEM, "cannot allocate the generic netlink error")
     })?;
     header(&mut bytes, 2, if capped { 0x100 } else { 0 }, request.seq, port);
     let code = errno.map_or(0, |e| -(e as i32));

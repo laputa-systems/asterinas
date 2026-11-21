@@ -169,7 +169,7 @@ impl InodeHandle {
             .get_cur();
         if offset as u64 >= maximum {
             thread.enqueue_signal(Box::new(KernelSignal::new(SIGXFSZ)));
-            return_errno_with_message!(Errno::EFBIG, "the file size limit has been reached");
+            return Err(errno!(EFBIG, "the file size limit has been reached"));
         }
 
         let remaining = (maximum - offset as u64).min(usize::MAX as u64) as usize;
@@ -187,7 +187,7 @@ impl InodeHandle {
             return Err(errno!(EBADF, "the file is not opened readable"));
         }
         if self.path().metadata()?.nr_hard_links == 0 {
-            return_errno_with_message!(Errno::ENOENT, "the directory has been removed");
+            return Err(errno!(ENOENT, "the directory has been removed"));
         }
 
         let file_ops: &dyn FileOps = if let Some(ref open_file) = self.open_file {
@@ -697,7 +697,7 @@ fn do_seek_util(offset: &Mutex<usize>, pos: SeekFrom, end: Option<usize>) -> Res
         }
         SeekFrom::Current(diff) => offset.wrapping_add_signed(diff),
         SeekFrom::Data(_) | SeekFrom::Hole(_) => {
-            return_errno_with_message!(Errno::EINVAL, "extent seeking is not supported");
+            return Err(errno!(EINVAL, "extent seeking is not supported"));
         }
     };
 

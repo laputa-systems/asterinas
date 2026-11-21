@@ -175,7 +175,7 @@ fn read_cstring_vec(
 
         let string_bytes = cstring.as_bytes_with_nul().len() + size_of::<usize>();
         *remaining_bytes = remaining_bytes.checked_sub(string_bytes).ok_or_else(|| {
-            Error::with_message(Errno::E2BIG, "the arguments and environment are too large")
+            errno!(E2BIG, "the arguments and environment are too large")
         })?;
         res.push(cstring);
     }

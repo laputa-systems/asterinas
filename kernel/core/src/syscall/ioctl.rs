@@ -109,13 +109,13 @@ fn clone_file(source: &Arc<dyn FileLike>, destination: &Arc<dyn FileLike>) -> Re
     if source.status_flags().contains(StatusFlags::O_PATH)
         || destination.status_flags().contains(StatusFlags::O_PATH)
     {
-        return_errno_with_message!(Errno::EBADF, "a file is opened as a path");
+        return Err(errno!(EBADF, "a file is opened as a path"));
     }
     let (Some(source_handle), Some(destination_handle)) = (
         source.downcast_ref::<InodeHandle>(),
         destination.downcast_ref::<InodeHandle>(),
     ) else {
-        return_errno_with_message!(Errno::EINVAL, "both files must be regular files");
+        return Err(errno!(EINVAL, "both files must be regular files"));
     };
     let (source_inode, destination_inode) = (
         source_handle.path().inode(),
@@ -123,19 +123,19 @@ fn clone_file(source: &Arc<dyn FileLike>, destination: &Arc<dyn FileLike>) -> Re
     );
 
     if !Arc::ptr_eq(&source_inode.fs(), &destination_inode.fs()) {
-        return_errno_with_message!(Errno::EXDEV, "the files are on different file systems");
+        return Err(errno!(EXDEV, "the files are on different file systems"));
     }
     if !source.access_mode().is_readable() || !destination.access_mode().is_writable() {
-        return_errno_with_message!(Errno::EBADF, "the files are not open for cloning");
+        return Err(errno!(EBADF, "the files are not open for cloning"));
     }
     if source_inode.type_() == InodeType::Dir || destination_inode.type_() == InodeType::Dir {
-        return_errno_with_message!(Errno::EISDIR, "a file is a directory");
+        return Err(errno!(EISDIR, "a file is a directory"));
     }
     if source_inode.type_() != InodeType::File || destination_inode.type_() != InodeType::File {
-        return_errno_with_message!(Errno::EINVAL, "both files must be regular files");
+        return Err(errno!(EINVAL, "both files must be regular files"));
     }
 
-    return_errno_with_message!(Errno::EOPNOTSUPP, "the file system cannot clone files");
+    return Err(errno!(EOPNOTSUPP, "the file system cannot clone files"));
 }
 
 fn handle_file_ioctl(file: &dyn FileLike, raw_ioctl: RawIoctl) -> Option<Result<()>> {

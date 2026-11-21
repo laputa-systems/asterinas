@@ -51,7 +51,7 @@ impl datagram_common::Unbound for UnboundDatagram {
         if !endpoint.addr.is_unspecified() {
             let owner = lookup_local_iface(endpoint.addr)?;
             if device.is_some_and(|device| !Arc::ptr_eq(device, &owner)) {
-                return_errno_with_message!(Errno::EADDRNOTAVAIL, "the address does not belong to the selected interface");
+                return Err(errno!(EADDRNOTAVAIL, "the address does not belong to the selected interface"));
             }
         }
         let config = BindPortConfig::new(*endpoint, options.can_reuse);

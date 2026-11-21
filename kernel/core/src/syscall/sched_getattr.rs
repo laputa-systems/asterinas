@@ -273,20 +273,20 @@ pub(super) enum SchedChange {
 
 pub(super) fn change_sched_attr(tid: Tid, ctx: &Context, change: SchedChange) -> Result<()> {
     if tid.cast_signed() < 0 {
-        return_errno_with_message!(Errno::EINVAL, "all negative TIDs are not valid");
+        return Err(errno!(EINVAL, "all negative TIDs are not valid"));
     }
     if tid == 0 {
         return change_thread_sched_attr(ctx.thread, ctx, change);
     }
     let Some(thread) = pid_table::pid_table_mut().get_thread(tid) else {
-        return_errno_with_message!(Errno::ESRCH, "the target thread does not exist");
+        return Err(errno!(ESRCH, "the target thread does not exist"));
     };
     change_thread_sched_attr(&thread, ctx, change)
 }
 
 fn change_thread_sched_attr(thread: &Thread, ctx: &Context, change: SchedChange) -> Result<()> {
     let Some(target) = thread.as_posix_thread() else {
-        return_errno_with_message!(Errno::ESRCH, "the target is not a userspace thread");
+        return Err(errno!(ESRCH, "the target is not a userspace thread"));
     };
     let target_process = target.process();
     let same_owner = {
@@ -317,7 +317,7 @@ fn change_thread_sched_attr(thread: &Thread, ctx: &Context, change: SchedChange)
             }
         };
         if requested.sched_flags & !SCHED_FLAG_RESET_ON_FORK != 0 {
-            return_errno_with_message!(Errno::EINVAL, "unsupported scheduling flags");
+            return Err(errno!(EINVAL, "unsupported scheduling flags"));
         }
         let policy = SchedPolicy::try_from(requested)?;
         let mut user = requested.user_attr();
@@ -342,7 +342,7 @@ fn change_thread_sched_attr(thread: &Thread, ctx: &Context, change: SchedChange)
             if !same_owner || raise_nice || leave_idle || raise_rt
                 || old_user.reset_on_fork && !user.reset_on_fork
             {
-                return_errno_with_message!(Errno::EPERM, "scheduling change requires permission");
+                return Err(errno!(EPERM, "scheduling change requires permission"));
             }
         }
         Ok((policy, user, ()))

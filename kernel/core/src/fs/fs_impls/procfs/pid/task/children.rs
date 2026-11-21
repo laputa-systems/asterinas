@@ -28,7 +28,7 @@ impl ProcFileOps for ChildrenFileOps {
 
     fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         let Some((thread, process)) = self.0.thread_and_process() else {
-            return_errno_with_message!(Errno::ESRCH, "the thread or the process does not exist");
+            return Err(errno!(ESRCH, "the thread or the process does not exist"));
         };
         let children = process.children_of_thread(&thread);
         let mut printer = VmPrinter::new_skip(writer, offset);

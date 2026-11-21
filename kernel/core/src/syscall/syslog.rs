@@ -28,7 +28,7 @@ pub(super) fn sys_syslog(action: i32, buf: Vaddr, len: i32, ctx: &Context) -> Re
         SYSLOG_ACTION_CLOSE | SYSLOG_ACTION_OPEN => Ok(SyscallReturn::Return(0)),
         SYSLOG_ACTION_READ_ALL => {
             if buf == 0 || len < 0 {
-                return_errno_with_message!(Errno::EINVAL, "the buffer or its length is invalid");
+                return Err(errno!(EINVAL, "the buffer or its length is invalid"));
             }
             let text = read_all(len as usize);
             ctx.user_space().write_bytes(buf, &text)?;
@@ -36,9 +36,9 @@ pub(super) fn sys_syslog(action: i32, buf: Vaddr, len: i32, ctx: &Context) -> Re
         }
         SYSLOG_ACTION_SIZE_BUFFER => Ok(SyscallReturn::Return(LOG_BUF_LEN as isize)),
         2 | 4 | 5 | 6 | 7 | 8 | 9 => {
-            return_errno_with_message!(Errno::ENOSYS, "the syslog action is not supported")
+            return Err(errno!(ENOSYS, "the syslog action is not supported"))
         }
-        _ => return_errno_with_message!(Errno::EINVAL, "the syslog action is invalid"),
+        _ => return Err(errno!(EINVAL, "the syslog action is invalid")),
     }
 }
 

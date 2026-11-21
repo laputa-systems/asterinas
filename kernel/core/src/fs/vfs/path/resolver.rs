@@ -713,7 +713,7 @@ impl PathResolver {
         let fs_path = FsPath::from_fd_at_bytes(dirfd, path, EmptyPathStr::Reject)?;
         let (base, relative_path) = match fs_path.inner {
             FsPathInner::Absolute(_) if resolve.contains(OpenResolveFlags::BENEATH) => {
-                return_errno_with_message!(Errno::EXDEV, "absolute path escapes the dirfd");
+                return Err(errno!(EXDEV, "absolute path escapes the dirfd"));
             }
             FsPathInner::Absolute(path) if resolve.contains(OpenResolveFlags::IN_ROOT) => {
                 let dirfd_path = FsPath::from_fd(dirfd)?;
@@ -725,12 +725,12 @@ impl PathResolver {
                 (self.lookup(&dirfd_path)?, path)
             }
             FsPathInner::Cwd | FsPathInner::Fd(_) => {
-                return_errno_with_message!(Errno::ENOENT, "the path is empty");
+                return Err(errno!(ENOENT, "the path is empty"));
             }
         };
 
         if resolve.contains(OpenResolveFlags::CACHED) {
-            return_errno_with_message!(Errno::EAGAIN, "cached path lookup is unavailable");
+            return Err(errno!(EAGAIN, "cached path lookup is unavailable"));
         }
 
         let boundary = resolve
@@ -842,7 +842,7 @@ impl PathResolver {
                 && current_path == *boundary
             {
                 if resolve.contains(OpenResolveFlags::BENEATH) {
-                    return_errno_with_message!(Errno::EXDEV, "path escapes the dirfd");
+                    return Err(errno!(EXDEV, "path escapes the dirfd"));
                 }
                 current_path = boundary.clone();
                 relative_path = path_remain;
@@ -866,7 +866,7 @@ impl PathResolver {
             if resolve.contains(OpenResolveFlags::NO_XDEV)
                 && next_path.mount.id() != parent.mount.id()
             {
-                return_errno_with_message!(Errno::EXDEV, "path crosses a mount point");
+                return Err(errno!(EXDEV, "path crosses a mount point"));
             }
 
             let next_type = next_path.type_();
@@ -912,10 +912,7 @@ impl PathResolver {
                         // Change the path and relative path according to symlink
                         if link_path_remain.starts_with(b"/") {
                             if resolve.contains(OpenResolveFlags::BENEATH) {
-                                return_errno_with_message!(
-                                    Errno::EXDEV,
-                                    "absolute symbolic link escapes the dirfd"
-                                );
+                                return Err(errno!(EXDEV, "absolute symbolic link escapes the dirfd"));
                             }
                             current_path = boundary
                                 .filter(|_| resolve.contains(OpenResolveFlags::IN_ROOT))
@@ -932,21 +929,15 @@ impl PathResolver {
                         if resolve.contains(OpenResolveFlags::NO_XDEV)
                             && path.mount.id() != parent.mount.id()
                         {
-                            return_errno_with_message!(Errno::EXDEV, "path crosses a mount point");
+                            return Err(errno!(EXDEV, "path crosses a mount point"));
                         }
                         if resolve.intersects(
                             OpenResolveFlags::BENEATH | OpenResolveFlags::NO_MAGICLINKS,
                         ) {
-                            return_errno_with_message!(
-                                Errno::ELOOP,
-                                "path contains a magic link"
-                            );
+                            return Err(errno!(ELOOP, "path contains a magic link"));
                         }
                         if boundary.is_some_and(|boundary| !self.is_beneath(&path, boundary)) {
-                            return_errno_with_message!(
-                                Errno::EXDEV,
-                                "magic link escapes the dirfd"
-                            );
+                            return Err(errno!(EXDEV, "magic link escapes the dirfd"));
                         }
                         current_path = path;
                         relative_path = path_remain;

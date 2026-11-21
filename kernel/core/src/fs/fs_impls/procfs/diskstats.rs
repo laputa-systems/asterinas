@@ -27,7 +27,7 @@ impl ProcFileOps for DiskStatsFileOps {
         let mut snapshots = Vec::with_capacity(devices.len());
         for device in devices {
             let Some(stats) = device.io_stats() else {
-                return_errno_with_message!(Errno::EOPNOTSUPP, "block device statistics unavailable");
+                return Err(errno!(EOPNOTSUPP, "block device statistics unavailable"));
             };
             snapshots.push((device, stats));
         }

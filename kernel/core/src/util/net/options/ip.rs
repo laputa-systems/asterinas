@@ -88,7 +88,7 @@ pub(crate) fn new_ip_option(name: i32) -> Result<Box<dyn RawSocketOption>> {
 
 impl RawSocketOption for IpOptions {
     fn read_from_user(&mut self, addr: Vaddr, max_len: u32) -> Result<()> {
-        if max_len > 40 { return_errno_with_message!(Errno::EINVAL, "IPv4 options exceed 40 bytes"); }
+        if max_len > 40 { return Err(errno!(EINVAL, "IPv4 options exceed 40 bytes")); }
         let mut bytes = vec![0; max_len as usize];
         if !bytes.is_empty() { current_userspace!().read_bytes(addr, &mut bytes)?; }
         self.set(bytes);

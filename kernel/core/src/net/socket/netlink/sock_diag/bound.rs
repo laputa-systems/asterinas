@@ -21,7 +21,7 @@ impl datagram_common::Bound for BoundNetlink<SockDiagMessage> {
 
     fn try_send(&self, reader: &mut dyn MultiRead, remote: &Self::Endpoint, _flags: SendFlags) -> Result<usize> {
         if *remote != NetlinkSocketAddr::new_unspecified() {
-            return_errno_with_message!(Errno::ECONNREFUSED, "socket diagnostic netlink destination is not the kernel");
+            return Err(errno!(ECONNREFUSED, "socket diagnostic netlink destination is not the kernel"));
         }
         let total = reader.sum_lens();
         while reader.sum_lens() >= size_of::<CMsgSegHdr>() {
@@ -31,7 +31,7 @@ impl datagram_common::Bound for BoundNetlink<SockDiagMessage> {
             let padding = ((4 - payload_len % 4) % 4).min(reader.sum_lens() - payload_len);
             let mut payload = Vec::new();
             payload.try_reserve_exact(payload_len).map_err(|_| {
-                Error::with_message(Errno::ENOMEM, "cannot allocate the socket diagnostic netlink request")
+                errno!(ENOMEM, "cannot allocate the socket diagnostic netlink request")
             })?;
             payload.resize(payload_len, 0);
             reader.read(&mut VmWriter::from(payload.as_mut_slice()))?;

@@ -31,7 +31,7 @@ pub(super) fn resolve_bind_iface_and_config(
             )
         })
     {
-        return_errno_with_message!(Errno::EADDRINUSE, "the port is already bound");
+        return Err(errno!(EADDRINUSE, "the port is already bound"));
     }
 
     let iface = route::lookup_local_iface(endpoint.addr)?;

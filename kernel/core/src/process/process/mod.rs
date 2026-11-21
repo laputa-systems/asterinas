@@ -509,13 +509,10 @@ impl Process {
                 .session()
                 .clone();
             if !Arc::ptr_eq(&session, &child_session) {
-                return_errno_with_message!(
-                    Errno::EPERM,
-                    "the process belongs to a different session"
-                );
+                return Err(errno!(EPERM, "the process belongs to a different session"));
             }
             if process.has_executed.load(Ordering::Relaxed) {
-                return_errno_with_message!(Errno::EACCES, "the child has executed a new program");
+                return Err(errno!(EACCES, "the child has executed a new program"));
             }
             Some(session)
         } else {

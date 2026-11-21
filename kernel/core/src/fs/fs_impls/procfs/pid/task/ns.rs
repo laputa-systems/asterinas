@@ -158,7 +158,7 @@ impl ProcDirOps for NsDirOps {
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>> {
         if name == "pid" {
             let process = self.dir.process().ok_or_else(|| {
-                Error::with_message(Errno::ESRCH, "the process does not exist")
+                errno!(ESRCH, "the process does not exist")
             })?;
             return Ok(NsSymOps::<PidNamespace>::new_inode(
                 self.dir.clone(),

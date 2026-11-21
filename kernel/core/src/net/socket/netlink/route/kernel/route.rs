@@ -63,7 +63,7 @@ const RTM_F_FIB_MATCH: u32 = 0x2000;
 fn do_lookup_route(request: &RouteSegment) -> Result<Vec<RtnlSegment>> {
     let body = request.body();
     if body.family != CSocketAddrFamily::AF_INET as u8 {
-        return_errno_with_message!(Errno::EOPNOTSUPP, "only IPv4 route queries are supported");
+        return Err(errno!(EOPNOTSUPP, "only IPv4 route queries are supported"));
     }
     let mut query = Ipv4RouteQuery { mode: if body.flags & RTM_F_FIB_MATCH != 0 { Ipv4RouteQueryMode::FibMatch } else { Ipv4RouteQueryMode::Output }, destination: Ipv4Addr::UNSPECIFIED, source: None, device: None, mark: 0 };
     let current = current_thread!();
@@ -76,10 +76,10 @@ fn do_lookup_route(request: &RouteSegment) -> Result<Vec<RtnlSegment>> {
             RouteAttr::Mark(mark) => query.mark = *mark,
             RouteAttr::Uid(value) => uid = Some(*value).filter(|value| *value != u32::MAX),
             RouteAttr::Dst(IpAddr::V6(_)) | RouteAttr::Src(IpAddr::V6(_)) => {
-                return_errno_with_message!(Errno::EINVAL, "the route query attribute is invalid");
+                return Err(errno!(EINVAL, "the route query attribute is invalid"));
             }
             RouteAttr::Iif(index) if *index != 0 => {
-                return_errno_with_message!(Errno::EOPNOTSUPP, "input route queries are not supported");
+                return Err(errno!(EOPNOTSUPP, "input route queries are not supported"));
             }
             _ => {}
         }
@@ -139,7 +139,7 @@ const SCOPE_NOWHERE: u8 = 255;
 /// and `fib_create_info`).
 fn new_route_action(type_: u8, scope: u8, parsed: &ParsedRoute) -> Result<NewRouteAction> {
     if scope < widest_scope(type_) {
-        return_errno_with_message!(Errno::EINVAL, "the route type or its scope is invalid");
+        return Err(errno!(EINVAL, "the route type or its scope is invalid"));
     }
 
     let rejection = match type_ {
@@ -149,13 +149,13 @@ fn new_route_action(type_: u8, scope: u8, parsed: &ParsedRoute) -> Result<NewRou
         9 => Rejection::Throw,
         1..=5 => {
             if scope > SCOPE_HOST {
-                return_errno_with_message!(Errno::EINVAL, "the route scope is invalid");
+                return Err(errno!(EINVAL, "the route scope is invalid"));
             }
             if parsed.gateway.is_some() && scope == SCOPE_HOST {
-                return_errno_with_message!(Errno::EINVAL, "a host route cannot have a gateway");
+                return Err(errno!(EINVAL, "a host route cannot have a gateway"));
             }
             if type_ != 1 && parsed.iface_index.is_none() && parsed.gateway.is_none() {
-                return_errno_with_message!(Errno::ENODEV, "the route type needs a device");
+                return Err(errno!(ENODEV, "the route type needs a device"));
             }
             let type_ = match type_ {
                 1 => RouteType::Unicast,
@@ -167,7 +167,7 @@ fn new_route_action(type_: u8, scope: u8, parsed: &ParsedRoute) -> Result<NewRou
             };
             return Ok(NewRouteAction::Send(type_));
         }
-        _ => return_errno_with_message!(Errno::EINVAL, "the route type is invalid"),
+        _ => return Err(errno!(EINVAL, "the route type is invalid")),
     };
     Ok(NewRouteAction::Reject(rejection))
 }
@@ -191,10 +191,7 @@ pub(super) fn do_new_route(request_segment: &RouteSegment) -> Result<()> {
 
     let request_flags = NewRequestFlags::from_bits_truncate(request_segment.header().flags);
     if request_flags.intersects(NewRequestFlags::REPLACE | NewRequestFlags::APPEND) {
-        return_errno_with_message!(
-            Errno::EOPNOTSUPP,
-            "replacing or appending a route is not supported"
-        );
+        return Err(errno!(EOPNOTSUPP, "replacing or appending a route is not supported"));
     }
     let action = new_route_action(body.type_, body.scope, &parsed)?;
 
@@ -247,19 +244,16 @@ impl ParsedRoute {
     fn from_request(request_segment: &RouteSegment) -> Result<Self> {
         let body = request_segment.body();
         if body.family != CSocketAddrFamily::AF_INET as u8 {
-            return_errno_with_message!(Errno::EOPNOTSUPP, "only IPv4 routes can be changed");
+            return Err(errno!(EOPNOTSUPP, "only IPv4 routes can be changed"));
         }
         if body.dst_len > 32 {
-            return_errno_with_message!(Errno::EINVAL, "the prefix length is invalid");
+            return Err(errno!(EINVAL, "the prefix length is invalid"));
         }
         if body.src_len != 0 || body.flags != 0 {
-            return_errno_with_message!(
-                Errno::EOPNOTSUPP,
-                "source-specific routes and route flags are not supported"
-            );
+            return Err(errno!(EOPNOTSUPP, "source-specific routes and route flags are not supported"));
         }
         if body.tos != 0 {
-            return_errno_with_message!(Errno::EOPNOTSUPP, "routes with a TOS are not supported");
+            return Err(errno!(EOPNOTSUPP, "routes with a TOS are not supported"));
         }
 
         let mut table = u32::from(body.table);
@@ -273,17 +267,14 @@ impl ParsedRoute {
                 RouteAttr::Dst(IpAddr::V4(address)) => destination = Some(*address),
                 RouteAttr::Gateway(IpAddr::V4(address)) => gateway = Some(*address),
                 RouteAttr::Dst(IpAddr::V6(_)) | RouteAttr::Gateway(IpAddr::V6(_)) => {
-                    return_errno_with_message!(Errno::EINVAL, "the address is not IPv4");
+                    return Err(errno!(EINVAL, "the address is not IPv4"));
                 }
                 RouteAttr::Oif(index) => iface_index = Some(*index).filter(|index| *index != 0),
                 RouteAttr::Priority(value) => priority = Some(*value),
                 RouteAttr::Pref(_) => {}
                 RouteAttr::PrefSrc(_) | RouteAttr::CacheInfo(_) | RouteAttr::Src(_)
                 | RouteAttr::Iif(_) | RouteAttr::Mark(_) | RouteAttr::Uid(_) => {
-                    return_errno_with_message!(
-                        Errno::EOPNOTSUPP,
-                        "the route attribute is not supported"
-                    );
+                    return Err(errno!(EOPNOTSUPP, "the route attribute is not supported"));
                 }
             }
         }
@@ -291,7 +282,7 @@ impl ParsedRoute {
         let destination = match destination {
             Some(address) => address,
             None if body.dst_len == 0 => Ipv4Addr::UNSPECIFIED,
-            None => return_errno_with_message!(Errno::EINVAL, "the route has no destination"),
+            None => return Err(errno!(EINVAL, "the route has no destination")),
         };
 
         Ok(Self {

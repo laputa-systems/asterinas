@@ -153,12 +153,12 @@ impl PacketTap {
     pub(super) fn dequeue(&self, consume: bool) -> Result<DequeuedFrame> {
         let mut state = self.state.lock();
         if let Some(errno) = state.error.take() {
-            return Err(Error::with_message(errno, "the packet socket has a pending error"));
+            return Err(Error::new(errno));
         }
 
         if consume {
             let Some(frame) = state.queue.pop_front() else {
-                return_errno_with_message!(Errno::EAGAIN, "the receive queue is empty");
+                return Err(errno!(EAGAIN, "the receive queue is empty"));
             };
             state.queued_bytes -= frame.bytes.len();
             let addr = frame.addr();
@@ -168,7 +168,7 @@ impl PacketTap {
             })
         } else {
             let Some(frame) = state.queue.front() else {
-                return_errno_with_message!(Errno::EAGAIN, "the receive queue is empty");
+                return Err(errno!(EAGAIN, "the receive queue is empty"));
             };
             Ok(DequeuedFrame {
                 bytes: frame.bytes.clone(),

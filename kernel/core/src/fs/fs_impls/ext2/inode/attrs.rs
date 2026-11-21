@@ -177,7 +177,7 @@ impl Inode {
             return Ok(value.len());
         }
         let xattr = self.xattr.as_ref().ok_or_else(|| {
-            Error::with_message(Errno::ENODATA, "xattr not supported on this inode type")
+            errno!(ENODATA, "xattr not supported on this inode type")
         })?;
         xattr.get_xattr(name, value_writer)
     }
@@ -225,7 +225,7 @@ impl Inode {
         }
         let _ownership = self.fs_lock_context_or_init().ownership_lock().lock();
         let xattr = self.xattr.as_ref().ok_or_else(|| {
-            Error::with_message(Errno::EPERM, "xattr not supported on this inode type")
+            errno!(EPERM, "xattr not supported on this inode type")
         })?;
         xattr.set_xattr(name, value_reader, flags)?;
         let new_bid = xattr.bid();
@@ -247,12 +247,12 @@ impl Inode {
             Err(error) => return Err(error),
         };
         if length > BLOCK_SIZE {
-            return_errno!(Errno::EIO);
+            return Err(errno!(EIO));
         }
         let mut value = vec![0; length];
         let mut writer = VmWriter::from(value.as_mut_slice()).to_fallible();
         if xattr.get_xattr(name, &mut writer)? != length {
-            return_errno!(Errno::EIO);
+            return Err(errno!(EIO));
         }
         decode_disk_acl(&value)
     }
@@ -283,7 +283,7 @@ impl Inode {
     pub(in ext2) fn remove_xattr(&self, name: XattrName) -> Result<()> {
         let _ownership = self.fs_lock_context_or_init().ownership_lock().lock();
         let xattr = self.xattr.as_ref().ok_or_else(|| {
-            Error::with_message(Errno::EPERM, "xattr not supported on this inode type")
+            errno!(EPERM, "xattr not supported on this inode type")
         })?;
         xattr.remove_xattr(name)?;
         let new_bid = xattr.bid();
@@ -307,7 +307,7 @@ fn encode_disk_acl(wire: &[u8]) -> Vec<u8> {
 
 fn decode_disk_acl(disk: &[u8]) -> Result<Option<PosixAcl>> {
     if disk.len() < 4 || u32::from_le_bytes(disk[..4].try_into().unwrap()) != 1 {
-        return_errno_with_message!(Errno::EIO, "invalid ext2 ACL header");
+        return Err(errno!(EIO, "invalid ext2 ACL header"));
     }
     let mut wire = Vec::with_capacity(disk.len() * 2);
     wire.extend_from_slice(&2u32.to_le_bytes());
@@ -324,10 +324,10 @@ fn decode_disk_acl(disk: &[u8]) -> Result<Option<PosixAcl>> {
                     .ok_or_else(|| Error::new(Errno::EIO))?);
                 offset += 4;
             }
-            _ => return_errno!(Errno::EIO),
+            _ => return Err(errno!(EIO)),
         }
     }
-    PosixAcl::decode(&wire).map_err(|_| Error::with_message(Errno::EIO, "invalid ext2 ACL entries"))
+    PosixAcl::decode(&wire).map_err(|_| errno!(EIO, "invalid ext2 ACL entries"))
 }
 
 #[cfg(ktest)]

@@ -137,20 +137,14 @@ impl KmsgFile {
         self.reader.pollee.invalidate();
         let record = match read {
             Ok(record) => record,
-            Err(ReadFailure::Overrun) => return_errno_with_message!(
-                Errno::EPIPE,
-                "the ring dropped records before they were read"
-            ),
+            Err(ReadFailure::Overrun) => return Err(errno!(EPIPE, "the ring dropped records before they were read")),
             Err(ReadFailure::Drained) => {
-                return_errno_with_message!(Errno::EAGAIN, "the ring has no record to read")
+                return Err(errno!(EAGAIN, "the ring has no record to read"))
             }
         };
         let line = render(&record);
         if line.len() > writer.avail() {
-            return_errno_with_message!(
-                Errno::EINVAL,
-                "the buffer is too short for the record, which is now skipped"
-            );
+            return Err(errno!(EINVAL, "the buffer is too short for the record, which is now skipped"));
         }
         writer
             .write_fallible(&mut VmReader::from(line.as_slice()))
@@ -189,7 +183,7 @@ impl FileOps for KmsgFile {
     ) -> Result<usize> {
         let len = reader.remain();
         if len > WRITE_LIMIT {
-            return_errno_with_message!(Errno::EINVAL, "the record is too long");
+            return Err(errno!(EINVAL, "the record is too long"));
         }
         let mut buffer = vec![0u8; len];
         reader
@@ -216,22 +210,13 @@ impl PerOpenFileOps for KmsgFile {
             SeekFrom::Start(0) => ring::oldest(),
             SeekFrom::End(0) => ring::newest(),
             SeekFrom::Current(0) => {
-                return Some(Err(Error::with_message(
-                    Errno::EINVAL,
-                    "the ring has no current position to seek from",
-                )));
+                return Some(Err(errno!(EINVAL, "the ring has no current position to seek from")));
             }
             SeekFrom::Data(_) | SeekFrom::Hole(_) => {
-                return Some(Err(Error::with_message(
-                    Errno::EINVAL,
-                    "the ring has no data or hole extents",
-                )));
+                return Some(Err(errno!(EINVAL, "the ring has no data or hole extents")));
             }
             SeekFrom::Start(_) | SeekFrom::End(_) | SeekFrom::Current(_) => {
-                return Some(Err(Error::with_message(
-                    Errno::ESPIPE,
-                    "the ring is positioned only at its start or its end",
-                )));
+                return Some(Err(errno!(ESPIPE, "the ring is positioned only at its start or its end")));
             }
         };
         *self.reader.cursor.lock() = cursor;

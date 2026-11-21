@@ -178,7 +178,7 @@ impl WriteToUser for BoundDevice {
 
         let bytes = name.as_bytes_with_nul();
         if (max_len as usize) < bytes.len() {
-            return_errno_with_message!(Errno::EINVAL, "the buffer is too small for the name");
+            return Err(errno!(EINVAL, "the buffer is too small for the name"));
         }
 
         current_userspace!().write_bytes(addr, bytes)?;
