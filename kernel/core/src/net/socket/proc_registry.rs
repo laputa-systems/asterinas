@@ -3,7 +3,6 @@
 use core::ops::Bound::{Excluded, Unbounded};
 
 use aster_softirq::BottomHalfDisabled;
-use ostd::sync::SpinLock;
 
 use super::{Socket, unix::UnixSocketAddr};
 use crate::prelude::*;

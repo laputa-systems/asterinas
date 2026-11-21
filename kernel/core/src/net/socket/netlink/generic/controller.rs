@@ -37,7 +37,7 @@ fn attr(bytes: &mut Vec<u8>, kind: u16, payload: &[u8]) {
     put_u16(bytes, (payload.len() + 4) as u16);
     put_u16(bytes, kind);
     bytes.extend_from_slice(payload);
-    while bytes.len() % 4 != 0 { bytes.push(0); }
+    while !bytes.len().is_multiple_of(4) { bytes.push(0); }
 }
 
 fn header(bytes: &mut Vec<u8>, kind: u16, flags: u16, seq: u32, port: u32) {
@@ -96,7 +96,7 @@ fn error(request: &CMsgSegHdr, payload: &[u8], port: PortNum, errno: Option<Errn
     put_u32(&mut bytes, request.pid);
     if !capped { bytes.extend_from_slice(payload); }
     finish(&mut bytes);
-    while bytes.len() % 4 != 0 { bytes.push(0); }
+    while !bytes.len().is_multiple_of(4) { bytes.push(0); }
     send(port, bytes)
 }
 

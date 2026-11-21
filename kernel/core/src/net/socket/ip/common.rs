@@ -55,11 +55,6 @@ impl From<BindError> for Error {
     }
 }
 
-pub(super) fn get_ephemeral_endpoint(remote_endpoint: &IpEndpoint) -> Result<IpEndpoint> {
-    let iface = route::lookup_iface(remote_endpoint.addr)?;
-    get_ephemeral_endpoint_on(&iface, remote_endpoint)
-}
-
 /// Returns the endpoint with an ephemeral port that sends to `remote_endpoint` through `iface`.
 pub(super) fn get_ephemeral_endpoint_on(
     iface: &Arc<Iface>,

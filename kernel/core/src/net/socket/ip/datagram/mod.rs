@@ -6,7 +6,7 @@ use core::{
 };
 
 use aster_bigtcp::{iface::InterfaceType, socket::UdpErrorOrigin, wire::{IpAddress, IpEndpoint, Ipv4Address}};
-use bound::{BoundDatagram, ReceivedMeta};
+use bound::{BoundDatagram, ReceivedMeta, TaggedSendArgs};
 use unbound::{BindOptions, UnboundDatagram};
 
 use super::{addr::UNSPECIFIED_LOCAL_ENDPOINT, ctrl_msg::IpControlMessage, ioctl::ipv4_ioctl};
@@ -374,7 +374,7 @@ impl DatagramSocket {
                     (Some(_), _) => return Err(errno!(EAFNOSUPPORT, "IPv4 options require an IPv4 destination")),
                     (None, _) => None,
                 };
-                let sent_bytes = bound_datagram.try_send_tagged(reader, &remote_endpoint, &iface, source, route, tx_tag, tos, next_hop, fragmentation, ipv4_options)?;
+                let sent_bytes = bound_datagram.try_send_tagged(TaggedSendArgs { reader, remote: &remote_endpoint, iface: &iface, source, route, tx_tag, tos, next_hop, fragmentation, ipv4_options })?;
                 Ok((sent_bytes, iface))
             },
         )?;

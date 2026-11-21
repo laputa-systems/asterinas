@@ -184,7 +184,7 @@ impl Socket for PacketSocket {
         self.tap.rebind(
             protocol,
             addr.ifindex(),
-            iface.is_none_or(|iface| iface.flags().contains(aster_bigtcp::iface::InterfaceFlags::UP)),
+            iface.is_none_or(|iface| iface.flags().contains(InterfaceFlags::UP)),
         );
 
         Ok(())

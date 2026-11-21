@@ -35,6 +35,20 @@ pub(super) struct BoundDatagram {
     connected_source: Option<IpAddress>,
 }
 
+/// Arguments for [`BoundDatagram::try_send_tagged`], bundled so the method takes a single parameter.
+pub(super) struct TaggedSendArgs<'a> {
+    pub(super) reader: &'a mut dyn MultiRead,
+    pub(super) remote: &'a IpEndpoint,
+    pub(super) iface: &'a Arc<Iface>,
+    pub(super) source: IpAddress,
+    pub(super) route: aster_bigtcp::iface::PathMtuRoute,
+    pub(super) tx_tag: u32,
+    pub(super) tos: u8,
+    pub(super) next_hop: IpNextHop,
+    pub(super) fragmentation: UdpFragmentation,
+    pub(super) ipv4_options: Option<UdpIpv4Options>,
+}
+
 impl BoundDatagram {
     pub(super) fn new(bound_socket: UdpSocket) -> Self {
         Self {
@@ -116,19 +130,19 @@ impl BoundDatagram {
     }
 
     /// Sends a datagram. A nonzero `tx_tag` asks for a transmit timestamp.
-    pub(super) fn try_send_tagged(
-        &self,
-        reader: &mut dyn MultiRead,
-        remote: &IpEndpoint,
-        iface: &Arc<Iface>,
-        source: IpAddress,
-        route: aster_bigtcp::iface::PathMtuRoute,
-        tx_tag: u32,
-        tos: u8,
-        next_hop: IpNextHop,
-        fragmentation: UdpFragmentation,
-        ipv4_options: Option<UdpIpv4Options>,
-    ) -> Result<usize> {
+    pub(super) fn try_send_tagged(&self, args: TaggedSendArgs<'_>) -> Result<usize> {
+        let TaggedSendArgs {
+            reader,
+            remote,
+            iface,
+            source,
+            route,
+            tx_tag,
+            tos,
+            next_hop,
+            fragmentation,
+            ipv4_options,
+        } = args;
         let mut meta = aster_bigtcp::socket::UdpMetadata::from(*remote);
         meta.meta.id = tx_tag;
         let result = self
@@ -193,7 +207,7 @@ impl datagram_common::Bound for BoundDatagram {
         let iface = lookup_iface(remote.addr)?;
         let local = self.local_endpoint();
         let source = if local.addr.is_unspecified() { get_ephemeral_endpoint_on(&iface, remote)?.addr } else { local.addr };
-        self.try_send_tagged(reader, remote, &iface, source, aster_bigtcp::iface::PathMtuRoute::Default, 0, 0, IpNextHop::Routed, UdpFragmentation::DontFragment, None)
+        self.try_send_tagged(TaggedSendArgs { reader, remote, iface: &iface, source, route: aster_bigtcp::iface::PathMtuRoute::Default, tx_tag: 0, tos: 0, next_hop: IpNextHop::Routed, fragmentation: UdpFragmentation::DontFragment, ipv4_options: None })
     }
 
     fn check_io_events(&self) -> IoEvents {

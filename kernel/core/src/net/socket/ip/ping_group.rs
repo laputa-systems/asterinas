@@ -22,6 +22,6 @@ pub(super) fn check_ping_group() -> Result<()> {
     if contains(credentials.egid().into()) || credentials.groups().iter().any(|gid| contains((*gid).into())) {
         Ok(())
     } else {
-        return Err(errno!(EACCES, "the process group is not permitted to create ping sockets"));
+        Err(errno!(EACCES, "the process group is not permitted to create ping sockets"))
     }
 }

@@ -156,10 +156,10 @@ impl IpPacketSocket {
         let pollee = Pollee::new();
         let mut socket_options = SocketOptionSet::new_packet();
         if kind == IpSocketKind::Ping { socket_options.set_reuse_addr(true); }
-        let tap = Arc::new(IpPacketTap { kind, pollee: pollee.clone(), state: SpinLock::new(IpPacketState {
+        let tap = Arc::new(IpPacketTap { kind, state: SpinLock::new(IpPacketState {
             local: Ipv4Address::UNSPECIFIED, peer: None, ping_id: None, receive_errors: false, pending_error: None,
             errors: VecDeque::new(), error_bytes: 0, packets: VecDeque::new(), queued_bytes: 0, capacity: socket_options.recv_buf() as usize,
-        }) });
+        }), pollee: pollee.clone() });
         let registered: Vec<_> = iter_all_ifaces().cloned().collect();
         let observer: Arc<dyn IpTap> = tap.clone();
         for iface in &registered { iface.add_ip_tap(observer.clone()); }
@@ -505,9 +505,9 @@ fn parse_ping_error(packet: &[u8], state: &IpPacketState) -> Option<PingError> {
 
 fn internet_checksum(bytes: &[u8]) -> u16 {
     let mut sum = 0u32;
-    let mut pairs = bytes.chunks_exact(2);
-    for pair in &mut pairs { sum += u32::from(u16::from_be_bytes([pair[0], pair[1]])); }
-    if let Some(byte) = pairs.remainder().first() { sum += u32::from(*byte) << 8; }
+    let (pairs, remainder) = bytes.as_chunks::<2>();
+    for pair in pairs { sum += u32::from(u16::from_be_bytes([pair[0], pair[1]])); }
+    if let Some(byte) = remainder.first() { sum += u32::from(*byte) << 8; }
     while sum >> 16 != 0 { sum = (sum & 0xffff) + (sum >> 16); }
     !(sum as u16)
 }

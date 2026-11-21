@@ -387,7 +387,7 @@ fn publish_ipv4_poll_routes(manager: &RouteManager<Ipv4Address>) {
 }
 
 pub(super) fn lookup_ipv4_poll_route(dst: Ipv4Address, mark: u32) -> Result<(Arc<Iface>, aster_bigtcp::socket::IpNextHop, aster_bigtcp::iface::PathMtuRoute)> {
-    let key = RouteLookupKey { dst, mark, direct: false, device: None };
+    let key = RouteLookupKey { dst, direct: false, device: None, mark };
     let route = IPV4_POLL_ROUTES.get().unwrap().lock().lookup_entry(&key)?;
     let next_hop = route.gateway.map_or(aster_bigtcp::socket::IpNextHop::Direct, aster_bigtcp::socket::IpNextHop::Gateway);
     let path = if route.table_id == RouteTableId::MAIN { aster_bigtcp::iface::PathMtuRoute::Default } else {
@@ -446,7 +446,7 @@ pub(in crate::net) fn lookup_ipv4_route(query: &Ipv4RouteQuery) -> Result<(Route
     } else {
         query.destination
     };
-    let key = RouteLookupKey { dst: destination, mark: query.mark, direct: false, device: query.device };
+    let key = RouteLookupKey { dst: destination, direct: false, device: query.device, mark: query.mark };
     let entry = match IPV4_ROUTE_MANAGER.get().unwrap().read().lookup_matching_entry(&key) {
         Ok(entry) => entry,
         Err(error) => {
@@ -484,7 +484,7 @@ pub(super) fn lookup_iface(dst: IpAddress) -> Result<Arc<Iface>> {
 pub(super) fn lookup_output_route(dst: IpAddress, mark: u32, direct: bool, device: Option<u32>) -> Result<(Arc<Iface>, aster_bigtcp::socket::IpNextHop, aster_bigtcp::iface::PathMtuRoute)> {
     match dst {
         IpAddress::Ipv4(dst) => {
-            let key = RouteLookupKey { dst, mark, direct, device };
+            let key = RouteLookupKey { dst, direct, device, mark };
             let route = match IPV4_ROUTE_MANAGER.get().unwrap().read().lookup_entry(&key) {
                 Ok(route) => route,
                 Err(error) => {
@@ -503,15 +503,11 @@ pub(super) fn lookup_output_route(dst: IpAddress, mark: u32, direct: bool, devic
             Ok((route.iface, next_hop, path))
         }
         IpAddress::Ipv6(dst) => {
-            let key = RouteLookupKey { dst, mark, direct, device };
+            let key = RouteLookupKey { dst, direct, device, mark };
             let route = IPV6_ROUTE_MANAGER.get().unwrap().read().lookup_entry(&key)?;
             Ok((route.iface, if direct { aster_bigtcp::socket::IpNextHop::Direct } else { aster_bigtcp::socket::IpNextHop::Routed }, aster_bigtcp::iface::PathMtuRoute::Default))
         }
     }
-}
-
-pub(super) fn lookup_direct_iface(dst: IpAddress, device: Option<u32>) -> Result<Arc<Iface>> {
-    lookup_iface_with_scope(dst, true, device)
 }
 
 fn lookup_iface_with_scope(dst: IpAddress, direct: bool, device: Option<u32>) -> Result<Arc<Iface>> {

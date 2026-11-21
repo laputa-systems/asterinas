@@ -149,8 +149,6 @@ impl Entry {
             inode: socket.inode as u32,
             shutdown: socket.shutdown,
             v6only: v6only(family, state, &local),
-            telemetry: Some(socket.telemetry),
-            cgroup: Some(socket.cgroup),
             memory: Memory {
                 receive_used: if socket.state == TcpState::Listen { 0 } else { socket.read_queue },
                 receive_capacity: TCP_RECV_BUF_LEN as u32,
@@ -158,6 +156,8 @@ impl Entry {
                 send_capacity: TCP_SEND_BUF_LEN as u32,
                 send_queued: if socket.state == TcpState::Listen { 0 } else { socket.write_queue },
             },
+            telemetry: Some(socket.telemetry),
+            cgroup: Some(socket.cgroup),
         }
     }
 
@@ -178,8 +178,6 @@ impl Entry {
             inode: socket.inode as u32,
             shutdown: 0,
             v6only: None,
-            telemetry: None,
-            cgroup: None,
             memory: Memory {
                 receive_used: socket.read_queue,
                 receive_capacity: UDP_RECV_PAYLOAD_LEN as u32,
@@ -187,6 +185,8 @@ impl Entry {
                 send_capacity: UDP_SEND_PAYLOAD_LEN as u32,
                 send_queued: 0,
             },
+            telemetry: None,
+            cgroup: None,
         }
     }
 }
@@ -334,7 +334,7 @@ fn reply(request: &CMsgSegHdr, port: PortNum, socket: &Entry, dump: bool, extens
                 info[6] = (t.send_wscale & 15) | ((t.receive_wscale & 15) << 4);
                 let ssthresh = if mss == 0 { 0 } else { (t.ssthresh_bytes / mss as usize).min(u32::MAX as usize) as u32 };
                 let advmss = t.path_mtu.saturating_sub(if socket.family == AF_INET { 40 } else { 60 }).min(u32::MAX as usize) as u32;
-                let rcvmss = if t.receive_mss == 0 { advmss.min(536).max(88) } else { t.receive_mss.min(u32::MAX as usize) as u32 };
+                let rcvmss = if t.receive_mss == 0 { advmss.clamp(88, 536) } else { t.receive_mss.min(u32::MAX as usize) as u32 };
                 for (offset, value) in [(8, t.rto_us), (16, mss), (20, rcvmss), (24, t.packets_out), (60, t.path_mtu as u32),
                     (68, t.rtt_us), (72, t.rttvar_us), (76, ssthresh), (84, advmss), (100, t.total_retrans),
                     (136, t.segs_out), (140, t.segs_in)] {
@@ -411,7 +411,7 @@ fn unix_attr(bytes: &mut Vec<u8>, kind: u16, data: &[u8]) {
     put_u16(bytes, (data.len() + 4) as u16);
     put_u16(bytes, kind);
     bytes.extend_from_slice(data);
-    while bytes.len() % 4 != 0 { bytes.push(0); }
+    while !bytes.len().is_multiple_of(4) { bytes.push(0); }
 }
 
 fn handle_unix(request: &CMsgSegHdr, payload: &[u8], port: PortNum) -> Result<()> {
@@ -452,17 +452,15 @@ fn handle_unix(request: &CMsgSegHdr, payload: &[u8], port: PortNum) -> Result<()
                     },
                 }
             }
-            if show & 2 != 0 {
-                if let Some((ino, dev)) = diag.vfs {
+            if show & 2 != 0
+                && let Some((ino, dev)) = diag.vfs {
                     let mut value = Vec::new();
                     put_u32(&mut value, ino);
                     put_u32(&mut value, dev);
                     unix_attr(&mut entry, 1, &value);
                 }
-            }
-            if show & 4 != 0 {
-                if let Some(peer) = diag.peer { unix_attr(&mut entry, 2, &peer.to_ne_bytes()); }
-            }
+            if show & 4 != 0
+                && let Some(peer) = diag.peer { unix_attr(&mut entry, 2, &peer.to_ne_bytes()); }
             if show & 8 != 0 && diag.state == 10 {
                 let mut value = Vec::new();
                 for icon in diag.icons { put_u32(&mut value, icon); }

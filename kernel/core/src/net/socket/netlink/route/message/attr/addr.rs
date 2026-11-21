@@ -213,9 +213,7 @@ impl Attribute for AddrAttr {
                     updated,
                 })
             }
-            AddrAttrClass::ADDRESS
-            | AddrAttrClass::LOCAL
-            | AddrAttrClass::BROADCAST
+            AddrAttrClass::BROADCAST
             | AddrAttrClass::LABEL
             | AddrAttrClass::FLAGS
             | AddrAttrClass::CACHEINFO => {
