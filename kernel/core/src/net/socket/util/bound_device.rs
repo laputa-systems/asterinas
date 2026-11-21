@@ -31,7 +31,7 @@ impl BoundDevice {
     }
 
     /// The selected interface, or `None` when the socket is not restricted to one.
-    pub(crate) fn iface(&self) -> Result<Option<&'static Arc<Iface>>> {
+    pub(in crate::net) fn iface(&self) -> Result<Option<&'static Arc<Iface>>> {
         let Some(index) = self.0 else {
             return Ok(None);
         };
