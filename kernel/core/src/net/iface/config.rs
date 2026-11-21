@@ -21,7 +21,7 @@ use crate::{
     },
     prelude::*,
     thread::work_queue::{submit_work_item, work_item::WorkItem, WorkPriority},
-    time::{clocks::MonotonicClock, timer::{Timer, Timeout}},
+    time::{clocks::MonotonicClock, timer::{Timeout, Timer, TimerGuard}},
 };
 
 /// The state of the lock is the list of all IPv4 addresses.
@@ -602,7 +602,7 @@ fn schedule_address_expiry(addresses: &[InterfaceAddress]) {
         return;
     };
     let expiry = ADDRESS_EXPIRY.call_once(|| AddressExpiry {
-        timer: MonotonicClock::timer_manager().create_timer(|_| {
+        timer: MonotonicClock::timer_manager().create_timer(|_: TimerGuard<'_>| {
             submit_work_item(ADDRESS_EXPIRY.get().unwrap().work.clone(), WorkPriority::Normal);
         }),
         work: WorkItem::new(Box::new(expire_ipv4_addresses)),

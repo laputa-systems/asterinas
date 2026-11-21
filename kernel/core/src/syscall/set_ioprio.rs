@@ -19,6 +19,14 @@ pub(super) fn sys_ioprio_set(
 
     check_ioprio_class(ioprio, ctx)?;
 
+    let capable = |capability| {
+        lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
+            UserNamespace::get_init_singleton().as_ref(),
+            ctx.posix_thread,
+            capability,
+        ))
+        .is_ok()
+    };
     let threads = IoPrioWho::resolve(which, who, ctx, IoPrioAccess::Write)?.threads();
     if threads.is_empty() {
         return Err(errno!(ESRCH));

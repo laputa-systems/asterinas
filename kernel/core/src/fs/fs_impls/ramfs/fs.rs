@@ -23,7 +23,7 @@ use crate::{
                 Extension, FallocMode, FileOps, HardLinkability, Inode, Metadata, MknodType,
                 RenameMode, RevalidationPolicy, SymbolicLink, strip_unprivileged_setgid,
             },
-            path::{Dentry, is_dot_bytes, is_dot_or_dotdot_bytes, is_dotdot_bytes},
+            path::{Dentry, is_dot, is_dot_bytes, is_dot_or_dotdot, is_dot_or_dotdot_bytes, is_dotdot_bytes},
             registry::{FsCreationCtx, FsProperties, FsType},
             posix_acl::{self, AccessAclUpdate, PosixAcl},
             inode_ext::InodeExt,

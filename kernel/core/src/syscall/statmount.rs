@@ -61,7 +61,7 @@ pub(super) fn sys_statmount(req_ptr: Vaddr, buf_ptr: Vaddr, buf_size: usize, fla
         return Err(errno!(EINVAL, "unsupported mount namespace"));
     }
     let ns_proxy = ctx.thread_local.borrow_ns_proxy();
-    let ns = ns_proxy.unwrap().mnt_ns();
+    let ns = ns_proxy.mnt_ns();
     let mount = ns.lookup_by_unique_id(req.id).ok_or_else(|| errno!(ENOENT, "no such mount"))?;
     let fs = ctx.thread_local.borrow_fs();
     let resolver = fs.resolver().read();

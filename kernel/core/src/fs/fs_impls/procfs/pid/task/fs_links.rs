@@ -51,6 +51,9 @@ impl ProcSymOps for FsLinkOps {
             return Err(errno!(ENOENT, "the thread has exited"));
         }
         let fs = posix_thread.read_fs();
+        let Some(fs) = fs.as_ref() else {
+            return Err(errno!(ENOENT, "the thread has exited"));
+        };
         let resolver = fs.resolver().read();
         let path = match self.1 {
             FsLink::Cwd => resolver.cwd().clone(),

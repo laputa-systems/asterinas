@@ -17,6 +17,7 @@ use crate::{
         },
     },
     prelude::*,
+    process::{Gid, Uid},
 };
 
 pub(super) fn init() {

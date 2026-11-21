@@ -9,7 +9,7 @@ use crate::{
             InodeType, Permission,
             file_table::{FileDesc, RawFileDesc, get_file_fast},
         },
-        utils::{PATH_MAX, SYMLINKS_MAX},
+        utils::{NAME_MAX, PATH_MAX, SYMLINKS_MAX},
         vfs::{inode::SymbolicLink, path::MountNamespace},
     },
     prelude::*,

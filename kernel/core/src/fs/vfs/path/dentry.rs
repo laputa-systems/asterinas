@@ -8,7 +8,9 @@ use core::{
 use hashbrown::HashMap;
 use ostd::sync::{RwMutexUpgradeableGuard, RwMutexWriteGuard};
 
-use super::{RenameMode, is_dot_bytes, is_dot_or_dotdot_bytes, is_dotdot_bytes};
+use super::{
+    RenameMode, is_dot, is_dot_bytes, is_dot_or_dotdot, is_dot_or_dotdot_bytes, is_dotdot_bytes,
+};
 use crate::{
     fs::{
         self,
@@ -488,7 +490,7 @@ impl DirDentry<'_> {
         &'a self,
         name: &[u8],
     ) -> Result<RwMutexUpgradeableGuard<'a, DentryChildren>> {
-        self.validate_name_len(name)?;
+        self.validate_name_len_bytes(name)?;
 
         let mut children = self.children.upread();
 
@@ -837,7 +839,7 @@ impl DirDentry<'_> {
         name: &[u8],
         remove_child_fn: impl FnOnce(&dyn Inode, &Dentry) -> Result<()>,
     ) -> Result<Arc<Dentry>> {
-        self.validate_name_len(name)?;
+        self.validate_name_len_bytes(name)?;
 
         let dir_inode = self.inode();
         let mut children = self.children.upread();

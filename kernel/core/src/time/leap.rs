@@ -9,7 +9,7 @@ use crate::{
     prelude::*,
     time::{
         clocks::RealTimeClock,
-        timer::{Timeout, Timer},
+        timer::{Timeout, Timer, TimerGuard},
     },
 };
 
@@ -35,7 +35,7 @@ pub(crate) fn set_deadline(deadline_ns: i64) {
         timer.lock().cancel();
     }
     if deadline_ns > 0 {
-        let timer = RealTimeClock::timer_manager().create_timer(|_guard| {
+        let timer = RealTimeClock::timer_manager().create_timer(|_guard: TimerGuard<'_>| {
             if aster_time::apply_pending_leap() {
                 crate::vdso::refresh_wall_clock();
             }
