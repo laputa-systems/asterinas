@@ -347,10 +347,8 @@ impl WallClock {
                     self.leap_state = TIME_WAIT;
                 }
             }
-            TIME_WAIT => {
-                if self.status & (STA_INS | STA_DEL) == 0 {
-                    self.leap_state = TIME_OK;
-                }
+            TIME_WAIT if self.status & (STA_INS | STA_DEL) == 0 => {
+                self.leap_state = TIME_OK;
             }
             _ => {}
         }
