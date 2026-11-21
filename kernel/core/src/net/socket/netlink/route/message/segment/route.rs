@@ -9,11 +9,10 @@ use crate::{
     prelude::*,
 };
 
-pub(crate) type RouteSegment = SegmentCommon<RouteSegmentBody, RouteAttr>;
+pub(crate) type RouteSegment = SegmentCommon<CRtMsg, RouteAttr>;
 
-impl SegmentBody for RouteSegmentBody {
+impl SegmentBody for CRtMsg {
     type CLegacyType = CRtGenMsg;
-    type CType = CRtMsg;
 }
 
 /// `rtmsg` in Linux.
@@ -31,53 +30,6 @@ pub(crate) struct CRtMsg {
     pub scope: u8,
     pub type_: u8,
     pub flags: u32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RouteSegmentBody {
-    pub family: u8,
-    pub dst_len: u8,
-    pub src_len: u8,
-    pub tos: u8,
-    pub table: u8,
-    pub protocol: u8,
-    pub scope: u8,
-    pub type_: u8,
-    pub flags: u32,
-}
-
-impl TryFrom<CRtMsg> for RouteSegmentBody {
-    type Error = Error;
-
-    fn try_from(value: CRtMsg) -> Result<Self> {
-        Ok(Self {
-            family: value.family,
-            dst_len: value.dst_len,
-            src_len: value.src_len,
-            tos: value.tos,
-            table: value.table,
-            protocol: value.protocol,
-            scope: value.scope,
-            type_: value.type_,
-            flags: value.flags,
-        })
-    }
-}
-
-impl From<RouteSegmentBody> for CRtMsg {
-    fn from(value: RouteSegmentBody) -> Self {
-        Self {
-            family: value.family,
-            dst_len: value.dst_len,
-            src_len: value.src_len,
-            tos: value.tos,
-            table: value.table,
-            protocol: value.protocol,
-            scope: value.scope,
-            type_: value.type_,
-            flags: value.flags,
-        }
-    }
 }
 
 impl From<CRtGenMsg> for CRtMsg {

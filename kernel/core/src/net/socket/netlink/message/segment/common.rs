@@ -106,16 +106,20 @@ impl<Body: SegmentBody, Attr: Attribute> SegmentCommon<Body, Attr> {
     pub(in netlink) fn read_from_ignoring_attrs(
         header: &CMsgSegHdr,
         reader: &mut dyn MultiRead,
-    ) -> Result<ContinueRead<Self>>
-    where
-        Error: From<<Body::CType as TryInto<Body>>::Error>,
-    {
-        let (body, remain_len) = match Body::read_from(header, reader)? {
-            ContinueRead::Parsed(parsed) => parsed,
-            ContinueRead::SkippedInvalid(err) => return Ok(ContinueRead::SkippedInvalid(err)),
+        strict_check: bool,
+    ) -> Result<ContinueRead<Self>> {
+        let segment = match <Body as SegmentBody>::read_from(header, reader, strict_check)? {
+            ContinueRead::Parsed((body, remain_len)) => {
+                reader.skip_some(remain_len);
+                ContinueRead::Parsed(Self { header: *header, body, attrs: Vec::new() })
+            }
+            ContinueRead::SkippedInvalid(err) => ContinueRead::SkippedInvalid(err),
         };
-        reader.skip_some(remain_len);
-        Ok(ContinueRead::Parsed(Self { header: *header, body, attrs: Vec::new() }))
+
+        let len = header.len as usize;
+        reader.skip_some(len.align_up(NLMSG_ALIGN) - len);
+
+        Ok(segment)
     }
 
     pub(in netlink) fn write_to(&self, writer: &mut dyn MultiWrite) -> Result<()> {

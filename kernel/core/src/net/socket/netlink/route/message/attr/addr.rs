@@ -106,10 +106,7 @@ fn invalid_attr(
     errno: Errno,
 ) -> Result<ContinueAttrRead<AddrAttr>> {
     reader.skip_some(payload_len);
-    Ok(ContinueAttrRead::SkippedInvalid(errno!(
-        errno,
-        "the address attribute is invalid"
-    )))
+    Ok(ContinueAttrRead::SkippedInvalid(Error::new(errno)))
 }
 
 fn read_ip_addr(payload_len: usize, reader: &mut dyn MultiRead) -> Result<Option<IpAddr>> {
@@ -222,7 +219,7 @@ impl Attribute for AddrAttr {
             | AddrAttrClass::LABEL
             | AddrAttrClass::FLAGS
             | AddrAttrClass::CACHEINFO => {
-                return invalid_attr(reader, payload_len, EINVAL);
+                return invalid_attr(reader, payload_len, Errno::EINVAL);
             }
             AddrAttrClass::UNSPEC => {
                 reader.skip_some(payload_len);
@@ -233,7 +230,7 @@ impl Attribute for AddrAttr {
             | AddrAttrClass::RT_PRIORITY
             | AddrAttrClass::TARGET_NETNSID
             | AddrAttrClass::PROTO => {
-                return invalid_attr(reader, payload_len, EOPNOTSUPP);
+                return invalid_attr(reader, payload_len, Errno::EOPNOTSUPP);
             }
         };
 

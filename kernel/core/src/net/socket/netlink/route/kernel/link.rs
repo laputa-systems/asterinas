@@ -88,11 +88,9 @@ pub(super) fn do_new_link(request_segment: &LinkSegment) -> Result<()> {
         LinkAttr::Name(name) => Some(name),
         _ => None,
     });
-    let index = body
-        .index
-        .filter(|index| i32::try_from(index.get()).is_ok());
+    let index = Some(body.index).filter(|index| *index != 0 && i32::try_from(*index).is_ok());
     let iface = match (index, name) {
-        (Some(index), _) => iter_all_ifaces().find(|iface| iface.index() == index.get()),
+        (Some(index), _) => iter_all_ifaces().find(|iface| iface.index() == index),
         (None, Some(name)) => iter_all_ifaces().find(|iface| iface.name().as_cstr() == name.as_cstr()),
         (None, None) => None,
     };
@@ -127,14 +125,15 @@ pub(super) fn do_new_link(request_segment: &LinkSegment) -> Result<()> {
         }
     }
 
-    if body.flags.is_empty() && body.change == 0 {
+    let flags = InterfaceFlags::from_bits_truncate(body.flags);
+    if flags.is_empty() && body.change == 0 {
         return Ok(());
     }
     let requested = if body.change == 0 {
-        body.flags
+        flags
     } else {
         let change = InterfaceFlags::from_bits_truncate(body.change);
-        (body.flags & change) | (iface.flags() - change)
+        (flags & change) | (iface.flags() - change)
     };
     config::change_flags(iface, requested)
 }

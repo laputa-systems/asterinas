@@ -21,8 +21,8 @@ pub(super) use segment::{
     RtnlSegment,
     addr::{AddrMessageFlags, AddrSegment, CIfaddrMsg, RtScope},
     link::{CIfinfoMsg, LinkSegment},
-    route::{RouteSegment, RouteSegmentBody},
-    rule::{RuleSegment, RuleSegmentBody},
+    route::{CRtMsg, RouteSegment},
+    rule::{CFibRuleHdr, RuleSegment},
 };
 
 use crate::net::socket::netlink::{message::Message, table::MulticastMessage};

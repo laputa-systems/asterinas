@@ -96,7 +96,7 @@ bitflags! {
     ///
     /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/netlink.h#L76>.
     #[derive(Clone, Copy, Debug)]
-    struct NewRequestFlags: u16 {
+    pub(in crate::net::socket::netlink) struct NewRequestFlags: u16 {
         /// Override existing entries
         const REPLACE = 0x100;
         /// Do not modify if it exists
@@ -126,7 +126,7 @@ bitflags! {
     ///
     /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/netlink.h#L86>.
     #[derive(Clone, Copy, Debug)]
-    struct AckFlags: u16 {
+    pub(in crate::net::socket::netlink) struct AckFlags: u16 {
         const CAPPED   = 0x100;
         const ACK_TLVS = 0x100;
     }
