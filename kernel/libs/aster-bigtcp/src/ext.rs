@@ -4,6 +4,10 @@ use alloc::sync::Arc;
 
 use crate::{iface::{Iface, PathMtuRoute, ScheduleNextPoll}, socket::{IpNextHop, SocketEventObserver}, wire::IpAddress};
 
+/// The resolved output route for a destination: the egress interface, the next hop, and the
+/// path MTU route; `()` means packets to the destination must be dropped.
+pub type IpRoute<E> = Option<Result<(Arc<dyn Iface<E>>, IpNextHop, PathMtuRoute), ()>>;
+
 /// Extension to be implemented by users of this crate.
 ///
 /// This should be implemented on an empty type that carries no data, since the type will never
@@ -31,5 +35,5 @@ pub trait Ext: 'static {
     fn wake_forwarded_ip(_ifindex: u32) {}
 
     /// Resolves an IP output route without taking an interface lock.
-    fn ip_route(_destination: IpAddress, _mark: u32) -> Option<Result<(Arc<dyn Iface<Self>>, IpNextHop, PathMtuRoute), ()>> where Self: Sized { None }
+    fn ip_route(_destination: IpAddress, _mark: u32) -> IpRoute<Self> where Self: Sized { None }
 }

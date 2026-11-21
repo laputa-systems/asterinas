@@ -48,6 +48,19 @@ fn send_frame(
     Ok(())
 }
 
+/// Arguments for [`PollContext::new`], bundled so the constructor takes a single parameter.
+pub(super) struct PollContextArgs<'a, E: Ext> {
+    iface: PollableIfaceMut<'a, E>,
+    sockets: &'a SocketTable<E>,
+    udp_sockets: &'a [Arc<UdpSocketBg<E>>],
+    network_registry: &'a super::NetworkRegistry<E>,
+    ip_taps: &'a super::ip_tap::IpTaps,
+    raw_ip_tx: &'a SpinLock<VecDeque<TxPacketWithDst>, BottomHalfDisabled>,
+    link_state: &'a LinkState,
+    ifindex: u32,
+    actions: &'a mut Vec<SocketTableAction<E>>,
+}
+
 pub(super) struct PollContext<'a, E: Ext> {
     iface: PollableIfaceMut<'a, E>,
     sockets: &'a SocketTable<E>,
@@ -70,17 +83,18 @@ pub(super) enum SocketTableAction<E: Ext> {
 }
 
 impl<'a, E: Ext> PollContext<'a, E> {
-    pub(super) fn new(
-        iface: PollableIfaceMut<'a, E>,
-        sockets: &'a SocketTable<E>,
-        udp_sockets: &'a [Arc<UdpSocketBg<E>>],
-        network_registry: &'a super::NetworkRegistry<E>,
-        ip_taps: &'a super::ip_tap::IpTaps,
-        raw_ip_tx: &'a SpinLock<VecDeque<TxPacketWithDst>, BottomHalfDisabled>,
-        link_state: &'a LinkState,
-        ifindex: u32,
-        actions: &'a mut Vec<SocketTableAction<E>>,
-    ) -> Self {
+    pub(super) fn new(args: PollContextArgs<'a, E>) -> Self {
+        let PollContextArgs {
+            iface,
+            sockets,
+            udp_sockets,
+            network_registry,
+            ip_taps,
+            raw_ip_tx,
+            link_state,
+            ifindex,
+            actions,
+        } = args;
         Self {
             iface,
             sockets,
@@ -215,7 +229,7 @@ impl<E: Ext> PollContext<'_, E> {
                 self.parse_and_process_udp(phy, &ip_repr, packet, forwarded || checksum_caps.udp.rx(), ingress_ifindex)
             }
             IpProtocol::Icmp if matches!(&ip_repr.inner, IpRepr::Ipv4(_)) => {
-                self.process_icmp(phy, &ip_repr, packet, mtu, ingress_ifindex)
+                self.process_icmp(&ip_repr, packet, mtu, ingress_ifindex)
             }
             _ => None,
         }
@@ -223,7 +237,6 @@ impl<E: Ext> PollContext<'_, E> {
 
     fn process_icmp(
         &mut self,
-        phy: &dyn PollPhy,
         ip_repr: &IpReprWithLen,
         packet: RxPacket<TransportLayer>,
         mtu: usize,
@@ -289,7 +302,6 @@ impl<E: Ext> PollContext<'_, E> {
                 socket.report_error(UdpError {
                     destination: error.destination,
                     payload: error.payload.to_vec(),
-                    timestamp_ns: 0,
                     origin: UdpErrorOrigin::Icmp {
                         offender: ip_repr.inner.src_addr(),
                         type_: error.type_,
@@ -298,6 +310,7 @@ impl<E: Ext> PollContext<'_, E> {
                         ttl: match &ip_repr.inner { IpRepr::Ipv4(header) => header.hop_limit, _ => 0 },
                         tos: ip_repr.tos,
                     },
+                    timestamp_ns: 0,
                 });
             }
         }
@@ -617,17 +630,16 @@ impl<E: Ext> PollContext<'_, E> {
         })
     }
 
-    fn emit_udp(
-        &self,
-        phy: &dyn PollPhy,
-        ip_repr: &IpRepr,
-        udp_repr: &UdpRepr,
-        payload: &[u8],
-        tos: u8,
-        next_hop: IpNextHop,
-        fragmentation: UdpFragmentation,
-        ipv4_options: Option<&UdpIpv4Options>,
-    ) -> Option<TxPacketWithDst> {
+    fn emit_udp(&self, phy: &dyn PollPhy, args: UdpEmitArgs<'_>) -> Option<TxPacketWithDst> {
+        let UdpEmitArgs {
+            ip_repr,
+            udp_repr,
+            payload,
+            tos,
+            next_hop,
+            fragmentation,
+            ipv4_options,
+        } = args;
         let checksum_caps = self.iface.context().checksum_caps();
 
         let packet = Self::copy_payload(phy, payload)?;
@@ -673,6 +685,17 @@ impl<E: Ext> PollContext<'_, E> {
 
         Some(builder.build())
     }
+}
+
+/// Arguments for [`PollContext::emit_udp`], bundled so the method takes a single parameter.
+struct UdpEmitArgs<'a> {
+    ip_repr: &'a IpRepr,
+    udp_repr: &'a UdpRepr,
+    payload: &'a [u8],
+    tos: u8,
+    next_hop: IpNextHop,
+    fragmentation: UdpFragmentation,
+    ipv4_options: Option<&'a UdpIpv4Options>,
 }
 
 impl<E: Ext> PollContext<'_, E> {
@@ -770,7 +793,7 @@ impl<E: Ext> PollContext<'_, E> {
 
             let (reply, became_dead) =
                 TcpConnectionBg::dispatch(&socket, &mut self.iface, |iface, ip_repr, tcp_repr| {
-                    let mut this = PollContext::new(iface, self.sockets, self.udp_sockets, self.network_registry, self.ip_taps, self.raw_ip_tx, self.link_state, self.ifindex, self.actions);
+                    let mut this = PollContext::new(PollContextArgs { iface, sockets: self.sockets, udp_sockets: self.udp_sockets, network_registry: self.network_registry, ip_taps: self.ip_taps, raw_ip_tx: self.raw_ip_tx, link_state: self.link_state, ifindex: self.ifindex, actions: self.actions });
 
                     if !link_up || !this.iface.is_unicast_local(ip_repr.dst_addr()) {
                         tx_packet = this.emit_tcp(phy, ip_repr, tcp_repr);
@@ -834,7 +857,7 @@ impl<E: Ext> PollContext<'_, E> {
                 (Some(_), Some(_)) => unreachable!(),
             }
 
-            if let Some(mut packet) = tx_packet.take() {
+            if let Some(packet) = tx_packet.take() {
                 let mark = socket.mark();
                 match E::ip_route(packet.dst_addr, mark) {
                     None => tx_packet = Some(packet),
@@ -891,10 +914,10 @@ impl<E: Ext> PollContext<'_, E> {
             let (cx, pending, fragments, reassembly, ipv4_cidrs) = self.iface.inner_mut();
             socket.dispatch(self.ifindex, cx, |cx, ip_repr, udp_repr, udp_payload, tos, next_hop, fragmentation, ipv4_options| {
                 let iface = PollableIfaceMut::new(cx, pending, fragments, reassembly, ipv4_cidrs);
-                let mut this = PollContext::new(iface, self.sockets, self.udp_sockets, self.network_registry, self.ip_taps, self.raw_ip_tx, self.link_state, self.ifindex, &mut actions);
+                let mut this = PollContext::new(PollContextArgs { iface, sockets: self.sockets, udp_sockets: self.udp_sockets, network_registry: self.network_registry, ip_taps: self.ip_taps, raw_ip_tx: self.raw_ip_tx, link_state: self.link_state, ifindex: self.ifindex, actions: &mut actions });
 
                 if ipv4_options.is_some() {
-                    tx_packet = this.emit_udp(phy, ip_repr, udp_repr, udp_payload, tos, next_hop, fragmentation, ipv4_options);
+                    tx_packet = this.emit_udp(phy, UdpEmitArgs { ip_repr, udp_repr, payload: udp_payload, tos, next_hop, fragmentation, ipv4_options });
                     if let Some(packet) = tx_packet.as_mut() {
                         packet.failure = Some((socket.failure_reporter(), smoltcp::wire::IpEndpoint::new(packet.dst_addr, udp_repr.dst_port)));
                     }
@@ -902,11 +925,11 @@ impl<E: Ext> PollContext<'_, E> {
                 }
                 let is_broadcast = this.iface.context().is_broadcast(&ip_repr.dst_addr());
                 if phy.is_loopback() && this.iface.is_unicast_local(ip_repr.dst_addr()) && !is_broadcast {
-                    tx_packet = this.emit_udp(phy, ip_repr, udp_repr, udp_payload, tos, next_hop, fragmentation, None);
+                    tx_packet = this.emit_udp(phy, UdpEmitArgs { ip_repr, udp_repr, payload: udp_payload, tos, next_hop, fragmentation, ipv4_options: None });
                     return;
                 }
                 if is_broadcast || !this.iface.is_unicast_local(ip_repr.dst_addr()) {
-                    tx_packet = this.emit_udp(phy, ip_repr, udp_repr, udp_payload, tos, next_hop, fragmentation, None);
+                    tx_packet = this.emit_udp(phy, UdpEmitArgs { ip_repr, udp_repr, payload: udp_payload, tos, next_hop, fragmentation, ipv4_options: None });
                     if !is_broadcast {
                         if let Some(packet) = tx_packet.as_mut() {
                             packet.failure = Some((
@@ -924,7 +947,6 @@ impl<E: Ext> PollContext<'_, E> {
                         socket.report_error(UdpError {
                             destination: smoltcp::wire::IpEndpoint::new(ip_repr.dst_addr(), udp_repr.dst_port),
                             payload: udp_payload.to_vec(),
-                            timestamp_ns: 0,
                             origin: UdpErrorOrigin::Icmp {
                                 offender: ip_repr.dst_addr(),
                                 type_: 3,
@@ -933,6 +955,7 @@ impl<E: Ext> PollContext<'_, E> {
                                 ttl: 64,
                                 tos: icmp::reply_tos(tos),
                             },
+                            timestamp_ns: 0,
                         });
                     }
                     return;
@@ -943,22 +966,21 @@ impl<E: Ext> PollContext<'_, E> {
                 deferred = Some((ip_repr.clone(), *udp_repr, udp_payload.to_vec(), is_broadcast, tos));
             });
 
-            if let Some((ip_repr, udp_repr, payload, is_broadcast, tos)) = deferred {
-                if !self.process_udp(&ip_repr, &udp_repr, PacketSlice::from(payload.as_slice()), tos, self.ifindex) && !is_broadcast {
-                    socket.report_error(UdpError {
-                        destination: smoltcp::wire::IpEndpoint::new(ip_repr.dst_addr(), udp_repr.dst_port),
-                        payload,
-                        timestamp_ns: 0,
-                        origin: UdpErrorOrigin::Icmp {
-                            offender: ip_repr.dst_addr(),
-                            type_: 3,
-                            code: 3,
-                            info: 0,
-                            ttl: 64,
-                            tos: icmp::reply_tos(tos),
-                        },
-                    });
-                }
+            if let Some((ip_repr, udp_repr, payload, is_broadcast, tos)) = deferred
+                && !self.process_udp(&ip_repr, &udp_repr, PacketSlice::from(payload.as_slice()), tos, self.ifindex) && !is_broadcast {
+                socket.report_error(UdpError {
+                    destination: smoltcp::wire::IpEndpoint::new(ip_repr.dst_addr(), udp_repr.dst_port),
+                    payload,
+                    origin: UdpErrorOrigin::Icmp {
+                        offender: ip_repr.dst_addr(),
+                        type_: 3,
+                        code: 3,
+                        info: 0,
+                        ttl: 64,
+                        tos: icmp::reply_tos(tos),
+                    },
+                    timestamp_ns: 0,
+                });
             }
 
             if tx_packet.is_some() {

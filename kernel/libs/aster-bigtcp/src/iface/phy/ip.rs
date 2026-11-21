@@ -38,6 +38,7 @@ pub struct IpIface<D, E: Ext> {
 
 impl<D: WithDevice, E: Ext> IpIface<D, E> {
     // TODO: Support interfaces with multiple IPv4/IPv6 addresses or without IPv4 addresses.
+    #[expect(clippy::too_many_arguments, reason = "grouping the parameters would change this public cross-crate constructor")]
     pub fn new(
         driver: D,
         ip_cidr: Ipv4Cidr,

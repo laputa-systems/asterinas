@@ -42,7 +42,7 @@ pub struct UdpIpv4Options {
 
 impl UdpIpv4Options {
     pub fn new(first_hop: Option<Ipv4Address>, bytes: Vec<u8>) -> Option<Self> {
-        if bytes.len() > 40 || bytes.len() % 4 != 0 { return None; }
+        if bytes.len() > 40 || !bytes.len().is_multiple_of(4) { return None; }
         Some(Self { first_hop, bytes })
     }
     pub fn first_hop(&self) -> Option<Ipv4Address> { self.first_hop }
@@ -466,6 +466,7 @@ impl<E: Ext> UdpSocket<E> {
     ///
     /// A nonzero `meta.meta.id` asks for a transmit timestamp, which [`Self::pop_tx_timestamp`]
     /// returns after the packet leaves the interface.
+    #[expect(clippy::too_many_arguments, reason = "grouping the parameters would change this public cross-crate socket interface")]
     pub fn send<F, R, Err>(
         &self,
         size: usize,

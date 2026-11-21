@@ -26,7 +26,7 @@ use super::{
     Iface, InterfaceName, IpTap, NetworkRegistry,
     ip_tap::IpTaps,
     link_state::{Carrier, LinkCounters, LinkState},
-    poll::{PollContext, SocketTableAction},
+    poll::{PollContext, PollContextArgs, SocketTableAction},
     poll_iface::PollableIface,
     port::BindPortConfig,
     tap::{FrameDirection, LinkTap, LinkTaps},
@@ -461,7 +461,7 @@ impl<E: Ext> IfaceCommon<E> {
         let mut sockets = self.sockets.lock();
         let mut socket_actions = Vec::new();
 
-        let mut context = PollContext::new(interface.as_mut(), &sockets, &udp_sockets, &self.network, &self.ip_taps, &self.raw_ip_tx, &self.link_state, self.index, &mut socket_actions);
+        let mut context = PollContext::new(PollContextArgs { iface: interface.as_mut(), sockets: &sockets, udp_sockets: &udp_sockets, network_registry: &self.network, ip_taps: &self.ip_taps, raw_ip_tx: &self.raw_ip_tx, link_state: &self.link_state, ifindex: self.index, actions: &mut socket_actions });
         if link_up {
             context.poll_ingress(device, phy, &self.taps);
             context.poll_egress(device, phy, &self.taps);

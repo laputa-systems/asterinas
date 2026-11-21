@@ -215,10 +215,11 @@ where
             fragment_header.csum = !Checksum::new().with_bytes(fragment_header.as_bytes()).with_bytes(&options).finish();
         }
         let mut fragment = builder.build();
-        let mut writer = fragment.prepend_writer(header_len);
-        writer.write_val(&fragment_header).ok()?;
-        if writer.write(&mut VmReader::from(options.as_slice())) != options.len() { return None; }
-        drop(writer);
+        {
+            let mut writer = fragment.prepend_writer(header_len);
+            writer.write_val(&fragment_header).ok()?;
+            if writer.write(&mut VmReader::from(options.as_slice())) != options.len() { return None; }
+        }
         fragments.push(fragment.pack(header_len));
     }
     Some(fragments)
@@ -358,10 +359,11 @@ pub(in crate::iface) fn emit_v4_with_options(
         dst: dst.octets(),
     };
     header.csum = !Checksum::new().with_bytes(header.as_bytes()).with_bytes(options).finish();
-    let mut writer = pkt.prepend_writer(header_len);
-    writer.write_val(&header).unwrap();
-    writer.write(&mut VmReader::from(options));
-    drop(writer);
+    {
+        let mut writer = pkt.prepend_writer(header_len);
+        writer.write_val(&header).unwrap();
+        writer.write(&mut VmReader::from(options));
+    }
     pkt.pack(header_len)
 }
 

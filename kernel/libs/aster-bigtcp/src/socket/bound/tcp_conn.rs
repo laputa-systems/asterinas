@@ -688,7 +688,7 @@ impl<E: Ext> RawTcpSetOption for TcpConnection<E> {
     fn mark(&self) -> u32 { self.0.inner.mark_route.load(Ordering::Acquire) as u32 }
     fn route_valid(&self) -> bool { self.0.inner.mark_route.load(Ordering::Acquire) >> 32 != 0 }
     fn set_mark(&self, mark: u32) {
-        let _ = self.0.inner.mark_route.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+        let _ = self.0.inner.mark_route.try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
             ((state as u32) != mark).then_some(u64::from(mark))
         });
     }
@@ -713,7 +713,7 @@ impl<E: Ext> TcpConnectionBg<E> {
     pub(crate) fn mark(&self) -> u32 { self.inner.mark_route.load(Ordering::Acquire) as u32 }
 
     pub(crate) fn mark_route_valid(&self, mark: u32) {
-        let _ = self.inner.mark_route.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+        let _ = self.inner.mark_route.try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
             ((state as u32) == mark).then_some(u64::from(mark) | (1u64 << 32))
         });
     }
