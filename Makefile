@@ -444,14 +444,14 @@ profile_client: initramfs $(CARGO_OSDK)
 		--samples $(GDB_PROFILE_COUNT) --interval $(GDB_PROFILE_INTERVAL) --format $(GDB_PROFILE_FORMAT)
 
 .PHONY: test
-test: NON_DEFAULT_PACKAGE_NAMES = \
-	$(shell ./tools/print_workspace_members.sh --non-default-ones --package-names)
-test: TEST_PACKAGE_NAMES = \
-	$(filter-out linux-bzimage-setup,$(NON_DEFAULT_PACKAGE_NAMES))
 test:
-	@if [ -n "$(TEST_PACKAGE_NAMES)" ]; then \
-		cargo test $(addprefix -p ,$(TEST_PACKAGE_NAMES)); \
-	fi
+	@packages=$$(./tools/print_workspace_members.sh --non-default-ones --package-names) || exit $$?; \
+	set --; \
+	for package in $$packages; do \
+	    if [ "$$package" != linux-bzimage-setup ]; then set -- "$$@" -p "$$package"; fi; \
+	done; \
+	if [ "$$#" -eq 0 ]; then printf '%s\n' 'make test: no workspace packages selected' >&2; exit 1; fi; \
+	cargo test "$$@"
 
 .PHONY: ktest
 ktest: CONSOLE = ttyS0
