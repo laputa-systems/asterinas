@@ -543,13 +543,12 @@ check: $(CARGO_OSDK)
 
 .PHONY: clean
 clean:
-	@echo "Cleaning up Asterinas workspace target files"
-	@cargo clean
-	@echo "Cleaning up OSDK workspace target files"
-	@cd osdk && cargo clean
-	@echo "Cleaning up mdBook output files"
-	@cd book && mdbook clean
-	@echo "Cleaning up test target files"
-	@$(MAKE) --no-print-directory -C test/initramfs clean
-	@echo "Uninstalling OSDK"
-	@rm -f $(CARGO_OSDK)
+	@for parent in ./osdk ./book ./test ./test/initramfs; do \
+	  if test -L "$$parent"; then printf '%s\n' "make clean: $$parent must be a local directory" >&2; exit 1; fi; \
+	done
+	@for artifact in ./target ./osdk/target ./book/book ./test/initramfs/build; do \
+	  if test -L "$$artifact" || { test -e "$$artifact" && ! test -d "$$artifact"; }; then \
+	    printf '%s\n' "make clean: $$artifact must be a local build directory" >&2; exit 1; \
+	  fi; \
+	done
+	rm -rf -- ./target ./osdk/target ./book/book ./test/initramfs/build

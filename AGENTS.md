@@ -27,6 +27,9 @@ docker run -it --privileged --network=host -v /dev:/dev \
   asterinas/dev:0.19.0-20261012
 ```
 
+`make clean` removes checkout-local Rust, book, and initramfs build outputs.
+It preserves the installed `cargo-osdk` executable and external build directories.
+
 Key Makefile targets:
 
 | Command              | What it does                                         |
