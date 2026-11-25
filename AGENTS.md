@@ -5,6 +5,14 @@ written in Rust using the framekernel architecture.
 `unsafe` Rust is confined to OSTD (`ostd/`);
 the kernel (`kernel/`) is entirely safe Rust.
 
+## Compatibility and Reliability Campaign
+
+For Linux subsystem compatibility and reliability work,
+read [the campaign plan](plan.md) and its Status section first.
+It defines the selected profiles, reusable qualification harness,
+work-package dependencies, explicit exclusions, and evidence required for completion.
+Keep implementation status distinct from runtime qualification.
+
 ## Repository Layout
 
 | Directory    | Purpose                                                  |
@@ -99,9 +107,11 @@ or any lower layer.
 
 ## CI
 
-CI runs in the project Docker container with KVM.
-Key test matrices:
-- x86-64: lint, compile, usermode tests, kernel tests, integration tests
-  (boot, syscall, general), multiple boot protocols, SMP configurations.
-- RISC-V 64, LoongArch 64, and Intel TDX have dedicated workflows.
-- License headers and SCML validation are also checked.
+The active workflows are [ci.yml](.github/workflows/ci.yml)
+and [lint.yml](.github/workflows/lint.yml), using pinned development containers.
+The current CI job runs host unit tests, builds the x86-64 PVH kernel,
+and checks a userspace boot marker under Firecracker.
+The lint job runs `make lint`.
+
+These jobs do not run kernel-mode tests or the full conformance and architecture matrices.
+The [campaign plan](plan.md) defines the staged expansion of runtime qualification.

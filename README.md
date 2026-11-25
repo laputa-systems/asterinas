@@ -172,6 +172,14 @@ build and run Asterinas NixOS in a VM:
 
 See [The Asterinas Book](https://asterinas.github.io/book/) to learn more about the project.
 
+## Compatibility and Reliability Campaign
+
+The [campaign plan](plan.md) defines an ext4-first development sequence,
+a reusable Linux compatibility qualification harness,
+and bounded targets for services, confinement, and virtual desktop interfaces.
+It records the inspected baseline, explicit exclusions,
+and the evidence required to qualify each supported profile.
+
 ## License
 
 Asterinas's source code and documentation primarily use the
