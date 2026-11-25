@@ -3,7 +3,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "test.h"
+#include "../common/test.h"
 FN_TEST(tcp_loopback_mark_preserves_route_mtu)
 {
  int listener=TEST_SUCC(socket(AF_INET,SOCK_STREAM,0));struct sockaddr_in addr={.sin_family=AF_INET,.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};TEST_SUCC(bind(listener,(void *)&addr,sizeof(addr)));socklen_t len=sizeof(addr);TEST_SUCC(getsockname(listener,(void *)&addr,&len));TEST_SUCC(listen(listener,1));

@@ -18,12 +18,12 @@
 #define SCHED_RESET_ON_FORK 0x40000000
 #endif
 
-static int sched_setattr(pid_t pid, struct sched_attr *attr, unsigned int flags)
+static int sys_sched_setattr(pid_t pid, struct sched_attr *attr, unsigned int flags)
 {
 	return syscall(SYS_sched_setattr, pid, attr, flags);
 }
 
-static int sched_getattr(pid_t pid, struct sched_attr *attr, unsigned int size,
+static int sys_sched_getattr(pid_t pid, struct sched_attr *attr, unsigned int size,
 			 unsigned int flags)
 {
 	return syscall(SYS_sched_getattr, pid, attr, size, flags);
@@ -55,7 +55,7 @@ FN_TEST(batch_policy_is_reported_as_set)
 	TEST_RES(sched_getscheduler(0), _ret == SCHED_BATCH);
 	TEST_RES(proc_stat_field(41), _ret == SCHED_BATCH);
 
-	TEST_RES(sched_getattr(0, &attr, sizeof(attr), 0),
+	TEST_RES(sys_sched_getattr(0, &attr, sizeof(attr), 0),
 		 attr.sched_policy == SCHED_BATCH && attr.sched_flags == 0 &&
 			 attr.sched_priority == 0);
 	pid_t child = TEST_SUCC(fork());
@@ -149,7 +149,7 @@ FN_TEST(reset_on_fork_is_reported_as_set)
 	TEST_RES(sched_getscheduler(0),
 		 _ret == (SCHED_IDLE | SCHED_RESET_ON_FORK));
 
-	TEST_RES(sched_getattr(0, &attr, sizeof(attr), 0),
+	TEST_RES(sys_sched_getattr(0, &attr, sizeof(attr), 0),
 		 attr.sched_policy == SCHED_IDLE &&
 			 (attr.sched_flags & SCHED_FLAG_RESET_ON_FORK) != 0);
 	pid_t child = TEST_SUCC(fork());
@@ -167,26 +167,26 @@ END_TEST()
 FN_TEST(fair_time_slice_is_kept_until_the_policy_changes)
 {
 	memset(&attr, 0, sizeof(attr));
-	TEST_SUCC(sched_getattr(0, &attr, sizeof(attr), 0));
+	TEST_SUCC(sys_sched_getattr(0, &attr, sizeof(attr), 0));
 	unsigned long long default_runtime = attr.sched_runtime;
 	memset(&attr, 0, sizeof(attr));
 	attr.size = sizeof(attr);
 	attr.sched_policy = SCHED_BATCH;
 	attr.sched_runtime = 3000000;
-	TEST_SUCC(sched_setattr(0, &attr, 0));
+	TEST_SUCC(sys_sched_setattr(0, &attr, 0));
 
-	TEST_RES(sched_getattr(0, &attr, sizeof(attr), 0),
+	TEST_RES(sys_sched_getattr(0, &attr, sizeof(attr), 0),
 		 attr.sched_policy == SCHED_BATCH &&
 			 attr.sched_runtime == 3000000);
 
 	TEST_SUCC(sched_setscheduler(0, SCHED_OTHER, &param));
-	TEST_SUCC(sched_getattr(0, &attr, sizeof(attr), 0));
+	TEST_SUCC(sys_sched_getattr(0, &attr, sizeof(attr), 0));
 	TEST_RES(attr.sched_runtime, _ret == 3000000);
 	memset(&attr, 0, sizeof(attr));
 	attr.size = sizeof(attr);
 	attr.sched_policy = SCHED_BATCH;
-	TEST_SUCC(sched_setattr(0, &attr, 0));
-	TEST_RES(sched_getattr(0, &attr, sizeof(attr), 0),
+	TEST_SUCC(sys_sched_setattr(0, &attr, 0));
+	TEST_RES(sys_sched_getattr(0, &attr, sizeof(attr), 0),
 		 attr.sched_policy == SCHED_BATCH && attr.sched_runtime == default_runtime);
 }
 END_TEST()
@@ -194,7 +194,7 @@ END_TEST()
 FN_TEST(reset_on_fork_restores_the_default_fair_time_slice)
 {
 	memset(&attr, 0, sizeof(attr));
-	TEST_SUCC(sched_getattr(0, &attr, sizeof(attr), 0));
+	TEST_SUCC(sys_sched_getattr(0, &attr, sizeof(attr), 0));
 	unsigned long long default_runtime = attr.sched_runtime;
 	unsigned long long custom_runtime = default_runtime == 3000000 ? 8000000 : 3000000;
 	memset(&attr, 0, sizeof(attr));
@@ -202,11 +202,11 @@ FN_TEST(reset_on_fork_restores_the_default_fair_time_slice)
 	attr.sched_policy = SCHED_BATCH;
 	attr.sched_flags = SCHED_FLAG_RESET_ON_FORK;
 	attr.sched_runtime = custom_runtime;
-	TEST_SUCC(sched_setattr(0, &attr, 0));
+	TEST_SUCC(sys_sched_setattr(0, &attr, 0));
 	pid_t child = TEST_SUCC(fork());
 	if (child == 0) {
 		struct sched_attr child_attr = {};
-		if (sched_getattr(0, &child_attr, sizeof(child_attr), 0) != 0)
+		if (sys_sched_getattr(0, &child_attr, sizeof(child_attr), 0) != 0)
 			_exit(2);
 		_exit(child_attr.sched_policy == SCHED_BATCH && child_attr.sched_flags == 0 &&
 		      child_attr.sched_runtime == default_runtime ? 0 : 3);
@@ -217,6 +217,6 @@ FN_TEST(reset_on_fork_restores_the_default_fair_time_slice)
 	memset(&attr, 0, sizeof(attr));
 	attr.size = sizeof(attr);
 	attr.sched_policy = SCHED_OTHER;
-	TEST_SUCC(sched_setattr(0, &attr, 0));
+	TEST_SUCC(sys_sched_setattr(0, &attr, 0));
 }
 END_TEST()

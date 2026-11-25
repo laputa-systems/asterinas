@@ -21,7 +21,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include "test.h"
+#include "../common/test.h"
 #include "rtnl_common.h"
 
 FN_SETUP(configure_ethernet_and_gateway)
