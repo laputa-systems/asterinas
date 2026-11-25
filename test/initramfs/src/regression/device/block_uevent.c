@@ -95,6 +95,8 @@ FN_SETUP(find_disk)
 
 		if (entry->d_name[0] == '.')
 			continue;
+		if (strncmp(entry->d_name, "vd", 2) != 0)
+			continue;
 		snprintf(path, sizeof(path), "/sys/class/block/%s/uevent",
 			 entry->d_name);
 		if (read_file(path, text, sizeof(text)) < 0)
