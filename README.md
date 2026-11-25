@@ -174,7 +174,7 @@ See [The Asterinas Book](https://asterinas.github.io/book/) to learn more about 
 
 ## Compatibility and Reliability Campaign
 
-The [campaign plan](plan.md) defines an ext4-first development sequence,
+The [roadmap](docs/roadmap.md) defines an ext4-first development sequence,
 a reusable Linux compatibility qualification harness,
 and bounded targets for services, confinement, and virtual desktop interfaces.
 It records the inspected baseline, explicit exclusions,

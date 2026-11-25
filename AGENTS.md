@@ -5,13 +5,11 @@ written in Rust using the framekernel architecture.
 `unsafe` Rust is confined to OSTD (`ostd/`);
 the kernel (`kernel/`) is entirely safe Rust.
 
-## Compatibility and Reliability Campaign
+## Roadmap
 
-For Linux subsystem compatibility and reliability work,
-read [the campaign plan](plan.md) and its Status section first.
-It defines the selected profiles, reusable qualification harness,
-work-package dependencies, explicit exclusions, and evidence required for completion.
-Keep implementation status distinct from runtime qualification.
+All current and planned work, including the Linux compatibility and reliability campaign,
+is in [the roadmap](docs/roadmap.md).
+Read its Status section first; "resume the roadmap" means continue from there.
 
 ## Repository Layout
 
@@ -114,4 +112,4 @@ and checks a userspace boot marker under Firecracker.
 The lint job runs `make lint`.
 
 These jobs do not run kernel-mode tests or the full conformance and architecture matrices.
-The [campaign plan](plan.md) defines the staged expansion of runtime qualification.
+Expanding CI to runtime qualification is a Later entry in [the roadmap](docs/roadmap.md).
