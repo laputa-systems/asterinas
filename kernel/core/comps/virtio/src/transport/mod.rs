@@ -6,6 +6,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
+use aster_device::common::AnyDevice;
 use aster_pci::cfg_space::BarAccess;
 use aster_util::safe_ptr::SafePtr;
 use ostd::{
@@ -48,6 +49,10 @@ pub(crate) trait VirtioTransport: Sync + Send + Debug {
 
     /// Get where the transport sits.
     fn location(&self) -> TransportLocation;
+
+    fn parent_device(&self) -> Option<Arc<dyn AnyDevice>> {
+        None
+    }
 
     /// Get device features.
     fn read_device_features(&self) -> u64;

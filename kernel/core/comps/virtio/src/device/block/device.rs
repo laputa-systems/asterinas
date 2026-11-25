@@ -11,6 +11,7 @@ use aster_block::{
     bio::{BioEnqueueError, BioStatus, BioType, SubmittedBio, bio_segment_pool_init},
     request_queue::{BioRequest, BioRequestSingleQueue},
 };
+use aster_device::common::AnyDevice;
 use aster_util::mem_obj_slice::Slice;
 use device_id::{DeviceId, MinorId};
 use ostd::{
@@ -44,6 +45,7 @@ pub struct BlockDevice {
     id: DeviceId,
     name: String,
     identity: VirtioIdentity,
+    transport_parent: Option<Arc<dyn AnyDevice>>,
     partition_manager: PartitionManager,
 }
 
@@ -75,6 +77,7 @@ impl BlockDevice {
         device_transport: DeviceTransport,
         identity: VirtioIdentity,
     ) -> Result<(), VirtioDeviceError> {
+        let transport_parent = device_transport.parent_device();
         let device = DeviceInner::init(device_transport)?;
 
         let index = NR_BLOCK_DEVICE.fetch_add(1, Ordering::Relaxed);
@@ -91,6 +94,7 @@ impl BlockDevice {
             id,
             name,
             identity,
+            transport_parent,
             partition_manager: PartitionManager::new(),
         });
 
@@ -103,6 +107,11 @@ impl BlockDevice {
     /// Returns where the device sits and its number among the virtio devices.
     pub fn identity(&self) -> &VirtioIdentity {
         &self.identity
+    }
+
+    /// Returns the transport device registered in the device model, if there is one.
+    pub fn transport_parent(&self) -> Option<&Arc<dyn AnyDevice>> {
+        self.transport_parent.as_ref()
     }
 
     /// Dequeues a `BioRequest` from the software staging queue and

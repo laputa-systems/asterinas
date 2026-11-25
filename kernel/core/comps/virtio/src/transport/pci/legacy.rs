@@ -3,6 +3,7 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
+use aster_device::common::AnyDevice;
 use aster_pci::{
     bus::{PciDevice, PciDeviceExt},
     cfg_space::BarAccess,
@@ -160,6 +161,10 @@ impl VirtioTransport for VirtioPciLegacyTransport {
             device: location.device,
             function: location.function,
         }
+    }
+
+    fn parent_device(&self) -> Option<Arc<dyn AnyDevice>> {
+        Some(self.common_device.to_arc())
     }
 
     fn set_queue(

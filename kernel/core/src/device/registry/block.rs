@@ -84,7 +84,7 @@ pub(super) fn init_in_first_process() -> Result<()> {
             .devnum(DevNum::block(device.id()))
             .dev_type(&DISK_TYPE);
         if let Some(virtio_disk) = device.downcast_ref::<VirtIoBlockDevice>() {
-            builder = builder.parent(virtio_parent(virtio_disk.identity())?);
+            builder = builder.parent(virtio_parent(virtio_disk)?);
         }
         let disk = builder.build();
         aster_device::add_device(&disk)?;
@@ -156,22 +156,22 @@ static TRANSPORT_DEVICES: Mutex<BTreeMap<String, Arc<BareDevice>>> = Mutex::new(
 ///
 /// The path follows Linux: a PCI function below its root bus, or a memory-mapped transport
 /// below the root of the devices the kernel command line declares.
-fn virtio_parent(identity: &VirtioIdentity) -> Result<Arc<dyn AnyDevice>> {
-    let transport = match identity.placement {
-        VirtioPlacement::Mmio { ordinal, .. } => {
-            let root = transport_device("virtio-mmio-cmdline".to_owned(), None)?;
-            transport_device(format!("virtio-mmio.{ordinal}"), Some(root))?
-        }
-        VirtioPlacement::Pci {
-            bus,
-            device,
-            function,
-        } => {
-            let root = transport_device(format!("pci0000:{bus:02x}"), None)?;
-            transport_device(format!("0000:{bus:02x}:{device:02x}.{function}"), Some(root))?
+fn virtio_parent(disk: &VirtIoBlockDevice) -> Result<Arc<dyn AnyDevice>> {
+    let transport = if let Some(parent) = disk.transport_parent() {
+        parent.clone()
+    } else {
+        match disk.identity().placement {
+            VirtioPlacement::Mmio { ordinal, .. } => {
+                let root = transport_device("virtio-mmio-cmdline".to_owned(), None)?;
+                transport_device(format!("virtio-mmio.{ordinal}"), Some(root))?
+            }
+            VirtioPlacement::Pci { .. } => {
+                return Err(errno!(ENODEV, "the virtio PCI transport device is missing"));
+            }
         }
     };
 
+    let identity = disk.identity();
     let bus = VIRTIO_BUS.call_once(|| bus::register(VirtioBus).unwrap());
     let virtio = BusDevice::builder(bus, format!("virtio{}", identity.index), *identity)
         .parent(transport)
