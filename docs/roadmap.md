@@ -230,10 +230,15 @@ Measured 2026-11-25 at `69015c7d3` on an Apple M5 Max (18 cores, 48 GiB) running
 | `D make test` | green | 19 s |
 | `D make kernel BOOT_METHOD=vmm-direct BOOT_PROTOCOL=pvh` | green | 54 s |
 | `D make initramfs` | green (Nix cache warm) | 4 s |
-| `D make initramfs ENABLE_REGRESSION_TEST=true` | **red**: `sched_setattr`/`sched_getattr` static definitions in `test/initramfs/src/regression/process/sched/{sched_policy_batch,sched_attr_getset}.c` conflict with glibc 2.42 declarations | 12 s |
+| `D make initramfs ENABLE_REGRESSION_TEST=true` | green after the glibc 2.42 wrapper renames and network include repairs in `4cfa3fa61` | not timed separately |
 | Host QEMU TCG, Asterinas PVH ELF, `rdinit=/bin/echo` | reaches userspace; a panic when init exits is expected | 16 s |
 | Host QEMU TCG, Linux 6.16.0 `vmlinuz` from the image, same initramfs | runs `/bin/echo`, exits with `panic=-1` | 3 s |
-| `make ktest`, `make lint`, regression run, conformance suites | not yet timed; LC-01 records them | — |
+| `D make test` at `798fb7b12` | green | 13.6 s |
+| `D make kernel BOOT_METHOD=vmm-direct BOOT_PROTOCOL=pvh` after `798fb7b12` | green | 28.7 s |
+| `D make ktest ENABLE_KVM=0` at `798fb7b12` | **red**: one kernel-mode test, `realtime_clocks_store_fractional_seconds`, lacked wall-clock initialization; fixed in `914a9c245`, whose focused ktest is green | 1501.1 s; focused retest 92.5 s |
+| `D make lint` at `798fb7b12` | green | 123.4 s |
+| `D make run_kernel AUTO_TEST=regression ENABLE_KVM=0` at `914a9c245` | **red**, but boots and runs the regression suite for 354.7 s. The virtio sysfs topology case passes after `798fb7b12` and `62409f2c5`; the remaining red case is `setup_mount_nvme_ext2`: mounting `/dev/nvme0n1` returns `EINVAL` because the pre-existing generated `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock (`dumpe2fs` exits 19). Treat as corrupted test input until disproved; do not delete or rewrite it without preserving evidence | 354.7 s |
+| conformance suites | not yet timed | — |
 
 Host tools present: QEMU 11.1.2 with `blkdebug`, `blklogwrites`, virtio-gpu/keyboard/tablet/sound; `qemu-system-aarch64`; Python 3.15.1. The container has e2fsprogs 1.47.0 (Ubuntu); fixtures use the Nix-pinned e2fsprogs instead. `vhost-vsock` is unavailable on macOS.
 
