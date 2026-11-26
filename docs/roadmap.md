@@ -4,11 +4,11 @@ This is the single plan for this repository: all current and future work, and th
 
 ## Status
 
-- **State:** active. LC-01 is accepted; LC-02 is in a lane pending independent review.
+- **State:** active. LC-01 and LC-03 are accepted; LC-02 and LC-04 are in lanes pending independent review.
 - **Campaign:** [Linux compatibility and reliability](#linux-compatibility-and-reliability) (`LC`).
-- **Last accepted revision:** `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
+- **Last accepted revision:** `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
 - **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green.
-- **Next slice:** LC-02 integration, then LC-03 and LC-04 in parallel.
+- **Next slice:** LC-02 and LC-04 integration, then LC-05.
 - **First command:** `python3 test/qualification/run.py selftest`
 
 ## Charter
