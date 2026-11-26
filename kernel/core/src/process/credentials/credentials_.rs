@@ -10,7 +10,10 @@ use super::{
 };
 use crate::{
     prelude::*,
-    process::credentials::capabilities::{AtomicCapSet, CapSet},
+    process::{
+        UserNamespace,
+        credentials::capabilities::{AtomicCapSet, CapSet},
+    },
 };
 
 #[derive(Debug)]
@@ -661,6 +664,7 @@ impl Credentials_ {
     /// Calculates and validates credentials for `execve()`.
     pub(super) fn prepare_exec_cred(
         &self,
+        current_user_ns: &UserNamespace,
         file_capabilities: Option<FileCapabilities>,
         setuid: Option<Uid>,
         setgid: Option<Gid>,
@@ -674,8 +678,13 @@ impl Credentials_ {
 
         let new_euid = setuid.unwrap_or_else(|| self.euid());
         let new_egid = setgid.unwrap_or_else(|| self.egid());
-        let (permitted, effective, ambient) =
-            self.calculate_capsets_for_exec(file_capabilities, no_new_privs, new_euid, new_egid)?;
+        let (permitted, effective, ambient) = self.calculate_capsets_for_exec(
+            current_user_ns,
+            file_capabilities,
+            no_new_privs,
+            new_euid,
+            new_egid,
+        )?;
 
         Ok(ExecCred {
             setuid,
@@ -709,6 +718,7 @@ impl Credentials_ {
 
     fn calculate_capsets_for_exec(
         &self,
+        current_user_ns: &UserNamespace,
         file_capabilities: Option<FileCapabilities>,
         no_new_privs: bool,
         new_euid: Uid,
@@ -740,19 +750,29 @@ impl Credentials_ {
                 CapSet::empty()
             };
 
+        // Whether an ID counts as "root" for the execve capability
+        // transformation is determined in the current user namespace:
+        // only a UID mapped to 0 within the namespace is root there.
+        // This is what clears the capabilities when a process that is
+        // root outside its user namespace executes a normal file.
+        // Reference: `cap_bprm_creds_from_fs` in
+        // <https://elixir.bootlin.com/linux/v6.16.9/source/security/commoncap.c>.
+        let ruid_is_ns_root = u32::from(current_user_ns.kuid_to_uid(self.ruid())) == 0;
+        let euid_is_ns_root = u32::from(current_user_ns.kuid_to_uid(new_euid)) == 0;
+
         // When a file has capabilities and setuid changes a non-root user's effective UID to root,
         // Linux derives the capability sets only from the file's capability xattr; UID 0 does not
         // additionally grant full capability sets.
-        let is_setuid_root = !self.ruid().is_root() && new_euid.is_root();
+        let is_setuid_root = !ruid_is_ns_root && euid_is_ns_root;
         if !self.securebits().no_root() && !(has_file_capabilities && is_setuid_root) {
-            if self.ruid().is_root() || new_euid.is_root() {
+            if ruid_is_ns_root || euid_is_ns_root {
                 file_permitted = CapSet::all();
                 file_inheritable = CapSet::all();
             }
 
             // Linux uses UID 0 to enable the effective capability set only when it is the
             // effective UID.
-            if new_euid.is_root() {
+            if euid_is_ns_root {
                 file_effective = CapSet::all();
             }
         }

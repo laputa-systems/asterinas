@@ -4,7 +4,9 @@ use crate::{
     fs::file::file_table::FileTable,
     prelude::*,
     process::{
-        CloneFlags, PidNamespace, PidNsForChildren, credentials::capabilities::CapSet,
+        CloneFlags, PidNamespace, PidNsForChildren, UserNamespace,
+        credentials::capabilities::CapSet,
+        posix_thread::ContextPthreadAdminApi,
     },
     security::lsm::hooks as lsm_hooks,
 };
@@ -45,15 +47,17 @@ impl ContextUnshareAdminApi for Context<'_> {
     }
 
     fn unshare_namespaces(&self, flags: CloneFlags) -> Result<()> {
-        // Note: `CLONE_NEWUSER` handling belongs to the user-namespace lane;
-        // this lane only rejects it the same way the base tree does and
-        // implements the PID-namespace path.
-        if flags.contains(CloneFlags::CLONE_NEWUSER) {
-            return Err(errno!(
-                EINVAL,
-                "cloning a new user namespace is not supported"
-            ));
-        }
+        // Creating a new user namespace never requires privileges,
+        // mirroring unprivileged user namespace creation in Linux.
+        // The new namespace starts out with empty ID maps; IDs observed
+        // through it translate to the overflow IDs until maps are written.
+        let new_user_ns = if flags.contains(CloneFlags::CLONE_NEWUSER) {
+            let parent_ns = self.thread_local.borrow_user_ns().clone();
+            let euid = self.posix_thread.credentials().euid();
+            Some(UserNamespace::new_child(&parent_ns, euid)?)
+        } else {
+            None
+        };
 
         let mut remaining_flags = flags;
 
@@ -83,7 +87,10 @@ impl ContextUnshareAdminApi for Context<'_> {
             return Ok(());
         }
 
-        let user_ns_ref = self.thread_local.borrow_user_ns();
+        let user_ns_ref = match new_user_ns.as_ref() {
+            Some(new_user_ns) => new_user_ns.clone(),
+            None => self.thread_local.borrow_user_ns().clone(),
+        };
 
         let mut pthread_ns_proxy = self.posix_thread.ns_proxy().lock();
         let mut thread_local_ns_proxy = self.thread_local.borrow_ns_proxy_mut();
@@ -105,6 +112,16 @@ impl ContextUnshareAdminApi for Context<'_> {
 
         *pthread_ns_proxy = Some(new_ns_proxy.clone());
         *thread_local_ns_proxy = new_ns_proxy;
+
+        if let Some(new_user_ns) = new_user_ns {
+            // Entering a new user namespace grants the full set of capabilities
+            // within that namespace, mirroring Linux.
+            *self.process.user_ns().lock() = new_user_ns.clone();
+            self.thread_local.set_user_ns(new_user_ns);
+            let credentials = self.credentials_mut();
+            credentials.set_permitted_capset(CapSet::all());
+            credentials.set_effective_capset(CapSet::all());
+        }
 
         Ok(())
     }

@@ -9,11 +9,12 @@ use crate::{
         procfs::{
             StaticEntryWithOps,
             pid::task::{
-                auxv::AuxvFileOps, cgroup::CgroupFileOps, children::ChildrenFileOps, cmdline::CmdlineFileOps,
-                comm::CommFileOps, environ::EnvironFileOps, exe::ExeSymOps, fd::FdDirOps,
-                fs_links::FsLinkOps, gid_map::GidMapFileOps, maps::MapsFileOps, mem::MemFileOps,
-                mountinfo::MountInfoFileOps, mounts::MountsFileOps, mountstats::MountStatsFileOps,
-                ns::NsDirOps, oom_score_adj::OomScoreAdjFileOps, stat::StatFileOps,
+                auxv::AuxvFileOps, cgroup::CgroupFileOps, children::ChildrenFileOps,
+                cmdline::CmdlineFileOps, comm::CommFileOps, environ::EnvironFileOps,
+                exe::ExeSymOps, fd::FdDirOps, fs_links::FsLinkOps, gid_map::GidMapFileOps,
+                maps::MapsFileOps, mem::MemFileOps, mountinfo::MountInfoFileOps,
+                mounts::MountsFileOps, mountstats::MountStatsFileOps, ns::NsDirOps,
+                oom_score_adj::OomScoreAdjFileOps, setgroups::SetgroupsFileOps, stat::StatFileOps,
                 statm::StatmFileOps, status::StatusFileOps, uid_map::UidMapFileOps,
                 wchan::WchanFileOps,
             },
@@ -47,6 +48,7 @@ mod mounts;
 mod mountstats;
 mod ns;
 mod oom_score_adj;
+mod setgroups;
 pub(super) mod stat;
 mod statm;
 mod status;
@@ -142,6 +144,7 @@ impl TidDirOps {
             InodeType::File,
             OomScoreAdjFileOps::new_inode,
         ),
+        ("setgroups", InodeType::File, SetgroupsFileOps::new_inode),
         ("stat", InodeType::File, StatFileOps::new_thread_inode),
         ("statm", InodeType::File, StatmFileOps::new_inode),
         ("status", InodeType::File, StatusFileOps::new_inode),

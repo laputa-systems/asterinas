@@ -12,6 +12,7 @@ use crate::{
         },
     },
     prelude::*,
+    process::{Gid, Uid},
     syscall::constants::MAX_FILENAME_LEN,
     time::timespec_t,
 };
@@ -26,7 +27,8 @@ pub(super) fn sys_fstat(
     let mut file_table = ctx.thread_local.borrow_file_table_mut();
     let file = get_file_fast!(&mut file_table, raw_fd.try_into()?);
 
-    let stat = Stat::from(file.path().metadata()?);
+    let mut stat = Stat::from(file.path().metadata()?);
+    translate_stat_ids(&mut stat, ctx);
     ctx.user_space().write_val(stat_buf_ptr, &stat)?;
 
     Ok(SyscallReturn::Return(0))
@@ -85,9 +87,19 @@ pub(super) fn sys_fstatat(
         }
     };
 
-    let stat = Stat::from(path.metadata()?);
+    let mut stat = Stat::from(path.metadata()?);
+    translate_stat_ids(&mut stat, ctx);
     user_space.write_val(stat_buf_ptr, &stat)?;
     Ok(SyscallReturn::Return(0))
+}
+
+/// Translates the owner IDs of `stat` into the caller's user namespace.
+///
+/// Unmapped IDs show up as the overflow IDs, mirroring Linux.
+fn translate_stat_ids(stat: &mut Stat, ctx: &Context) {
+    let user_ns = ctx.thread_local.borrow_user_ns();
+    stat.st_uid = u32::from(user_ns.kuid_to_uid(Uid::new(stat.st_uid)));
+    stat.st_gid = u32::from(user_ns.kgid_to_gid(Gid::new(stat.st_gid)));
 }
 
 bitflags::bitflags! {

@@ -187,12 +187,13 @@ fn read_cstring_vec(
 /// Prepares credential changes.
 fn prepare_exec_cred(elf_path: &Path, ctx: &Context) -> Result<ExecCred> {
     let credentials = ctx.posix_thread.credentials();
+    let current_user_ns = ctx.thread_local.borrow_user_ns().clone();
     if elf_path
         .mount_node()
         .flags()
         .contains(PerMountFlags::NOSUID)
     {
-        return credentials.prepare_exec_cred(None, None, None);
+        return credentials.prepare_exec_cred(&current_user_ns, None, None, None);
     }
 
     let current_user_ns_owner_uid = ctx.thread_local.borrow_user_ns().owner_uid()?;
@@ -219,7 +220,7 @@ fn prepare_exec_cred(elf_path: &Path, ctx: &Context) -> Result<ExecCred> {
         None
     };
 
-    credentials.prepare_exec_cred(file_capabilities, setuid, setgid)
+    credentials.prepare_exec_cred(&current_user_ns, file_capabilities, setuid, setgid)
 }
 
 fn do_execve_no_return(

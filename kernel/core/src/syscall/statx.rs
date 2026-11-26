@@ -9,6 +9,7 @@ use crate::{
         vfs::path::{EmptyPathStr, FsPath, Path},
     },
     prelude::*,
+    process::{Gid, Uid},
     syscall::constants::MAX_FILENAME_LEN,
     time::FileTime,
 };
@@ -63,7 +64,13 @@ pub(super) fn sys_statx(
         }
     };
 
-    let statx = Statx::new(&path, mask)?;
+    let mut statx = Statx::new(&path, mask)?;
+    // Translate the owner IDs into the caller's user namespace;
+    // unmapped IDs show up as the overflow IDs, mirroring Linux.
+    let user_ns = ctx.thread_local.borrow_user_ns();
+    statx.stx_uid = u32::from(user_ns.kuid_to_uid(Uid::new(statx.stx_uid)));
+    statx.stx_gid = u32::from(user_ns.kgid_to_gid(Gid::new(statx.stx_gid)));
+    drop(user_ns);
 
     user_space.write_val(statx_buf_ptr, &statx)?;
     Ok(SyscallReturn::Return(0))

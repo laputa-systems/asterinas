@@ -5,7 +5,10 @@ use ostd::mm::VmIo;
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{Gid, credentials::capabilities::CapSet, posix_thread::ContextPthreadAdminApi},
+    process::{
+        Gid, SetgroupsState, credentials::capabilities::CapSet,
+        posix_thread::ContextPthreadAdminApi,
+    },
     security::lsm::hooks as lsm_hooks,
 };
 
@@ -15,6 +18,16 @@ pub(super) fn sys_setgroups(
     ctx: &Context,
 ) -> Result<SyscallReturn> {
     debug!("size = {}, group_list_addr = 0x{:x}", size, group_list_addr);
+
+    // Once "deny" has been written to `/proc/self/setgroups`, the `setgroups`
+    // system call is permanently disabled for the user namespace.
+    // Reference: <https://man7.org/linux/man-pages/man7/user_namespaces.7.html>.
+    if ctx.thread_local.borrow_user_ns().setgroups_state() == SetgroupsState::Deny {
+        return Err(errno!(
+            EPERM,
+            "setgroups is denied for the current user namespace"
+        ));
+    }
 
     lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
         ctx.thread_local.borrow_user_ns().as_ref(),

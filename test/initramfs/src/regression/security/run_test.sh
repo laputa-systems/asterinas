@@ -25,6 +25,7 @@ set -e
 ./namespace/setns
 ./namespace/unshare
 ./namespace/unshare_privilege
+./namespace/user_ns
 
 ./seccomp/install
 ./seccomp/filter

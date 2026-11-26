@@ -26,11 +26,19 @@ impl LsmModule for CapabilityLsm {
 
 impl LsmCapabilityHook for CapabilityLsm {
     fn on_capable(&self, context: &CapableContext) -> Result<()> {
-        // Since creating new user namespaces is not supported at the moment,
-        // there is effectively only one user namespace in the entire system.
-        // Therefore, the thread has a single set of capabilities used for permission checks.
-        // FIXME: Once support for creating new user namespaces is added,
-        // we should verify the thread's capabilities within the relevant user namespace.
+        // Capabilities are scoped to user namespaces: a capability held
+        // within a user namespace applies to that namespace and its
+        // descendants, but not to ancestor namespaces or unrelated ones.
+        // Reference: `ns_capable` in
+        // <https://elixir.bootlin.com/linux/v6.16.9/source/kernel/capability.c>.
+        let current_user_ns = context.posix_thread().process().user_ns().lock().clone();
+        if !current_user_ns.is_same_or_ancestor_of(context.target_user_ns()) {
+            return Err(errno!(
+                EPERM,
+                "the capability does not apply outside the thread's user namespace"
+            ));
+        }
+
         if context
             .posix_thread()
             .credentials()

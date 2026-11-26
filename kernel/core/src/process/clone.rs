@@ -30,13 +30,15 @@ use crate::{
         NsProxy, UserNamespace,
         credentials::capabilities::CapSet,
         pid_file::PidFile,
-        posix_thread::{PosixThread, ThreadLocal, allocate_posix_tid},
+        posix_thread::{PosixThread, allocate_posix_tid},
         stats::PROCESS_CREATION_COUNTER,
     },
     security::lsm::hooks as lsm_hooks,
     thread::{AsThread, Tid},
     vm::vmar::{Vmar, VmarHandle},
 };
+#[cfg(target_arch = "x86_64")]
+use crate::process::posix_thread::ThreadLocal;
 
 bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -276,6 +278,7 @@ impl CloneFlags {
             | CloneFlags::CLONE_NEWCGROUP
             | CloneFlags::CLONE_NEWNS
             | CloneFlags::CLONE_NEWUTS
+            | CloneFlags::CLONE_NEWUSER
             | CloneFlags::CLONE_PARENT
             | CloneFlags::CLONE_NEWPID;
         let unsupported_flags = *self - supported_flags;
@@ -565,7 +568,7 @@ fn clone_child_process(
     let child_fpu_context = thread_local.supp_user_context().fpu().get();
 
     // Clone the namespaces
-    let child_user_ns = clone_user_ns(clone_flags, thread_local)?;
+    let child_user_ns = clone_user_ns(clone_flags, ctx)?;
     let child_ns_proxy = clone_ns_proxy(
         &thread_local.borrow_ns_proxy(),
         &child_user_ns,
@@ -654,6 +657,13 @@ fn clone_child_process(
                 let credentials = ctx.posix_thread.credentials();
                 Credentials::new_from(&credentials)
             };
+
+            if clone_flags.contains(CloneFlags::CLONE_NEWUSER) {
+                // A child cloned into a new user namespace gains the full
+                // set of capabilities within that namespace, mirroring Linux.
+                credentials.set_permitted_capset(CapSet::all());
+                credentials.set_effective_capset(CapSet::all());
+            }
 
             PosixThreadBuilder::new(
                 child_kernel_tid,
@@ -917,18 +927,19 @@ fn clone_pidfd(
     }
 }
 
-fn clone_user_ns(
-    clone_flags: CloneFlags,
-    thread_local: &ThreadLocal,
-) -> Result<Arc<UserNamespace>> {
-    if clone_flags.contains(CloneFlags::CLONE_NEWUSER) {
-        Err(errno!(
-            EINVAL,
-            "cloning a new user namespace is not supported"
-        ))
-    } else {
-        Ok(thread_local.borrow_user_ns().clone())
+fn clone_user_ns(clone_flags: CloneFlags, ctx: &Context) -> Result<Arc<UserNamespace>> {
+    if !clone_flags.contains(CloneFlags::CLONE_NEWUSER) {
+        return Ok(ctx.thread_local.borrow_user_ns().clone());
     }
+
+    // Cloning a new user namespace never requires privileges,
+    // mirroring unprivileged user namespace creation in Linux.
+    // The child starts out with empty ID maps; IDs observed
+    // through the new namespace translate to the overflow IDs
+    // until maps are written.
+    let parent_ns = ctx.thread_local.borrow_user_ns().clone();
+    let euid = ctx.posix_thread.credentials().euid();
+    UserNamespace::new_child(&parent_ns, euid)
 }
 
 fn clone_ns_proxy(

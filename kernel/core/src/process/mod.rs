@@ -35,6 +35,7 @@ pub(crate) use namespace::{
         kernel_id_allocator,
     },
     unshare::ContextUnshareAdminApi,
+    user_ns::{MapWriter, SetgroupsState},
 };
 pub(crate) use pid_file::PidFile;
 pub use process::Process;

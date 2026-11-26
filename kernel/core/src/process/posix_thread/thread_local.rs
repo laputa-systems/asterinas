@@ -223,6 +223,11 @@ impl ThreadLocal {
         self.user_ns.borrow()
     }
 
+    /// Switches to a new user namespace.
+    pub(crate) fn set_user_ns(&self, user_ns: Arc<UserNamespace>) {
+        *self.user_ns.borrow_mut() = user_ns;
+    }
+
     /// Returns a reference to the namespace proxy.
     pub(crate) fn borrow_ns_proxy(&self) -> Ref<'_, Arc<NsProxy>> {
         Ref::map(self.ns_proxy.borrow(), |ns_proxy| {

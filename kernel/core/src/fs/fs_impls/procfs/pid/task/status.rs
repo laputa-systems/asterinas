@@ -159,21 +159,30 @@ impl ProcFileOps for StatusFileOps {
         }
         writeln!(printer)?;
 
+        // IDs are translated into the viewer's user namespace;
+        // unmapped IDs show up as the overflow IDs.
+        let viewer_ns = current_thread!()
+            .as_posix_thread()
+            .unwrap()
+            .process()
+            .user_ns()
+            .lock()
+            .clone();
         writeln!(
             printer,
             "Uid:\t{}\t{}\t{}\t{}",
-            u32::from(credentials.ruid()),
-            u32::from(credentials.euid()),
-            u32::from(credentials.suid()),
-            u32::from(credentials.fsuid()),
+            u32::from(viewer_ns.kuid_to_uid(credentials.ruid())),
+            u32::from(viewer_ns.kuid_to_uid(credentials.euid())),
+            u32::from(viewer_ns.kuid_to_uid(credentials.suid())),
+            u32::from(viewer_ns.kuid_to_uid(credentials.fsuid())),
         )?;
         writeln!(
             printer,
             "Gid:\t{}\t{}\t{}\t{}",
-            u32::from(credentials.rgid()),
-            u32::from(credentials.egid()),
-            u32::from(credentials.sgid()),
-            u32::from(credentials.fsgid()),
+            u32::from(viewer_ns.kgid_to_gid(credentials.rgid())),
+            u32::from(viewer_ns.kgid_to_gid(credentials.egid())),
+            u32::from(viewer_ns.kgid_to_gid(credentials.sgid())),
+            u32::from(viewer_ns.kgid_to_gid(credentials.fsgid())),
         )?;
 
         writeln!(
