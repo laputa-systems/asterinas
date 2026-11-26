@@ -4,12 +4,12 @@ This is the single plan for this repository: all current and future work, and th
 
 ## Status
 
-- **State:** active. No slice started.
+- **State:** active. LC-01 is accepted; LC-02 is in a lane pending independent review.
 - **Campaign:** [Linux compatibility and reliability](#linux-compatibility-and-reliability) (`LC`).
-- **Last accepted revision:** none. Baseline `69015c7d3` on `main`: `make test` and the PVH kernel build are green; the regression initramfs build is red (see [Baseline](#baseline)).
-- **Red or parked:** none.
-- **Next slice:** LC-01.
-- **First command:** `docker run --rm -v "$PWD":/root/asterinas -w /root/asterinas asterinas/dev:0.19.0-20261012 make initramfs ENABLE_REGRESSION_TEST=true`
+- **Last accepted revision:** `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
+- **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green.
+- **Next slice:** LC-02 integration, then LC-03 and LC-04 in parallel.
+- **First command:** `python3 test/qualification/run.py selftest`
 
 ## Charter
 
