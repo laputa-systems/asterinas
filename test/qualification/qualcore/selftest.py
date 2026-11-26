@@ -1,6 +1,7 @@
 import copy
 import errno
 import json
+import shutil
 import sys
 import time
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from .gtest import parse_gtest_report
 from .manifest import Selection, load_case_index, load_profile
 from .results import ResultContext, ingest_result_stream, make_result_line
 from .supervisor import Supervisor, is_full_disk_error
+from .util import sha256_bytes
 
 
 @dataclass
@@ -66,6 +68,7 @@ def _valid_records(selection: Selection, run_id: str) -> list[dict]:
             "emitted_at": now,
             "subtests_completed": 1,
             "assertions_completed": 3,
+            "artifacts": [{"name": "stdout.log", "sha256": sha256_bytes(b"lc02 selftest\n"), "size": len(b"lc02 selftest\n")}],
         },
     ]
 
@@ -276,6 +279,41 @@ def selftest_main() -> int:
             lambda records, text: _stream(run_id, nonce, [record for record in records if record["kind"] != "final"]),
         ),
     )
+    evaluate(
+        "missing-start-record",
+        lambda: ingestion_control(
+            "missing-start-record",
+            lambda records, text: _stream(run_id, nonce, [record for record in records if record["kind"] != "start"]),
+        ),
+    )
+
+    def duplicate_start() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            duplicate = copy.deepcopy(records[0])
+            duplicate["sequence"] = 4
+            return text + make_result_line(run_id, nonce, duplicate)
+
+        return ingestion_control("duplicate-start-record", mutate)
+
+    evaluate("duplicate-start-record", duplicate_start)
+
+    def future_timestamp() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[-1]["emitted_at"] = time.time() + 3600
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("future-timestamp", mutate)
+
+    evaluate("future-timestamp", future_timestamp)
+
+    def missing_required_artifact() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[-1]["artifacts"] = []
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("missing-required-artifact", mutate)
+
+    evaluate("missing-required-artifact", missing_required_artifact)
 
     evaluate(
         "malformed-output",
@@ -348,6 +386,42 @@ def selftest_main() -> int:
         ),
     )
 
+    def accounting_missing_outcome() -> tuple[bool, str]:
+        result = reconcile(selection.case_ids, [])
+        detail = "; ".join(item.render() for item in result.diagnostics)
+        return result.has("contradiction") and not result.balanced, detail or "no diagnostics"
+
+    evaluate("accounting-missing-outcome", accounting_missing_outcome)
+
+    def accounting_missing_pass_role() -> tuple[bool, str]:
+        outcome = CaseOutcome(
+            selection.case_ids[0],
+            "PASS",
+            (RoleResult("candidate", "pass"), RoleResult("comparator", "pass")),
+        )
+        result = reconcile(selection.case_ids, [outcome])
+        detail = "; ".join(item.render() for item in result.diagnostics)
+        return result.has("contradiction"), detail or "no diagnostics"
+
+    evaluate("accounting-pass-missing-role", accounting_missing_pass_role)
+
+    def accounting_fail_all_pass() -> tuple[bool, str]:
+        outcome = CaseOutcome(
+            selection.case_ids[0],
+            "FAIL",
+            (
+                RoleResult("candidate", "pass"),
+                RoleResult("reference", "pass"),
+                RoleResult("comparator", "pass"),
+                RoleResult("validator", "pass"),
+            ),
+        )
+        result = reconcile(selection.case_ids, [outcome])
+        detail = "; ".join(item.render() for item in result.diagnostics)
+        return result.has("contradiction"), detail or "no diagnostics"
+
+    evaluate("accounting-fail-all-pass", accounting_fail_all_pass)
+
     supervisor = Supervisor()
     python = sys.executable
     budget_result = supervisor.run([python, "-c", "print('x' * 100)"], timeout=3, output_budget=10)
@@ -361,6 +435,20 @@ def selftest_main() -> int:
         return result.outcome == "panic", f"outcome={result.outcome}"
 
     evaluate("guest-panic", guest_panic)
+
+    def panic_after_output_budget() -> tuple[bool, str]:
+        code = "import sys; sys.stdout.write('x' * 2048); sys.stdout.write('kernel panic: after budget'); sys.stdout.flush()"
+        result = supervisor.run([python, "-c", code], timeout=3, output_budget=16)
+        return result.outcome == "panic" and result.output_truncated, f"outcome={result.outcome} truncated={result.output_truncated}"
+
+    evaluate("panic-after-output-budget", panic_after_output_budget)
+
+    def verbose_output_is_activity() -> tuple[bool, str]:
+        code = "import sys, time; end = time.time() + 0.4\nwhile time.time() < end:\n sys.stdout.write('x' * 100); sys.stdout.flush(); time.sleep(0.005)"
+        result = supervisor.run([python, "-c", code], timeout=3, output_budget=16, silence_timeout=0.1)
+        return result.outcome == "exit", f"outcome={result.outcome} bytes={result.stdout_bytes}"
+
+    evaluate("verbose-output-not-silence", verbose_output_is_activity)
 
     def guest_hang() -> tuple[bool, str]:
         code = "import time; print('HANG-MARKER', flush=True); time.sleep(30)"
@@ -388,6 +476,18 @@ def selftest_main() -> int:
         return result.orphaned, f"orphaned={result.orphaned} outcome={result.outcome}"
 
     evaluate("orphaned-child", orphaned_child)
+
+    def regrouped_grandchild() -> tuple[bool, str]:
+        grandchild = "import os, time; os.setsid(); print('GRANDPID=%d' % os.getpid(), flush=True); time.sleep(30)"
+        child = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {grandchild!r}]); time = __import__('time'); time.sleep(30)"
+        code = f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(0.25)"
+        result = supervisor.run([python, "-c", code], timeout=5, output_budget=4096)
+        marker = next((line for line in result.stdout.decode(errors="replace").splitlines() if line.startswith("GRANDPID=")), "")
+        grandchild_pid = int(marker.split("=", 1)[1]) if marker else -1
+        detected = result.orphaned and grandchild_pid in result.orphan_pids
+        return detected, f"orphaned={result.orphaned} grandchild={grandchild_pid} survivors={result.orphan_pids} outcome={result.outcome}"
+
+    evaluate("regrouped-orphaned-grandchild", regrouped_grandchild)
 
     def interrupted_cleanup() -> tuple[bool, str]:
         def cleanup() -> None:
@@ -433,21 +533,27 @@ def selftest_main() -> int:
 
     def missing_artifact() -> tuple[bool, str]:
         control_bundle = EvidenceBundle.create(qualification_root)
-        control_bundle.register_artifact("missing.bin", b"missing artifact control")
-        path = control_bundle.root / control_bundle.registry["missing.bin"]["path"]
-        path.unlink()
-        diagnostics = control_bundle.validate_artifacts()
-        return any(item.category == "missing-artifact" for item in diagnostics), "; ".join(item.render() for item in diagnostics) or "no diagnostics"
+        try:
+            control_bundle.register_artifact("missing.bin", b"missing artifact control")
+            path = control_bundle.root / control_bundle.registry["missing.bin"]["path"]
+            path.unlink()
+            diagnostics = control_bundle.validate_artifacts()
+            return any(item.category == "missing-artifact" for item in diagnostics), "; ".join(item.render() for item in diagnostics) or "no diagnostics"
+        finally:
+            shutil.rmtree(control_bundle.root)
 
     evaluate("missing-artifact", missing_artifact)
 
     def checksum_mismatch() -> tuple[bool, str]:
         control_bundle = EvidenceBundle.create(qualification_root)
-        control_bundle.register_artifact("corrupt.bin", b"original bytes")
-        path = control_bundle.root / control_bundle.registry["corrupt.bin"]["path"]
-        path.write_bytes(b"corrupted bytes")
-        diagnostics = control_bundle.validate_artifacts()
-        return any(item.category == "checksum-mismatch" for item in diagnostics), "; ".join(item.render() for item in diagnostics) or "no diagnostics"
+        try:
+            control_bundle.register_artifact("corrupt.bin", b"original bytes")
+            path = control_bundle.root / control_bundle.registry["corrupt.bin"]["path"]
+            path.write_bytes(b"corrupted bytes")
+            diagnostics = control_bundle.validate_artifacts()
+            return any(item.category == "checksum-mismatch" for item in diagnostics), "; ".join(item.render() for item in diagnostics) or "no diagnostics"
+        finally:
+            shutil.rmtree(control_bundle.root)
 
     evaluate("checksum-mismatch", checksum_mismatch)
 

@@ -24,6 +24,7 @@ class ResultContext:
     cases: dict[str, CaseSpec]
     max_age_seconds: float = 300.0
     now: float = 0.0
+    future_tolerance_seconds: float = 5.0
 
 
 @dataclass
@@ -117,6 +118,10 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
         if isinstance(record["emitted_at"], bool) or not isinstance(record["emitted_at"], (int, float)):
             _add(ingestion, "malformed-output", f"line {line_number} emitted_at is not numeric")
             continue
+        now = context.now or time.time()
+        if float(record["emitted_at"]) > now + context.future_tolerance_seconds:
+            _add(ingestion, "future-timestamp", f"line {line_number} case {case_id} is emitted in the future")
+            continue
         ingestion.records.setdefault(case_id, []).append(record)
 
     for case_id in sorted(selected):
@@ -137,9 +142,41 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
     return ingestion
 
 
+def _validate_required_artifacts(case_id: str, case: CaseSpec, final: dict[str, Any], ingestion: Ingestion) -> None:
+    artifacts = final.get("artifacts")
+    if not isinstance(artifacts, list):
+        _add(ingestion, "malformed-output", f"{case_id} final artifacts field is not an array")
+        return
+    names: set[str] = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("name"), str):
+            _add(ingestion, "malformed-output", f"{case_id} has a malformed final artifact entry")
+            continue
+        name = artifact["name"]
+        if name in names:
+            _add(ingestion, "contradiction", f"{case_id} final artifact {name!r} is duplicated")
+        names.add(name)
+        checksum = artifact.get("sha256")
+        size = artifact.get("size")
+        if not isinstance(checksum, str) or len(checksum) != 64 or any(character not in "0123456789abcdef" for character in checksum):
+            _add(ingestion, "malformed-output", f"{case_id} final artifact {name!r} has an invalid sha256")
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            _add(ingestion, "malformed-output", f"{case_id} final artifact {name!r} has an invalid size")
+    for required in sorted(set(case.artifacts) - names):
+        _add(ingestion, "missing-required-artifact", f"{case_id}/{required}")
+
+
 def _validate_case_records(case_id: str, case: CaseSpec, records: list[dict[str, Any]], final: dict[str, Any], ingestion: Ingestion) -> None:
+    starts = [record for record in records if record["kind"] == "start"]
+    if not starts:
+        _add(ingestion, "missing-start-record", case_id)
+    if len(starts) > 1:
+        _add(ingestion, "duplicate-start-record", f"{case_id} has {len(starts)} start records")
+    if records and records[0]["kind"] != "start":
+        _add(ingestion, "contradiction", f"{case_id} does not begin with its start record")
     if records[-1]["kind"] != "final":
         _add(ingestion, "contradiction", f"{case_id} has records after its final record")
+    _validate_required_artifacts(case_id, case, final, ingestion)
     expected_subtests = {subtest.subtest_id: subtest for subtest in case.expected_subtests}
     subtest_records: dict[str, list[dict[str, Any]]] = {}
     failing_subtests: set[str] = set()

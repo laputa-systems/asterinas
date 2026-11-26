@@ -52,11 +52,8 @@ class CaseOutcome:
 class Accounting:
     outcomes: dict[str, CaseOutcome]
     counts: Counter[str]
+    selected_count: int
     diagnostics: list[Diagnostic] = field(default_factory=list)
-
-    @property
-    def selected_count(self) -> int:
-        return len(self.outcomes)
 
     @property
     def disposition_total(self) -> int:
@@ -89,25 +86,34 @@ def reconcile(selected_case_ids: Iterable[str], outcomes: Iterable[CaseOutcome])
 
     for case_id in selected:
         if case_id not in by_case:
-            by_case[case_id] = CaseOutcome(case_id, "NOT_RUN", reason="no terminal outcome was supplied")
+            diagnostics.append(Diagnostic("contradiction", f"{case_id} has no terminal outcome"))
 
     for outcome in by_case.values():
         roles = {result.role: result for result in outcome.results}
         comparator = roles.get("comparator")
         candidate = roles.get("candidate")
         validator = roles.get("validator")
+        reference = roles.get("reference")
         if outcome.disposition == "PASS":
+            for role in ("candidate", "reference", "comparator", "validator"):
+                if role not in roles:
+                    diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS lacks a {role} result"))
             if comparator is not None and comparator.status != "pass":
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts comparator {comparator.status}"))
             if candidate is not None and candidate.status != "pass":
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts candidate {candidate.status}"))
+            if reference is not None and reference.status not in {"pass", "not-required"}:
+                diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts reference {reference.status}"))
             if validator is not None and validator.status not in {"pass", "not-required"}:
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts validator {validator.status}"))
-        if outcome.disposition == "REFERENCE_FAILURE" and roles.get("reference") is None:
+        if outcome.disposition == "FAIL" and candidate is not None and comparator is not None:
+            if candidate.status == "pass" and comparator.status == "pass":
+                diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} FAIL contradicts all-pass candidate and comparator results"))
+        if outcome.disposition == "REFERENCE_FAILURE" and reference is None:
             diagnostics.append(Diagnostic("incomplete-accounting", f"{outcome.case_id} REFERENCE_FAILURE has no reference result"))
 
     counts = Counter(outcome.disposition for outcome in by_case.values())
-    accounting = Accounting(by_case, counts, diagnostics)
+    accounting = Accounting(by_case, counts, len(supplied_selection), diagnostics)
     if not accounting.balanced:
         diagnostics.append(Diagnostic("incomplete-accounting", "selected count does not equal the disposition sum"))
     return accounting
