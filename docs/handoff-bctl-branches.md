@@ -1,23 +1,23 @@
 # Handoff: bctl-related branches in this checkout
 
-Owner: another agent working in `/Users/josh/repos/bctl`. These branches are
-deliberately **not** integrated into `main` here. Do not retire their worktrees
-or delete their branches without that owner's decision.
+Owner: another agent working in `/Users/josh/repos/bctl`. Their content is now
+integrated into local `main` through `settle/bctl-lanes`; the worktrees and
+their bridge leases are still live. Do not retire them without that owner's
+decision.
 
 Captured from integration checkout `main` at
 `2826f4446637c48254cac5665a9ca0095b7ce43a` (2026-11-26).
 
 ## Settlement status (2026-11-26)
 
-All four lanes have been ported onto `main` in the local branch
+All four lanes were ported onto `main` in the local branch
 `settle/bctl-lanes`, in this order: seccomp (AS1), IPC tail (AS3), PID
-namespaces and user namespaces (AS2), then a lint-cleanup commit. `main`'s
-qualification fixes through `512a44370` are merged into that branch. `main`
-itself was left untouched: a concurrent Linux-compatibility lane is committing
-to the main checkout and had an in-progress `probe.c` edit when the settlement
-was completed. The four lane worktrees and their bridge leases are therefore
-still live and must not be retired until the settlement branch is integrated
-into `main`.
+namespaces and user namespaces (AS2), then a lint-cleanup commit. That branch
+carries `main`'s qualification fixes through `692ec0393` and was merged into
+local `main` at `9152de70b`; nothing was pushed. A concurrent
+Linux-compatibility lane was active in the main checkout during the port, so
+integration waited until it was clean. The four lane worktrees and their
+bridge leases remain live and must not be retired without the owner's decision.
 
 `main` had only namespace scaffolding, not working namespace isolation:
 `unshare(CLONE_NEWUSER)` returned `EINVAL` and `CLONE_NEWPID` was unsupported.
@@ -113,20 +113,19 @@ is not integrated here. Do not waive it or force-delete a branch/worktree.
 ## Related branch, not clearly bctl-owned
 
 `upstream-pidns` (`f11d2167a`, 14 commits ahead / 1634 behind `main`) is an early
-PID-namespace prototype ending in commits `tmp`/`tmp1`. `main` already carries a
-PID namespace implementation, so this appears superseded; confirm with the
-bctl owner before deleting it.
+PID-namespace prototype ending in commits `tmp`/`tmp1`. `main` now carries the
+ported PID namespace implementation, so this appears superseded; confirm with
+the bctl owner before deleting it.
 
 ## Suggested next steps for the owner
 
-1. Once the concurrent Linux-compatibility lane is idle and `main` is clean,
-   integrate `settle/bctl-lanes` into `main` locally (fast-forward or merge;
-   never force-push or reset).
-2. Run the fork's PVH build, `make ktest` and the regression suites on the
-   integrated tree, including the new seccomp, namespace and IPC fixtures.
-3. Release the bridge leases above, then retire the four lane worktrees with
+1. Run the bctl browser gate against this `main`, including the new seccomp,
+   namespace and IPC regression fixtures, before calling AS1–AS3 accepted.
+2. Release the bridge leases above, then retire the four lane worktrees with
    `worktree-retire <path> --into <integration-head>`; leave `upstream-pidns`
    alone until its superseded status is confirmed.
+3. Continue to push nothing: the fork charter forbids pushing, and the merge
+   into `main` is local only.
 
 ## Evidence commands
 
