@@ -293,4 +293,3 @@ def load_profile(profile_name: str, profiles_dir: Path, case_index: dict[str, Ca
         payload_hash=sha256_canonical(payload_identity),
         excluded=tuple(sorted(exclusions.items())),
     )
-
