@@ -80,7 +80,10 @@ def _parse_assertion(raw: Any, path: Path, case_id: str, subtest_id: str) -> Ass
     assertion_id = raw["id"]
     value_type = raw["type"]
     mode = raw.get("mode", "exact")
-    normalization = tuple(raw.get("normalization", ()))
+    normalization_raw = raw.get("normalization", [])
+    if not isinstance(normalization_raw, list):
+        raise ManifestError(f"{path}: case {case_id} assertion {assertion_id} normalization must be a list")
+    normalization = tuple(normalization_raw)
     if not assertion_id or not isinstance(assertion_id, str):
         raise ManifestError(f"{path}: case {case_id} has an empty assertion id")
     if value_type not in {"errno", "bytes", "permission"}:
