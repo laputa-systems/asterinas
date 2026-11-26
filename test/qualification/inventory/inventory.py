@@ -77,7 +77,9 @@ def inventory_dir(repo_root):
 # ---------------------------------------------------------------------------
 
 WARN_KEYWORDS = re.compile(
-    r"ignor(e|ed|es|ing)\b|not (yet )?(supported|implemented|enforced)"
+    r"ignor(e|ed|es|ing)\b|unsupported\b"
+    r"|not (yet )?(supported|implemented|enforced)"
+    r"|doesn['’]t support\b|do not support\b"
     r"|unimplement|accepted,? but",
     re.IGNORECASE,
 )
@@ -764,9 +766,67 @@ def _extract_ltp(repo_root, conf):
     blocked_dir = conf / "ltp" / "testcases" / "blocked"
     if blocked_dir.is_dir():
         for path in sorted(blocked_dir.glob("*.txt")):
-            entries.extend(
-                _simple_blocklist(repo_root, path, "ltp", f"blocked/{path.name}")
-            )
+            entries.extend(_extract_ltp_blocked(repo_root, path))
+    return entries
+
+
+def _next_ltp_case(lines, start):
+    for line in lines[start:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        inline = INLINE_REASON_RE.match(stripped)
+        return inline.group(1) if inline else stripped
+    return None
+
+
+def _extract_ltp_blocked(repo_root, path):
+    entries = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rel = path.relative_to(repo_root).as_posix()
+    section_reason = None
+    case_reason = None
+    idx = 0
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if not stripped:
+            idx += 1
+            continue
+        if stripped.startswith("#"):
+            block = []
+            while idx < len(lines) and lines[idx].strip().startswith("#"):
+                text = lines[idx].strip().lstrip("#").strip()
+                if text:
+                    block.append(text)
+                idx += 1
+            if not block:
+                continue
+            reason = " ".join(block)
+            following_case = _next_ltp_case(lines, idx)
+            if following_case and re.match(rf"^{re.escape(following_case)}\b", block[0]):
+                case_reason = reason
+            else:
+                section_reason = reason
+                case_reason = None
+            continue
+        inline = INLINE_REASON_RE.match(stripped)
+        if inline:
+            case, inline_reason = inline.group(1), inline.group(2).strip()
+        else:
+            case, inline_reason = stripped, None
+        reasons = [item for item in (section_reason, case_reason, inline_reason) if item]
+        entries.append(
+            {
+                "system": "ltp",
+                "suite": f"blocked/{path.name}",
+                "case": case,
+                "status": "blocked",
+                "reason": " ".join(reasons) or None,
+                "source": f"{rel}:{idx + 1}",
+            }
+        )
+        case_reason = None
+        idx += 1
     return entries
 
 

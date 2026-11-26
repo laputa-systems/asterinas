@@ -15340,7 +15340,7 @@
   },
   {
    "case": "fcntl22",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:28",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15348,7 +15348,7 @@
   },
   {
    "case": "fcntl22_64",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:29",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15356,7 +15356,7 @@
   },
   {
    "case": "fdatasync01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:30",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15364,7 +15364,7 @@
   },
   {
    "case": "fstatat01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:31",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15372,7 +15372,7 @@
   },
   {
    "case": "linkat01",
-   "reason": "linkat01 randomly fails on Ubuntu ARM GitHub runners but passes on x86 runners.",
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\" linkat01 randomly fails on Ubuntu ARM GitHub runners but passes on x86 runners.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:33",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15380,7 +15380,7 @@
   },
   {
    "case": "mkdirat01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:34",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15388,7 +15388,7 @@
   },
   {
    "case": "mknodat01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:35",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15396,7 +15396,7 @@
   },
   {
    "case": "mmap06",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:3",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15404,7 +15404,7 @@
   },
   {
    "case": "mmap21_01",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:4",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15412,7 +15412,7 @@
   },
   {
    "case": "mmap21_02",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:5",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15420,7 +15420,7 @@
   },
   {
    "case": "mremap01",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:6",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15428,7 +15428,7 @@
   },
   {
    "case": "msync01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:36",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15436,7 +15436,7 @@
   },
   {
    "case": "msync02",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:37",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15444,7 +15444,7 @@
   },
   {
    "case": "open07",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:7",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15452,7 +15452,7 @@
   },
   {
    "case": "read02",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:8",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15460,7 +15460,7 @@
   },
   {
    "case": "readlinkat01",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:9",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15468,7 +15468,7 @@
   },
   {
    "case": "removexattr01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:38",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15476,7 +15476,7 @@
   },
   {
    "case": "rename01",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:10",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15484,7 +15484,7 @@
   },
   {
    "case": "rename01",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:11",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15492,7 +15492,7 @@
   },
   {
    "case": "rename03",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:12",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15500,7 +15500,7 @@
   },
   {
    "case": "rename04",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:13",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15508,7 +15508,7 @@
   },
   {
    "case": "rename05",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:14",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15516,7 +15516,7 @@
   },
   {
    "case": "rename06",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:15",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15524,7 +15524,7 @@
   },
   {
    "case": "rename07",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:16",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15532,7 +15532,7 @@
   },
   {
    "case": "rename08",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:17",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15540,7 +15540,7 @@
   },
   {
    "case": "rename09",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:18",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15548,7 +15548,7 @@
   },
   {
    "case": "rename09",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:19",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15556,7 +15556,7 @@
   },
   {
    "case": "rename10",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:20",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15564,7 +15564,7 @@
   },
   {
    "case": "rename12",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:21",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15572,7 +15572,7 @@
   },
   {
    "case": "rename13",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:22",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15580,7 +15580,7 @@
   },
   {
    "case": "rename15",
-   "reason": null,
+   "reason": "The following tests will fail.",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:23",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15588,7 +15588,7 @@
   },
   {
    "case": "renameat201",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:39",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15596,7 +15596,7 @@
   },
   {
    "case": "renameat202",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:40",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15604,7 +15604,7 @@
   },
   {
    "case": "setfsuid04",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:41",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15612,7 +15612,7 @@
   },
   {
    "case": "symlink03",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:42",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -15620,7 +15620,7 @@
   },
   {
    "case": "symlinkat01",
-   "reason": null,
+   "reason": "The following tests will produce warnings. All warnings are of the same kind: \"tst_tmpdir.c:339: tst_rmdir: rmobj(/tmp/LTP_symkYW5pj) failed: Cannot open directory stream for oldfile (via fd 7); errno=20: ENOTDIR\"",
    "source": "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt:43",
    "status": "blocked",
    "suite": "blocked/aarch64.txt",
@@ -23429,10 +23429,10 @@
    "handler_source": "kernel/core/src/syscall/rt_sigpending.rs:9",
    "number": 136,
    "scml": {
-    "coverage": "full",
-    "scml_name": "sigpending",
-    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:29",
-    "via_alias": true
+    "coverage": "absent",
+    "scml_name": null,
+    "source": null,
+    "via_alias": false
    },
    "source": "kernel/core/src/syscall/arch/generic.rs:329",
    "status": "implemented",
@@ -23448,10 +23448,10 @@
    "handler_source": "kernel/core/src/syscall/rt_sigpending.rs:9",
    "number": 127,
    "scml": {
-    "coverage": "full",
-    "scml_name": "sigpending",
-    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:29",
-    "via_alias": true
+    "coverage": "absent",
+    "scml_name": null,
+    "source": null,
+    "via_alias": false
    },
    "source": "kernel/core/src/syscall/arch/x86.rs:311",
    "status": "implemented",
@@ -23543,10 +23543,10 @@
    "handler_source": "kernel/core/src/syscall/rt_sigsuspend.rs:11",
    "number": 133,
    "scml": {
-    "coverage": "full",
-    "scml_name": "sigsuspend",
-    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:32",
-    "via_alias": true
+    "coverage": "absent",
+    "scml_name": null,
+    "source": null,
+    "via_alias": false
    },
    "source": "kernel/core/src/syscall/arch/generic.rs:326",
    "status": "implemented",
@@ -23562,10 +23562,10 @@
    "handler_source": "kernel/core/src/syscall/rt_sigsuspend.rs:11",
    "number": 130,
    "scml": {
-    "coverage": "full",
-    "scml_name": "sigsuspend",
-    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:32",
-    "via_alias": true
+    "coverage": "absent",
+    "scml_name": null,
+    "source": null,
+    "via_alias": false
    },
    "source": "kernel/core/src/syscall/arch/x86.rs:313",
    "status": "implemented",
@@ -26638,14 +26638,6 @@
     [
      "setpriority",
      "set_priority"
-    ],
-    [
-     "sigpending",
-     "rt_sigpending"
-    ],
-    [
-     "sigsuspend",
-     "rt_sigsuspend"
     ],
     [
      "fstat",
@@ -29745,25 +29737,21 @@
   },
   {
    "coverage": "full",
-   "dispatch_names": [
-    "rt_sigpending"
-   ],
-   "dispatched": true,
+   "dispatch_names": [],
+   "dispatched": false,
    "file": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml",
    "name": "sigpending",
    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:29",
-   "via_alias": true
+   "via_alias": false
   },
   {
    "coverage": "full",
-   "dispatch_names": [
-    "rt_sigsuspend"
-   ],
-   "dispatched": true,
+   "dispatch_names": [],
+   "dispatched": false,
    "file": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml",
    "name": "sigsuspend",
    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:32",
-   "via_alias": true
+   "via_alias": false
   },
   {
    "coverage": "constrained",
@@ -35760,10 +35748,10 @@
    ],
    "name": "rt_sigpending",
    "scml": {
-    "coverage": "full",
-    "scml_name": "sigpending",
-    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:29",
-    "via_alias": true
+    "coverage": "absent",
+    "scml_name": null,
+    "source": null,
+    "via_alias": false
    },
    "source": "kernel/core/src/syscall/rt_sigpending.rs:9",
    "status": "implemented",
@@ -35862,10 +35850,10 @@
    ],
    "name": "rt_sigsuspend",
    "scml": {
-    "coverage": "full",
-    "scml_name": "sigsuspend",
-    "source": "book/src/kernel/linux-compatibility/syscall-flag-coverage/signals-and-timers/fully_covered.scml:32",
-    "via_alias": true
+    "coverage": "absent",
+    "scml_name": null,
+    "source": null,
+    "via_alias": false
    },
    "source": "kernel/core/src/syscall/rt_sigsuspend.rs:11",
    "status": "implemented",
@@ -38821,6 +38809,13 @@
   },
   {
    "kind": "warn",
+   "line": 67,
+   "path": "kernel/core/comps/virtio/src/device/network/device.rs",
+   "snippet": "warn!( \"unsupported device features: {:?}\", device_features.difference(supported_features) );",
+   "source": "kernel/core/comps/virtio/src/device/network/device.rs:67"
+  },
+  {
+   "kind": "warn",
    "line": 240,
    "path": "kernel/core/comps/virtio/src/device/socket/queue.rs",
    "snippet": "ostd::warn!(\"unexpected event length {}, ignoring trailing garbage\", len);",
@@ -38909,6 +38904,20 @@
    "path": "kernel/core/src/device/tty/vt/keyboard/handler.rs",
    "snippet": "ostd::warn!(\"VT keyboard action {:?} is not implemented yet\", handler);",
    "source": "kernel/core/src/device/tty/vt/keyboard/handler.rs:405"
+  },
+  {
+   "kind": "warn",
+   "line": 437,
+   "path": "kernel/core/src/device/tty/vt/keyboard/handler.rs",
+   "snippet": "ostd::warn!( \"Virtual terminal keyboard handler received unsupported event: {:?}\", event );",
+   "source": "kernel/core/src/device/tty/vt/keyboard/handler.rs:437"
+  },
+  {
+   "kind": "warn",
+   "line": 259,
+   "path": "kernel/core/src/events/epoll/file.rs",
+   "snippet": "warn!(\"{:?} contains unsupported flags\", flags);",
+   "source": "kernel/core/src/events/epoll/file.rs:259"
   },
   {
    "kind": "comment",
@@ -39009,11 +39018,32 @@
    "source": "kernel/core/src/fs/vfs/path/resolver.rs:125"
   },
   {
+   "kind": "warn",
+   "line": 202,
+   "path": "kernel/core/src/ipc/ipc_ns.rs",
+   "snippet": "warn!(\"Semaphore doesn't support permission check now\");",
+   "source": "kernel/core/src/ipc/ipc_ns.rs:202"
+  },
+  {
+   "kind": "warn",
+   "line": 200,
+   "path": "kernel/core/src/ipc/semaphore/system_v/sem.rs",
+   "snippet": "warn!(\"Semaphore operation doesn't support permission check now\");",
+   "source": "kernel/core/src/ipc/semaphore/system_v/sem.rs:200"
+  },
+  {
    "kind": "comment",
    "line": 233,
    "path": "kernel/core/src/net/iface/config.rs",
    "snippet": "instead of being ignored, and flags that user space cannot change are ignored as in Linux.",
    "source": "kernel/core/src/net/iface/config.rs:233"
+  },
+  {
+   "kind": "warn",
+   "line": 550,
+   "path": "kernel/core/src/net/socket/ip/datagram/mod.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/ip/datagram/mod.rs:550"
   },
   {
    "kind": "warn",
@@ -39024,10 +39054,31 @@
   },
   {
    "kind": "warn",
+   "line": 588,
+   "path": "kernel/core/src/net/socket/ip/datagram/mod.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/ip/datagram/mod.rs:588"
+  },
+  {
+   "kind": "warn",
+   "line": 617,
+   "path": "kernel/core/src/net/socket/ip/stream/mod.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/ip/stream/mod.rs:617"
+  },
+  {
+   "kind": "warn",
    "line": 630,
    "path": "kernel/core/src/net/socket/ip/stream/mod.rs",
    "snippet": "warn!(\"sending control message is not supported\");",
    "source": "kernel/core/src/net/socket/ip/stream/mod.rs:630"
+  },
+  {
+   "kind": "warn",
+   "line": 647,
+   "path": "kernel/core/src/net/socket/ip/stream/mod.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/ip/stream/mod.rs:647"
   },
   {
    "kind": "comment",
@@ -39042,6 +39093,34 @@
    "path": "kernel/core/src/net/socket/netlink/common/mod.rs",
    "snippet": "warn!(\"sending control message is not supported\");",
    "source": "kernel/core/src/net/socket/netlink/common/mod.rs:194"
+  },
+  {
+   "kind": "warn",
+   "line": 50,
+   "path": "kernel/core/src/net/socket/netlink/kobject_uevent/bound.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/netlink/kobject_uevent/bound.rs:50"
+  },
+  {
+   "kind": "warn",
+   "line": 81,
+   "path": "kernel/core/src/net/socket/netlink/kobject_uevent/bound.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/netlink/kobject_uevent/bound.rs:81"
+  },
+  {
+   "kind": "warn",
+   "line": 51,
+   "path": "kernel/core/src/net/socket/netlink/route/bound.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/netlink/route/bound.rs:51"
+  },
+  {
+   "kind": "warn",
+   "line": 108,
+   "path": "kernel/core/src/net/socket/netlink/route/bound.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/netlink/route/bound.rs:108"
   },
   {
    "kind": "comment",
@@ -39066,6 +39145,34 @@
   },
   {
    "kind": "warn",
+   "line": 39,
+   "path": "kernel/core/src/net/socket/unix/ctrl_msg.rs",
+   "snippet": "warn!(\"unsupported control message type in {:?}\", header);",
+   "source": "kernel/core/src/net/socket/unix/ctrl_msg.rs:39"
+  },
+  {
+   "kind": "warn",
+   "line": 54,
+   "path": "kernel/core/src/net/socket/unix/ctrl_msg.rs",
+   "snippet": "warn!(\"unsupported control message type in {:?}\", header);",
+   "source": "kernel/core/src/net/socket/unix/ctrl_msg.rs:54"
+  },
+  {
+   "kind": "warn",
+   "line": 298,
+   "path": "kernel/core/src/net/socket/unix/datagram/socket.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/unix/datagram/socket.rs:298"
+  },
+  {
+   "kind": "warn",
+   "line": 329,
+   "path": "kernel/core/src/net/socket/unix/datagram/socket.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/unix/datagram/socket.rs:329"
+  },
+  {
+   "kind": "warn",
    "line": 244,
    "path": "kernel/core/src/net/socket/unix/stream/connected.rs",
    "snippet": "warn!(\"setting MSG_TRUNC is not supported\");",
@@ -39073,10 +39180,59 @@
   },
   {
    "kind": "warn",
+   "line": 511,
+   "path": "kernel/core/src/net/socket/unix/stream/socket.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/unix/stream/socket.rs:511"
+  },
+  {
+   "kind": "warn",
+   "line": 552,
+   "path": "kernel/core/src/net/socket/unix/stream/socket.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/unix/stream/socket.rs:552"
+  },
+  {
+   "kind": "warn",
+   "line": 86,
+   "path": "kernel/core/src/net/socket/util/message_header.rs",
+   "snippet": "warn!(\"unsupported control message level in {:?}\", header);",
+   "source": "kernel/core/src/net/socket/util/message_header.rs:86"
+  },
+  {
+   "kind": "warn",
+   "line": 100,
+   "path": "kernel/core/src/net/socket/util/message_header.rs",
+   "snippet": "warn!(\"unsupported control message level in {:?}\", header);",
+   "source": "kernel/core/src/net/socket/util/message_header.rs:100"
+  },
+  {
+   "kind": "warn",
+   "line": 338,
+   "path": "kernel/core/src/net/socket/vsock/stream/mod.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/vsock/stream/mod.rs:338"
+  },
+  {
+   "kind": "warn",
    "line": 370,
    "path": "kernel/core/src/net/socket/vsock/stream/mod.rs",
    "snippet": "warn!(\"sending control message is not supported\");",
    "source": "kernel/core/src/net/socket/vsock/stream/mod.rs:370"
+  },
+  {
+   "kind": "warn",
+   "line": 385,
+   "path": "kernel/core/src/net/socket/vsock/stream/mod.rs",
+   "snippet": "warn!(\"unsupported flags: {:?}\", flags);",
+   "source": "kernel/core/src/net/socket/vsock/stream/mod.rs:385"
+  },
+  {
+   "kind": "warn",
+   "line": 272,
+   "path": "kernel/core/src/process/clone.rs",
+   "snippet": "warn!(\"contains unsupported clone flags: {:?}\", unsupported_flags);",
+   "source": "kernel/core/src/process/clone.rs:272"
   },
   {
    "kind": "warn",
@@ -39114,6 +39270,13 @@
    "source": "kernel/core/src/process/process/terminal.rs:80"
   },
   {
+   "kind": "warn",
+   "line": 331,
+   "path": "kernel/core/src/process/signal/mod.rs",
+   "snippet": "warn!(\"Unsupported signal flags: {:?}\", flags);",
+   "source": "kernel/core/src/process/signal/mod.rs:331"
+  },
+  {
    "kind": "comment",
    "line": 78,
    "path": "kernel/core/src/process/signal/sig_action.rs",
@@ -39133,6 +39296,13 @@
    "path": "kernel/core/src/process/signal/sig_queues.rs",
    "snippet": "Note that signals are ignored but not blocked may be dequeued silently.",
    "source": "kernel/core/src/process/signal/sig_queues.rs:207"
+  },
+  {
+   "kind": "warn",
+   "line": 42,
+   "path": "kernel/core/src/process/wait.rs",
+   "snippet": "warn!( \"unsupported wait options are found: {:?}\", *self - supported_args );",
+   "source": "kernel/core/src/process/wait.rs:42"
   },
   {
    "kind": "comment",

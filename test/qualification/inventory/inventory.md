@@ -17,9 +17,9 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 
 ### SCML coverage
 
-- fully covered: 165
+- fully covered: 163
 - constrained: 83
-- undocumented: 12
+- undocumented: 14
 
 ### Stub syscalls
 
@@ -36,11 +36,11 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 ## SCML rules
 
 - invocation rows: 319
-- undispatched rule names: 0
+- undispatched rule names: 2
 
 ## Unsupported-success paths
 
-- recorded sites: 84
+- recorded sites: 110
 
 - `kernel/comps/i8042/src/controller.rs:267` (comment): before the acknowledgment is ignored.
 - `kernel/core/comps/cmdline/src/dispatch.rs:158` (comment): Unrecognized module arguments are ignored.
@@ -59,6 +59,7 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/comps/time/src/rtc/cmos.rs:83` (warn): warn!("CMOS RTC reports unexpected status, ignoring this device");
 - `kernel/core/comps/virtio/src/device/block/device.rs:217` (warn): ostd::warn!( "Multi-Queue Block IO Queueing Mechanism is not supported yet; using the first queue" );
 - `kernel/core/comps/virtio/src/device/block/device.rs:457` (comment): This will be ignored if the device doesn't support the `VIRTIO_BLK_F_FLUSH` feature.
+- `kernel/core/comps/virtio/src/device/network/device.rs:67` (warn): warn!( "unsupported device features: {:?}", device_features.difference(supported_features) );
 - `kernel/core/comps/virtio/src/device/socket/queue.rs:240` (warn): ostd::warn!("unexpected event length {}, ignoring trailing garbage", len);
 - `kernel/core/comps/virtio/src/lib.rs:137` (warn): warn!("Found unimplemented device: {:?}", device_type);
 - `kernel/core/comps/virtio/src/transport/mmio/bus/arch/x86.rs:41` (warn): warn!( "Ignore MMIO command-line device at {:#x} because its range overflows", device.base() );
@@ -72,6 +73,8 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/src/device/tty/line_discipline.rs:203` (warn): warn!("non-zero VTIME is not supported");
 - `kernel/core/src/device/tty/vt/keyboard/handler.rs:154` (warn): ostd::warn!("Alt+Numpad input is not implemented yet");
 - `kernel/core/src/device/tty/vt/keyboard/handler.rs:405` (warn): ostd::warn!("VT keyboard action {:?} is not implemented yet", handler);
+- `kernel/core/src/device/tty/vt/keyboard/handler.rs:437` (warn): ostd::warn!( "Virtual terminal keyboard handler received unsupported event: {:?}", event );
+- `kernel/core/src/events/epoll/file.rs:259` (warn): warn!("{:?} contains unsupported flags", flags);
 - `kernel/core/src/fs/file/file_handle.rs:81` (comment): If the file is append-only, the `offset` will be ignored.
 - `kernel/core/src/fs/file/file_handle.rs:196` (comment): `O_ASYNC` is ignored if it is not supported. An attempt to enable
 - `kernel/core/src/fs/file/inode_handle.rs:410` (comment): If the file has the `O_APPEND` flag, the offset is ignored.
@@ -86,24 +89,47 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/src/fs/fs_impls/virtiofs/inode/metadata.rs:28` (comment): whether the reply is ignored or whether selected fields may still be
 - `kernel/core/src/fs/vfs/fs_apis/file_system.rs:56` (warn): warn!("setting file system flags is not implemented");
 - `kernel/core/src/fs/vfs/path/resolver.rs:125` (comment): Only the [`AT_EMPTY_PATH`] bit is inspected; the rest are ignored.
+- `kernel/core/src/ipc/ipc_ns.rs:202` (warn): warn!("Semaphore doesn't support permission check now");
+- `kernel/core/src/ipc/semaphore/system_v/sem.rs:200` (warn): warn!("Semaphore operation doesn't support permission check now");
 - `kernel/core/src/net/iface/config.rs:233` (comment): instead of being ignored, and flags that user space cannot change are ignored as in Linux.
+- `kernel/core/src/net/socket/ip/datagram/mod.rs:550` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/ip/datagram/mod.rs:575` (warn): warn!("sending control message is not supported");
+- `kernel/core/src/net/socket/ip/datagram/mod.rs:588` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/ip/stream/mod.rs:617` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/ip/stream/mod.rs:630` (warn): warn!("sending control message is not supported");
+- `kernel/core/src/net/socket/ip/stream/mod.rs:647` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/ip/stream/mod.rs:658` (comment): peer address is ignored for connected socket.
 - `kernel/core/src/net/socket/netlink/common/mod.rs:194` (warn): warn!("sending control message is not supported");
+- `kernel/core/src/net/socket/netlink/kobject_uevent/bound.rs:50` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/netlink/kobject_uevent/bound.rs:81` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/netlink/route/bound.rs:51` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/netlink/route/bound.rs:108` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/netlink/route/message/attr/link.rs:265` (comment): TODO: Currently, `IS_NET_BYTEORDER_MASK` and `IS_NESTED_MASK` are ignored.
 - `kernel/core/src/net/socket/netlink/route/message/attr/link.rs:324` (warn): warn!("link attribute `{:?}` is not supported", class);
 - `kernel/core/src/net/socket/packet/mod.rs:221` (warn): warn!("sending control message is not supported");
+- `kernel/core/src/net/socket/unix/ctrl_msg.rs:39` (warn): warn!("unsupported control message type in {:?}", header);
+- `kernel/core/src/net/socket/unix/ctrl_msg.rs:54` (warn): warn!("unsupported control message type in {:?}", header);
+- `kernel/core/src/net/socket/unix/datagram/socket.rs:298` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/unix/datagram/socket.rs:329` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/unix/stream/connected.rs:244` (warn): warn!("setting MSG_TRUNC is not supported");
+- `kernel/core/src/net/socket/unix/stream/socket.rs:511` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/unix/stream/socket.rs:552` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/util/message_header.rs:86` (warn): warn!("unsupported control message level in {:?}", header);
+- `kernel/core/src/net/socket/util/message_header.rs:100` (warn): warn!("unsupported control message level in {:?}", header);
+- `kernel/core/src/net/socket/vsock/stream/mod.rs:338` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/vsock/stream/mod.rs:370` (warn): warn!("sending control message is not supported");
+- `kernel/core/src/net/socket/vsock/stream/mod.rs:385` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/process/clone.rs:272` (warn): warn!("contains unsupported clone flags: {:?}", unsupported_flags);
 - `kernel/core/src/process/clone.rs:768` (warn): warn!("CLONE_SYSVSEM is not supported now");
 - `kernel/core/src/process/namespace/unshare.rs:37` (warn): warn!("unsharing System V semaphore is not supported");
 - `kernel/core/src/process/posix_thread/futex.rs:507` (comment): the bitset in `new_key` is ignored.
 - `kernel/core/src/process/posix_thread/futex.rs:533` (comment): the bitset in `new_key` is ignored.
 - `kernel/core/src/process/process/terminal.rs:80` (warn): warn!("stealing TTY from another session is not supported");
+- `kernel/core/src/process/signal/mod.rs:331` (warn): warn!("Unsupported signal flags: {:?}", flags);
 - `kernel/core/src/process/signal/sig_action.rs:78` (comment): Returns whether signals will be ignored.
 - `kernel/core/src/process/signal/sig_action.rs:80` (comment): Signals will be ignored because either
 - `kernel/core/src/process/signal/sig_queues.rs:207` (comment): Note that signals are ignored but not blocked may be dequeued silently.
+- `kernel/core/src/process/wait.rs:42` (warn): warn!( "unsupported wait options are found: {:?}", *self - supported_args );
 - `kernel/core/src/security/lsm/modules/mod.rs:16` (comment): ! the mandatory modules in that order. Unknown module names are ignored with a
 - `kernel/core/src/security/lsm/modules/mod.rs:17` (comment): ! warning, and duplicate names are ignored after their first selection.
 - `kernel/core/src/security/lsm/modules/mod.rs:20` (comment): ! exclusive module is kept, and later exclusive entries are ignored.
@@ -131,7 +157,7 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 
 - gvisor: 832 blocked cases (788 without a recorded reason)
 - kselftest: 91 blocked cases (91 without a recorded reason)
-- ltp: 1061 blocked cases (1058 without a recorded reason)
+- ltp: 1061 blocked cases (1023 without a recorded reason)
 - pjdfstest: 10 blocked cases (8 without a recorded reason)
 - xfstests: 136 blocked cases (133 without a recorded reason)
 

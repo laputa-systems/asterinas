@@ -16,8 +16,6 @@
     ["sendfile", "sendfile64"],
     ["getpriority", "get_priority"],
     ["setpriority", "set_priority"],
-    ["sigpending", "rt_sigpending"],
-    ["sigsuspend", "rt_sigsuspend"],
     ["fstat", "newfstat"],
     ["uname", "newuname"],
     ["newfstatat", "fstatat"]

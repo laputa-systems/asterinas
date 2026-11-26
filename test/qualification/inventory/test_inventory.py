@@ -278,6 +278,22 @@ fn write_weight() {
 }
 """
 
+PROCESS_CLONE = """// SPDX-License-Identifier: MPL-2.0
+
+fn check_unsupported_flags() -> Result<()> {
+    warn!("contains unsupported clone flags: {:?}", unsupported_flags);
+    Ok(())
+}
+"""
+
+IPC_NS = """// SPDX-License-Identifier: MPL-2.0
+
+fn validate_sem_set() -> Result<()> {
+    warn!("Semaphore doesn't support permission check now");
+    Ok(())
+}
+"""
+
 
 def build_repo(root):
     """Create a synthetic repository tree under `root`."""
@@ -313,6 +329,11 @@ def build_repo(root):
     (root / "kernel/core/src/fs/fs_impls/cgroupfs/controller/cpu.rs").write_text(
         CGROUP
     )
+
+    (root / "kernel/core/src/process").mkdir(parents=True)
+    (root / "kernel/core/src/process/clone.rs").write_text(PROCESS_CLONE)
+    (root / "kernel/core/src/ipc").mkdir(parents=True)
+    (root / "kernel/core/src/ipc/ipc_ns.rs").write_text(IPC_NS)
 
     conf = root / "test/initramfs/src/conformance"
     (conf / "gvisor/blocklists").mkdir(parents=True)
@@ -351,6 +372,9 @@ def build_repo(root):
         "clone10\n"
         "mmap06\n"
         "\n"
+        "# The following tests will produce warnings. All warnings are of the same kind:\n"
+        "# warning detail\n"
+        "fallocate01\n"
         "# linkat01 randomly fails on Ubuntu ARM GitHub runners.\n"
         "linkat01\n"
     )
@@ -752,13 +776,20 @@ class InventoryTest(unittest.TestCase):
             {"renameat201", "renameat202"},
         )
         aarch64 = {e["case"]: e for e in suites["blocked/aarch64.txt"]}
-        self.assertEqual(set(aarch64), {"clone10", "mmap06", "linkat01"})
+        self.assertEqual(set(aarch64), {"clone10", "mmap06", "fallocate01", "linkat01"})
         self.assertEqual(
             aarch64["clone10"]["reason"], "The following tests will fail."
         )
         self.assertEqual(
+            aarch64["mmap06"]["reason"], "The following tests will fail."
+        )
+        self.assertEqual(
+            aarch64["fallocate01"]["reason"],
+            "The following tests will produce warnings. All warnings are of the same kind: warning detail",
+        )
+        self.assertEqual(
             aarch64["linkat01"]["reason"],
-            "linkat01 randomly fails on Ubuntu ARM GitHub runners.",
+            "The following tests will produce warnings. All warnings are of the same kind: warning detail linkat01 randomly fails on Ubuntu ARM GitHub runners.",
         )
 
     def test_omitted_ltp_blocked_input_detected(self):
@@ -806,6 +837,15 @@ class InventoryTest(unittest.TestCase):
         self.assertIn("writeback errors are dropped", annotated[0]["snippet"])
         for p in paths:
             self.assertTrue(p["source"])
+
+    def test_bare_unsupported_warning_scan(self):
+        self.generate()
+        inv = self.read_inventory()
+        paths = inv["unsupported_success_paths"]
+        clone = [p for p in paths if p["path"] == "kernel/core/src/process/clone.rs"]
+        ipc = [p for p in paths if p["path"] == "kernel/core/src/ipc/ipc_ns.rs"]
+        self.assertTrue(any(p["kind"] == "warn" for p in clone))
+        self.assertTrue(any(p["kind"] == "warn" for p in ipc))
 
     def test_comment_noise_not_promoted_to_syscall_status(self):
         """A heuristic comment-kind site in a file does not by itself mark
