@@ -1,0 +1,15 @@
+{
+  "syscalls": {
+    "fadvise64": {
+      "status": "stub",
+      "reason": "every POSIX_FADV_* advice variant is warned away as ignored and the syscall always returns success without any effect; see kernel/core/src/syscall/fadvise64.rs"
+    }
+  },
+  "unsupported_success_paths": [
+    {
+      "path": "kernel/core/src/vm/page_cache/mod.rs",
+      "match": "Record the writeback error",
+      "reason": "writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)"
+    }
+  ]
+}
