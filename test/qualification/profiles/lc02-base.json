@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "name": "lc02-base",
+  "inherits": [],
+  "cases": ["core.echo-probe"],
+  "excludes": []
+}

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "core.echo-probe",
+      "contract_revision": "lc02-fixture-r1",
+      "area": "core",
+      "item": "LC-02",
+      "source": {
+        "upstream": "asterinas-qualification-fixture",
+        "revision": "fixture-r1",
+        "license": "MPL-2.0",
+        "patch_hash": "0"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": ["host"],
+        "backends": ["host-process"],
+        "privileges": [],
+        "required_config": {}
+      },
+      "procedure": "Emit one bounded probe record and compare errno, bytes, and permission decision.",
+      "expected_subtests": [
+        {
+          "id": "echo",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 0,
+              "mode": "exact"
+            },
+            {
+              "id": "bytes",
+              "type": "bytes",
+              "expected": "aGVsbG8K",
+              "mode": "exact"
+            },
+            {
+              "id": "permission",
+              "type": "permission",
+              "expected": "allow",
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "mode": "exact",
+        "ignored_fields": []
+      },
+      "deadline_seconds": 2,
+      "budget_bytes": 4096,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": ["stdout.log"],
+      "validators": [],
+      "replay": "python3 test/qualification/run.py selftest",
+      "payload": {
+        "argv": ["echo", "hello"],
+        "input_hash": "fixture"
+      }
+    }
+  ]
+}

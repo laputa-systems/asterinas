@@ -1,0 +1,496 @@
+import copy
+import errno
+import json
+import sys
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+from .accounting import CaseOutcome, RoleResult, reconcile
+from .compare import compare_value, verify_comparison_claim
+from .errors import EvidenceError, ManifestError
+from .evidence import EvidenceBundle
+from .gtest import parse_gtest_report
+from .manifest import Selection, load_case_index, load_profile
+from .results import ResultContext, ingest_result_stream, make_result_line
+from .supervisor import Supervisor, is_full_disk_error
+
+
+@dataclass
+class ControlResult:
+    name: str
+    detected: bool
+    detail: str
+
+
+def _selection(repo: Path) -> Selection:
+    qualification = repo / "test" / "qualification"
+    case_index = load_case_index([qualification / "contracts" / "core" / "echo.json"])
+    return load_profile("lc02-selftest", qualification / "profiles", case_index)
+
+
+def _valid_records(selection: Selection, run_id: str) -> list[dict]:
+    now = time.time()
+    case_id = selection.case_ids[0]
+    common = {
+        "case_id": case_id,
+        "manifest_hash": selection.manifest_hash,
+        "payload_hash": selection.payload_hash,
+    }
+    return [
+        {
+            **common,
+            "sequence": 1,
+            "kind": "start",
+            "emitted_at": now,
+        },
+        {
+            **common,
+            "sequence": 2,
+            "kind": "subtest",
+            "subtest": "echo",
+            "status": "pass",
+            "emitted_at": now,
+            "assertions": [
+                {"id": "errno", "value": 0},
+                {"id": "bytes", "value": "aGVsbG8K"},
+                {"id": "permission", "value": "allow"},
+            ],
+        },
+        {
+            **common,
+            "sequence": 3,
+            "kind": "final",
+            "status": "pass",
+            "emitted_at": now,
+            "subtests_completed": 1,
+            "assertions_completed": 3,
+        },
+    ]
+
+
+def _stream(run_id: str, nonce: str, records: list[dict]) -> str:
+    return "".join(make_result_line(run_id, nonce, record) for record in records)
+
+
+def _context(selection: Selection, run_id: str, nonce: str) -> ResultContext:
+    return ResultContext(
+        run_id=run_id,
+        nonce=nonce,
+        manifest_hash=selection.manifest_hash,
+        payload_hash=selection.payload_hash,
+        cases=selection.case_map,
+        max_age_seconds=300,
+        now=time.time(),
+    )
+
+
+def _first_matching(categories: list[str], category: str) -> str:
+    for item in categories:
+        if item.startswith(category + ":"):
+            return item
+    return "no diagnostic"
+
+
+def selftest_main() -> int:
+    repo = Path(__file__).resolve().parents[3]
+    qualification_root = repo / "target" / "qualification"
+    bundle = EvidenceBundle.create(qualification_root)
+    run_id = bundle.run_id
+    nonce = "selftest-nonce"
+    controls: list[ControlResult] = []
+    checks: list[str] = []
+    internal_failures: list[str] = []
+
+    print(f"LC-02 selftest evidence: {bundle.root}")
+
+    try:
+        selection = _selection(repo)
+    except Exception as error:
+        print(f"INTERNAL-FAIL manifest fixture: {error}")
+        return 2
+
+    def evaluate(name: str, function: Callable[[], tuple[bool, str]]) -> None:
+        try:
+            detected, detail = function()
+        except Exception as error:
+            detected = False
+            detail = f"control harness raised {type(error).__name__}: {error}"
+        controls.append(ControlResult(name, detected, detail))
+
+    def ingestion_control(category: str, mutate: Callable[[list[dict], str], str]) -> tuple[bool, str]:
+        records = copy.deepcopy(valid_records)
+        text = mutate(records, _stream(run_id, nonce, records))
+        ingestion = ingest_result_stream(text, _context(selection, run_id, nonce))
+        rendered = ingestion.rendered()
+        return ingestion.has(category), _first_matching(rendered, category) if ingestion.has(category) else "; ".join(rendered) or "no diagnostics"
+
+    valid_records = _valid_records(selection, run_id)
+    valid_ingestion = ingest_result_stream(_stream(run_id, nonce, valid_records), _context(selection, run_id, nonce))
+    if valid_ingestion.diagnostics:
+        internal_failures.append("valid result fixture produced diagnostics: " + "; ".join(valid_ingestion.rendered()))
+    else:
+        checks.append("run-bound positive result fixture accepted")
+
+    outcomes = [
+        CaseOutcome(
+            selection.case_ids[0],
+            "PASS",
+            (
+                RoleResult("candidate", "pass"),
+                RoleResult("reference", "pass"),
+                RoleResult("comparator", "pass"),
+                RoleResult("validator", "pass"),
+            ),
+        )
+    ]
+    accounting = reconcile(selection.case_ids, outcomes)
+    if accounting.balanced and not accounting.diagnostics and accounting.counts["PASS"] == 1:
+        checks.append("terminal accounting balanced with distinct roles")
+    else:
+        internal_failures.append("positive terminal accounting failed")
+
+    normalized_match = compare_value("bytes", "aGVsbG8K", b"hello\r\n", "normalized", ("unicode-newlines",)).matched
+    invariant_match = (
+        compare_value("errno", {"nonzero": True}, 1, "invariant").matched
+        and compare_value("bytes", {"length": 6}, b"hello\n", "invariant").matched
+        and compare_value("permission", {"one_of": ["allow", "deny"]}, "deny", "invariant").matched
+    )
+    if normalized_match and invariant_match:
+        checks.append("normalized and invariant comparator primitives match valid values")
+    else:
+        internal_failures.append("normalized or invariant comparator positive check failed")
+
+    validation_dir = bundle.work_dir / "validation-profiles"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    case_index = load_case_index([repo / "test" / "qualification" / "contracts" / "core" / "echo.json"])
+    for profile_name, cases in (("unknown-case-profile", ["core.missing"]), ("duplicate-case-profile", [selection.case_ids[0], selection.case_ids[0]])):
+        (validation_dir / f"{profile_name}.json").write_text(
+            json.dumps({"schema": 1, "name": profile_name, "inherits": [], "cases": cases, "excludes": []}),
+            encoding="utf-8",
+        )
+    try:
+        load_profile("unknown-case-profile", validation_dir, case_index)
+        internal_failures.append("manifest loader accepted an unknown case")
+    except ManifestError:
+        pass
+    try:
+        load_profile("duplicate-case-profile", validation_dir, case_index)
+        internal_failures.append("manifest loader accepted a duplicate case")
+    except ManifestError:
+        pass
+    if not any(item.startswith("manifest loader accepted") for item in internal_failures):
+        checks.append("manifest loading validates inherited selection, unknown cases, and duplicate cases")
+
+    def empty_selection() -> tuple[bool, str]:
+        profile_dir = bundle.work_dir / "empty-profiles"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        (profile_dir / "empty.json").write_text(
+            json.dumps({"schema": 1, "name": "empty", "inherits": [], "cases": [], "excludes": []}),
+            encoding="utf-8",
+        )
+        try:
+            case_index = load_case_index([repo / "test" / "qualification" / "contracts" / "core" / "echo.json"])
+            load_profile("empty", profile_dir, case_index)
+        except ManifestError as error:
+            return "empty selection" in str(error), str(error)
+        return False, "empty profile was accepted"
+
+    evaluate("empty-selection", empty_selection)
+
+    def zero_gtests() -> tuple[bool, str]:
+        report = parse_gtest_report(b'<testsuites tests="0" failures="0" skipped="0"><testsuite name="empty" tests="0" failures="0" skipped="0"/></testsuites>')
+        return "zero-matching-gtests" in report.diagnostics, ", ".join(report.diagnostics) or "no diagnostics"
+
+    evaluate("gtest-zero-matching", zero_gtests)
+
+    def all_skipped() -> tuple[bool, str]:
+        report = parse_gtest_report(
+            b'<testsuites tests="2" failures="0" skipped="2"><testsuite name="skip" tests="2" failures="0" skipped="2">'
+            b'<testcase name="a" status="skipped"/><testcase name="b" status="skipped"/></testsuite></testsuites>'
+        )
+        return "all-gtests-skipped" in report.diagnostics, ", ".join(report.diagnostics) or "no diagnostics"
+
+    evaluate("gtest-all-skipped", all_skipped)
+
+    evaluate(
+        "unknown-case",
+        lambda: ingestion_control(
+            "unknown-case",
+            lambda records, text: text + make_result_line(
+                run_id,
+                nonce,
+                {
+                    "case_id": "core.unknown",
+                    "sequence": 4,
+                    "kind": "final",
+                    "status": "pass",
+                    "manifest_hash": selection.manifest_hash,
+                    "payload_hash": selection.payload_hash,
+                    "emitted_at": time.time(),
+                    "subtests_completed": 0,
+                    "assertions_completed": 0,
+                },
+            ),
+        ),
+    )
+
+    def duplicate_case() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            duplicate = copy.deepcopy(records[-1])
+            duplicate["sequence"] = 4
+            return text + make_result_line(run_id, nonce, duplicate)
+
+        return ingestion_control("duplicate-case-record", mutate)
+
+    evaluate("duplicate-case", duplicate_case)
+
+    evaluate(
+        "missing-subtest",
+        lambda: ingestion_control(
+            "missing-subtest",
+            lambda records, text: _stream(run_id, nonce, [record for record in records if record["kind"] != "subtest"]),
+        ),
+    )
+
+    def missing_assertion() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            for record in records:
+                if record["kind"] == "subtest":
+                    record["assertions"] = [item for item in record["assertions"] if item["id"] != "permission"]
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("missing-assertion", mutate)
+
+    evaluate("missing-assertion", missing_assertion)
+
+    evaluate(
+        "missing-final-record",
+        lambda: ingestion_control(
+            "missing-final-record",
+            lambda records, text: _stream(run_id, nonce, [record for record in records if record["kind"] != "final"]),
+        ),
+    )
+
+    evaluate(
+        "malformed-output",
+        lambda: ingestion_control("malformed-output", lambda records, text: text + f"QUAL {run_id} {nonce} {{bad json}}\n"),
+    )
+    evaluate(
+        "truncated-output",
+        lambda: ingestion_control("truncated-output", lambda records, text: text + f"QUAL {run_id} {nonce} {{\"case_id\":\"core.echo-probe\"," + "\n"),
+    )
+
+    def stale_log() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            for record in records:
+                if record["kind"] == "final":
+                    record["emitted_at"] = time.time() - 3600
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("stale-log", mutate)
+
+    evaluate("stale-log", stale_log)
+    evaluate(
+        "wrong-run-id",
+        lambda: ingestion_control("wrong-run-id", lambda records, text: text.replace(f"QUAL {run_id}", "QUAL wrong-run", 1)),
+    )
+
+    def wrong_payload_hash() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[0]["payload_hash"] = "0" * 64
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("wrong-payload-hash", mutate)
+
+    evaluate("wrong-payload-hash", wrong_payload_hash)
+
+    def wrong_manifest_hash() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[0]["manifest_hash"] = "0" * 64
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("wrong-manifest-hash", mutate)
+
+    evaluate("wrong-manifest-hash", wrong_manifest_hash)
+
+    evaluate(
+        "wrong-errno",
+        lambda: (
+            not compare_value("errno", 0, 1).matched,
+            compare_value("errno", 0, 1).detail,
+        ),
+    )
+    evaluate(
+        "wrong-bytes",
+        lambda: (
+            not compare_value("bytes", "aGVsbG8K", "Z29vZGJ5ZQo=").matched,
+            compare_value("bytes", "aGVsbG8K", "Z29vZGJ5ZQo=").detail,
+        ),
+    )
+    evaluate(
+        "wrong-permission-decision",
+        lambda: (
+            not compare_value("permission", "allow", "deny").matched,
+            compare_value("permission", "allow", "deny").detail,
+        ),
+    )
+    evaluate(
+        "wrong-comparator-result",
+        lambda: (
+            not verify_comparison_claim("errno", 0, 1, claimed_match=True),
+            "claimed match is contradicted by recomputation",
+        ),
+    )
+
+    supervisor = Supervisor()
+    python = sys.executable
+    budget_result = supervisor.run([python, "-c", "print('x' * 100)"], timeout=3, output_budget=10)
+    if budget_result.output_truncated and len(budget_result.stdout) <= 10:
+        checks.append("supervisor output byte budget bounds captured output")
+    else:
+        internal_failures.append("supervisor output byte budget positive check failed")
+
+    def guest_panic() -> tuple[bool, str]:
+        result = supervisor.run([python, "-c", "print('kernel panic: injected control')"], timeout=3, output_budget=4096)
+        return result.outcome == "panic", f"outcome={result.outcome}"
+
+    evaluate("guest-panic", guest_panic)
+
+    def guest_hang() -> tuple[bool, str]:
+        code = "import time; print('HANG-MARKER', flush=True); time.sleep(30)"
+
+        def hook(stream: str, chunk: bytes) -> str | None:
+            if b"HANG-MARKER" in chunk:
+                return "hang"
+            return None
+
+        result = supervisor.run([python, "-c", code], timeout=5, output_budget=4096, event_hook=hook)
+        return result.outcome == "hang", f"outcome={result.outcome}"
+
+    evaluate("guest-hang", guest_hang)
+
+    def host_timeout() -> tuple[bool, str]:
+        result = supervisor.run([python, "-c", "import time; time.sleep(5)"], timeout=0.2, output_budget=4096)
+        return result.outcome == "timeout", f"outcome={result.outcome}"
+
+    evaluate("host-timeout", host_timeout)
+
+    def orphaned_child() -> tuple[bool, str]:
+        child = "import time; time.sleep(30)"
+        code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}]); print('orphan parent exiting', flush=True)"
+        result = supervisor.run([python, "-c", code], timeout=5, output_budget=4096)
+        return result.orphaned, f"orphaned={result.orphaned} outcome={result.outcome}"
+
+    evaluate("orphaned-child", orphaned_child)
+
+    def interrupted_cleanup() -> tuple[bool, str]:
+        def cleanup() -> None:
+            raise RuntimeError("injected cleanup interruption")
+
+        result = supervisor.run([python, "-c", "print('cleanup control')"], timeout=3, output_budget=4096, cleanup=cleanup)
+        return bool(result.cleanup_errors), "; ".join(result.cleanup_errors) or "no cleanup error"
+
+    evaluate("interrupted-cleanup", interrupted_cleanup)
+
+    def full_output_disk() -> tuple[bool, str]:
+        class FullDisk:
+            def write(self, data: bytes) -> int:
+                raise OSError(errno.ENOSPC, "No space left on device")
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        result = supervisor.run(
+            [python, "-c", "print('full disk control')"],
+            timeout=3,
+            output_budget=4096,
+            log_opener=lambda: FullDisk(),
+        )
+        return is_full_disk_error(result.log_errors), "; ".join(result.log_errors) or "no log error"
+
+    evaluate("full-output-disk", full_output_disk)
+
+    def logging_failure() -> tuple[bool, str]:
+        missing_parent = bundle.work_dir / "missing-log-parent" / "supervisor.log"
+        result = supervisor.run(
+            [python, "-c", "print('logging control')"],
+            timeout=3,
+            output_budget=4096,
+            log_path=missing_parent,
+        )
+        return bool(result.log_errors) and not is_full_disk_error(result.log_errors), "; ".join(result.log_errors) or "no log error"
+
+    evaluate("logging-failure", logging_failure)
+
+    def missing_artifact() -> tuple[bool, str]:
+        control_bundle = EvidenceBundle.create(qualification_root)
+        control_bundle.register_artifact("missing.bin", b"missing artifact control")
+        path = control_bundle.root / control_bundle.registry["missing.bin"]["path"]
+        path.unlink()
+        diagnostics = control_bundle.validate_artifacts()
+        return any(item.category == "missing-artifact" for item in diagnostics), "; ".join(item.render() for item in diagnostics) or "no diagnostics"
+
+    evaluate("missing-artifact", missing_artifact)
+
+    def checksum_mismatch() -> tuple[bool, str]:
+        control_bundle = EvidenceBundle.create(qualification_root)
+        control_bundle.register_artifact("corrupt.bin", b"original bytes")
+        path = control_bundle.root / control_bundle.registry["corrupt.bin"]["path"]
+        path.write_bytes(b"corrupted bytes")
+        diagnostics = control_bundle.validate_artifacts()
+        return any(item.category == "checksum-mismatch" for item in diagnostics), "; ".join(item.render() for item in diagnostics) or "no diagnostics"
+
+    evaluate("checksum-mismatch", checksum_mismatch)
+
+    bundle.register_artifact("stdout.log", b"lc02 selftest\n")
+
+    detected_count = sum(1 for control in controls if control.detected)
+    for control in controls:
+        state = "DETECTED" if control.detected else "NOT-DETECTED"
+        print(f"{state} {control.name}: {control.detail}")
+
+    all_detected = detected_count == len(controls)
+    report = {
+        "run_id": run_id,
+        "profile": selection.profile_name,
+        "manifest_hash": selection.manifest_hash,
+        "payload_hash": selection.payload_hash,
+        "selected_count": len(selection.case_ids),
+        "dispositions": dict(accounting.counts),
+        "controls": {control.name: {"detected": control.detected, "detail": control.detail} for control in controls},
+        "controls_detected": detected_count,
+        "controls_total": len(controls),
+        "internal_failures": internal_failures,
+    }
+
+    try:
+        bundle.publish_report(report)
+        try:
+            bundle.publish_report(report)
+            internal_failures.append("immutable report accepted a second publication")
+        except EvidenceError:
+            checks.append("atomic report publication is immutable")
+        try:
+            EvidenceBundle.create(qualification_root, run_id)
+            internal_failures.append("run directory reuse was accepted")
+        except EvidenceError:
+            checks.append("rerun with the same run id is refused")
+    except Exception as error:
+        internal_failures.append(f"evidence publication failed: {error}")
+
+    teardown_errors = bundle.teardown()
+    if teardown_errors:
+        internal_failures.extend("evidence teardown: " + item for item in teardown_errors)
+
+    for failure in internal_failures:
+        print(f"INTERNAL-FAIL {failure}")
+    for check in checks:
+        print(f"CHECK {check}")
+
+    print(f"SELFTEST RESULT: {detected_count}/{len(controls)} controls detected")
+    return 0 if all_detected and not internal_failures else 1

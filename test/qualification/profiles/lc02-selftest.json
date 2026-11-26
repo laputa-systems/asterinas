@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "name": "lc02-selftest",
+  "inherits": ["lc02-base"],
+  "cases": [],
+  "excludes": []
+}
