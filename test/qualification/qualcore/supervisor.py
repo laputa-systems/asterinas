@@ -1,5 +1,6 @@
 import errno
 import os
+import select
 import signal
 import subprocess
 import threading
@@ -28,20 +29,21 @@ class SupervisedResult:
     orphaned: bool
     duration_seconds: float
     cleanup_errors: list[str] = field(default_factory=list)
-    log_errors: list[str] = field(default_factory=list)
+    log_errors: list[OSError] = field(default_factory=list)
     hook_errors: list[str] = field(default_factory=list)
+    reader_errors: list[str] = field(default_factory=list)
 
 
 class _LogSink:
     def __init__(self, writer: BinaryIO | None) -> None:
         self.writer = writer
         self.lock = threading.Lock()
-        self.errors: list[str] = []
+        self.errors: list[OSError] = []
         self.write_failed = False
 
     def record_error(self, error: OSError) -> None:
         if len(self.errors) < 4:
-            self.errors.append(f"errno={error.errno} {error.strerror or error}")
+            self.errors.append(error)
 
     def write(self, data: bytes) -> None:
         if self.writer is None or self.write_failed:
@@ -67,31 +69,40 @@ class _LogSink:
 
 
 class _PipeReader(threading.Thread):
-    def __init__(self, name: str, pipe: BinaryIO, budget: int, callback: Callable[[str, bytes], None]) -> None:
+    def __init__(self, name: str, pipe: BinaryIO, budget: int, callback: Callable[[str, bytes], None], stop_event: threading.Event) -> None:
         super().__init__(daemon=True)
         self.stream_name = name
         self.pipe = pipe
         self.budget = budget
         self.callback = callback
+        self.stop_event = stop_event
         self.chunks: list[bytes] = []
         self.total_bytes = 0
         self.captured_bytes = 0
         self.truncated = False
+        self.error: str | None = None
 
     def run(self) -> None:
-        while True:
-            chunk = self.pipe.read1(1024)
-            if not chunk:
-                return
-            self.total_bytes += len(chunk)
-            self.callback(self.stream_name, chunk)
-            remaining = self.budget - self.captured_bytes
-            if remaining > 0:
-                retained = chunk[:remaining]
-                self.chunks.append(retained)
-                self.captured_bytes += len(retained)
-            if len(chunk) > max(0, remaining):
-                self.truncated = True
+        descriptor = self.pipe.fileno()
+        try:
+            while not self.stop_event.is_set():
+                readable, _, _ = select.select([descriptor], [], [], 0.05)
+                if not readable:
+                    continue
+                chunk = os.read(descriptor, 1024)
+                if not chunk:
+                    return
+                self.total_bytes += len(chunk)
+                remaining = self.budget - self.captured_bytes
+                retained = chunk[:max(0, remaining)]
+                if retained:
+                    self.callback(self.stream_name, retained)
+                    self.chunks.append(retained)
+                    self.captured_bytes += len(retained)
+                if len(chunk) > len(retained):
+                    self.truncated = True
+        except Exception as error:
+            self.error = f"{type(error).__name__}: {error}"
 
     @property
     def data(self) -> bytes:
@@ -125,11 +136,12 @@ def _stop_group(process: subprocess.Popen, pgid: int) -> None:
         _signal_group(process, pgid, signal.SIGKILL)
 
 
-def _format_open_error(error: OSError) -> str:
-    return f"errno={error.errno} {error.strerror or error}"
-
 
 class Supervisor:
+    def __init__(self) -> None:
+        if not hasattr(os, "killpg") or not hasattr(signal, "SIGKILL"):
+            raise RuntimeError("Supervisor requires POSIX process groups")
+
     def run(
         self,
         argv: list[str] | tuple[str, ...],
@@ -153,17 +165,17 @@ class Supervisor:
         started = time.monotonic()
         command = tuple(str(item) for item in argv)
         writer = None
-        open_errors: list[str] = []
+        open_errors: list[OSError] = []
         if log_opener is not None:
             try:
                 writer = log_opener()
             except OSError as error:
-                open_errors.append(_format_open_error(error))
+                open_errors.append(error)
         elif log_path is not None:
             try:
                 writer = open(log_path, "wb")
             except OSError as error:
-                open_errors.append(_format_open_error(error))
+                open_errors.append(error)
         sink = _LogSink(writer)
         sink.errors.extend(open_errors)
 
@@ -230,9 +242,14 @@ class Supervisor:
                     if event in {"panic", "hang"} and not stop_reason:
                         stop_reason.append(event)
 
+        stdout_pipe = process.stdout
+        stderr_pipe = process.stderr
+        if stdout_pipe is None or stderr_pipe is None:
+            raise RuntimeError("supervised process pipes were not created")
+        stop_readers = threading.Event()
         readers = [
-            _PipeReader("stdout", process.stdout, output_budget, observe),
-            _PipeReader("stderr", process.stderr, output_budget, observe),
+            _PipeReader("stdout", stdout_pipe, output_budget, observe, stop_readers),
+            _PipeReader("stderr", stderr_pipe, output_budget, observe, stop_readers),
         ]
         for reader in readers:
             reader.start()
@@ -276,16 +293,30 @@ class Supervisor:
                 reader.join(timeout=1.0)
             if any(reader.is_alive() for reader in readers):
                 _signal_group(process, pgid, signal.SIGKILL)
+                stop_readers.set()
                 for reader in readers:
                     reader.join(timeout=1.0)
+            reader_errors = [f"{reader.stream_name}: {reader.error}" for reader in readers if reader.error is not None]
             if outcome == "exit" and stop_reason:
                 outcome = stop_reason[0]
+            if outcome == "exit" and reader_errors:
+                outcome = "harness-error"
         except BaseException:
             _stop_group(process, pgid)
             process.wait()
             raise
         finally:
+            stop_readers.set()
+            for reader in readers:
+                reader.join(timeout=0.2)
             cleanup_errors: list[str] = []
+            for pipe in (process.stdout, process.stderr):
+                if pipe is None:
+                    continue
+                try:
+                    pipe.close()
+                except OSError as error:
+                    cleanup_errors.append(f"pipe close failed: {error}")
             if cleanup is not None:
                 try:
                     cleanup()
@@ -308,9 +339,9 @@ class Supervisor:
             cleanup_errors=cleanup_errors,
             log_errors=sink.errors,
             hook_errors=hook_errors,
+            reader_errors=reader_errors,
         )
 
 
-def is_full_disk_error(errors: list[str]) -> bool:
-    needle = f"errno={errno.ENOSPC}"
-    return any(item.startswith(needle) for item in errors)
+def is_full_disk_error(errors: list[OSError]) -> bool:
+    return any(error.errno == errno.ENOSPC for error in errors)

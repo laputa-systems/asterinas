@@ -93,6 +93,10 @@ def _first_matching(categories: list[str], category: str) -> str:
     return "no diagnostic"
 
 
+def _render_os_errors(errors: list[OSError]) -> str:
+    return "; ".join(f"errno={error.errno} {error.strerror or error}" for error in errors)
+
+
 def selftest_main() -> int:
     repo = Path(__file__).resolve().parents[3]
     qualification_root = repo / "target" / "qualification"
@@ -411,7 +415,7 @@ def selftest_main() -> int:
             output_budget=4096,
             log_opener=lambda: FullDisk(),
         )
-        return is_full_disk_error(result.log_errors), "; ".join(result.log_errors) or "no log error"
+        return is_full_disk_error(result.log_errors), _render_os_errors(result.log_errors) or "no log error"
 
     evaluate("full-output-disk", full_output_disk)
 
@@ -423,7 +427,7 @@ def selftest_main() -> int:
             output_budget=4096,
             log_path=missing_parent,
         )
-        return bool(result.log_errors) and not is_full_disk_error(result.log_errors), "; ".join(result.log_errors) or "no log error"
+        return bool(result.log_errors) and not is_full_disk_error(result.log_errors), _render_os_errors(result.log_errors) or "no log error"
 
     evaluate("logging-failure", logging_failure)
 
