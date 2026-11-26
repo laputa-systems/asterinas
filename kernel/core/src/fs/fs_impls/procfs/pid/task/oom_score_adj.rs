@@ -33,9 +33,7 @@ impl ProcFileOps for OomScoreAdjFileOps {
     fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         let mut printer = VmPrinter::new_skip(writer, offset);
 
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
         let oom_score_adj = process.oom_score_adj().load(Ordering::Relaxed);
         writeln!(printer, "{}", oom_score_adj)?;
 
@@ -54,9 +52,7 @@ impl ProcFileOps for OomScoreAdjFileOps {
         // does not have the `SYS_RESOURCE` capability, we should fail with
         // `EACCES`. See
         // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L1152>.
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
         process.oom_score_adj().store(val as i16, Ordering::Relaxed);
 
         Ok(read_bytes)

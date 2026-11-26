@@ -96,7 +96,6 @@ Supported functionality in SCML:
 
 Unsupported flags:
 * `CLONE_NEWNET`
-* `CLONE_NEWPID`
 * `CLONE_NEWTIME`
 * `CLONE_NEWUSER`
 
@@ -116,7 +115,6 @@ Supported functionality in SCML:
 
 Unsupported flags:
 * `CLONE_NEWNET`
-* `CLONE_NEWPID`
 * `CLONE_NEWTIME`
 * `CLONE_NEWUSER`
 

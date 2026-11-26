@@ -3,7 +3,7 @@
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{Pid, pid_table},
+    process::Pid,
 };
 
 pub(super) fn sys_getsid(pid: Pid, ctx: &Context) -> Result<SyscallReturn> {
@@ -17,13 +17,17 @@ pub(super) fn sys_getsid(pid: Pid, ctx: &Context) -> Result<SyscallReturn> {
         return Ok(SyscallReturn::Return(ctx.process.sid() as _));
     }
 
-    let process = pid_table::pid_table_mut()
-        .get_process(pid)
+    let process = ctx
+        .process
+        .active_pid_ns()
+        .lookup_process(pid)
         .ok_or_else(|| errno!(ESRCH, "the process to get the SID does not exist"))?;
 
     // The man pages allow the implementation to return `EPERM` if `process` is in a different
     // session than the current process. Linux does not perform this check by default, but some
     // strict security policies (e.g. SELinux) may do so.
 
-    Ok(SyscallReturn::Return(process.sid() as _))
+    Ok(SyscallReturn::Return(
+        process.sid_in(ctx.process.active_pid_ns()).unwrap_or(0) as _,
+    ))
 }

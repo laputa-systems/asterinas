@@ -38,10 +38,11 @@
  *     but noted here for future reference).
  * `clone_flags` lists the corresponding CLONE_NEW* flag for each entry.
  */
-static const char *ns_files[] = { "cgroup", "ipc", "mnt", "user", "uts" };
-static const char *ns_names[] = { "cgroup", "ipc", "mnt", "user", "uts" };
+static const char *ns_files[] = { "cgroup", "ipc", "mnt", "pid", "user", "uts" };
+static const char *ns_names[] = { "cgroup", "ipc", "mnt", "pid", "user", "uts" };
 static const int clone_flags[] = {
-	CLONE_NEWCGROUP, CLONE_NEWIPC, CLONE_NEWNS, CLONE_NEWUSER, CLONE_NEWUTS,
+	CLONE_NEWCGROUP, CLONE_NEWIPC, CLONE_NEWNS, CLONE_NEWPID, CLONE_NEWUSER,
+	CLONE_NEWUTS,
 };
 static const size_t ns_count = sizeof(ns_files) / sizeof(ns_files[0]);
 
@@ -197,6 +198,7 @@ FN_TEST(ioctl)
 		snprintf(path, sizeof(path), "%s/%s", NS_DIR, ns_files[i]);
 		int nsfd = TEST_SUCC(open(path, O_RDONLY));
 		int is_user_ns = (strcmp(ns_files[i], "user") == 0);
+		int is_pid_ns = (strcmp(ns_files[i], "pid") == 0);
 
 		/*
 		 * NS_GET_USERNS: returns the owning user namespace fd.
@@ -211,13 +213,13 @@ FN_TEST(ioctl)
 
 		/*
 		 * NS_GET_PARENT: returns the parent namespace fd.
-		 * Non-hierarchical namespaces return EINVAL;
-		 * the initial user namespace returns EPERM.
+		 * Non-hierarchical namespaces return EINVAL.
+		 * The initial user and PID namespaces return EPERM.
 		 */
-		if (!is_user_ns) {
-			TEST_ERRNO(ioctl(nsfd, NS_GET_PARENT), EINVAL);
-		} else {
+		if (is_pid_ns || is_user_ns) {
 			TEST_ERRNO(ioctl(nsfd, NS_GET_PARENT), EPERM);
+		} else {
+			TEST_ERRNO(ioctl(nsfd, NS_GET_PARENT), EINVAL);
 		}
 
 		/* NS_GET_NSTYPE: should match the corresponding clone flag. */

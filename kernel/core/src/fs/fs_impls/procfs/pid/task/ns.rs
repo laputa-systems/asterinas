@@ -22,7 +22,10 @@ use crate::{
     ipc::IpcNamespace,
     net::{net_ns::NetNamespace, uts_ns::UtsNamespace},
     prelude::*,
-    process::{NsProxy, PidNamespace, UserNamespace, posix_thread::AsPosixThread},
+    process::{
+        NsProxy, PidNamespace, PidNsForChildren, PidNsState, UserNamespace,
+        posix_thread::AsPosixThread,
+    },
     thread::Thread,
 };
 
@@ -146,8 +149,44 @@ fn cached_ns_path(inode: &dyn Inode) -> Option<&Path> {
     if let Some(sym) = inode.downcast_ref::<NsSymlink<UtsNamespace>>() {
         return Some(&sym.inner().ns_path);
     }
+    if let Some(sym) = inode.downcast_ref::<PidForChildrenSymlink>() {
+        return Some(&sym.inner().ns_path);
+    }
     // TODO: Support additional namespace types.
     None
+}
+
+/// Resolves the path that `/proc/[pid]/task/[tid]/ns/pid_for_children` (and also
+/// `/proc/[pid]/ns/pid_for_children`) should point to.
+///
+/// This is the thread's active PID namespace, unless the thread has a pending
+/// `pid_for_children` target that has already been materialized by its first child.
+fn pid_for_children_path(dir: &TidDirOps) -> Result<Path> {
+    if dir.process().status().is_zombie() {
+        return Err(errno!(
+            ENOENT,
+            "the thread has no pid-for-children namespace"
+        ));
+    }
+
+    let Some(thread) = dir.thread() else {
+        return Err(errno!(ENOENT, "the thread does not exist"));
+    };
+    let posix_thread = thread.as_posix_thread().unwrap();
+    let pid_ns_for_children = posix_thread.pid_ns_for_children().lock().clone();
+
+    match pid_ns_for_children {
+        PidNsForChildren::SameAsActive => Ok(dir.process().active_pid_ns().get_path()),
+        PidNsForChildren::Target(pid_ns) => {
+            if pid_ns.state() == PidNsState::PendingInit {
+                return Err(errno!(
+                    ENOENT,
+                    "the pid-for-children namespace has not been materialized"
+                ));
+            }
+            Ok(pid_ns.get_path())
+        }
+    }
 }
 
 impl ProcDirOps for NsDirOps {
@@ -157,19 +196,22 @@ impl ProcDirOps for NsDirOps {
 
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>> {
         if name == "pid" {
-            let process = self.dir.process().ok_or_else(|| {
-                errno!(ESRCH, "the process does not exist")
-            })?;
+            let process = self.dir.process();
             return Ok(NsSymOps::<PidNamespace>::new_inode(
                 self.dir.clone(),
-                process.pid_ns().get_path(),
+                process.active_pid_ns().get_path(),
+                this_dir.this_weak().clone(),
+            ));
+        }
+        if name == "pid_for_children" {
+            let current_path = pid_for_children_path(&self.dir)?;
+            return Ok(PidForChildrenSymOps::new_inode(
+                current_path,
                 this_dir.this_weak().clone(),
             ));
         }
         if name == "user" {
-            let Some(process) = self.dir.process() else {
-                return Err(errno!(ESRCH, "the process does not exist"));
-            };
+            let process = self.dir.process();
 
             let user_ns = process.user_ns().lock();
             return Ok(NsSymOps::<UserNamespace>::new_inode(
@@ -202,6 +244,11 @@ impl ProcDirOps for NsDirOps {
             return Err(errno!(ENOENT, "the thread does not exist"));
         };
 
+        let process_entries = match pid_for_children_path(&self.dir) {
+            Ok(_) => ["pid", "pid_for_children", "user"].as_slice(),
+            Err(_) => ["pid", "user"].as_slice(),
+        };
+
         let has_ns_proxy = thread
             .as_posix_thread()
             .unwrap()
@@ -218,9 +265,9 @@ impl ProcDirOps for NsDirOps {
                     .map(|entry| ListedEntry::new(entry.as_str(), InodeType::SymLink))
             });
 
-        let process_entries = ["pid", "user"]
-            .into_iter()
-            .map(|name| ListedEntry::new(name, InodeType::SymLink));
+        let process_entries = process_entries
+            .iter()
+            .map(|name| ListedEntry::new(*name, InodeType::SymLink));
 
         visit_listed_entries(offset, ns_proxy_entries.chain(process_entries), visit_fn)
     }
@@ -237,15 +284,18 @@ impl ProcDirOps for NsDirOps {
         };
 
         if child.downcast_ref::<NsSymlink<PidNamespace>>().is_some() {
-            return self.dir.process().is_some_and(|process| {
-                cached_path == &process.pid_ns().get_path()
-            });
+            let process = self.dir.process();
+            return cached_path == &process.active_pid_ns().get_path();
+        }
+
+        if child.downcast_ref::<PidForChildrenSymlink>().is_some() {
+            return pid_for_children_path(&self.dir)
+                .map(|path| cached_path == &path)
+                .unwrap_or(false);
         }
 
         if child.downcast_ref::<NsSymlink<UserNamespace>>().is_some() {
-            let Some(process) = self.dir.process() else {
-                return false;
-            };
+            let process = self.dir.process();
             let user_ns = process.user_ns().lock();
             return cached_path == &user_ns.get_path();
         }
@@ -284,6 +334,7 @@ impl ProcDirOps for NsDirOps {
 }
 
 type NsSymlink<T> = ProcSym<NsSymOps<T>>;
+type PidForChildrenSymlink = ProcSym<PidForChildrenSymOps>;
 
 /// Represents the inode at `/proc/[pid]/task/[tid]/ns/<type>` (and also `/proc/[pid]/ns/<type>`).
 struct NsSymOps<T: NsCommonOps> {
@@ -313,6 +364,29 @@ impl<T: NsCommonOps> ProcSymOps for NsSymOps<T> {
         self.dir.thread()
     }
 
+    fn read_link(&self) -> Result<SymbolicLink> {
+        Ok(SymbolicLink::Path(self.ns_path.clone()))
+    }
+}
+
+/// Represents the inode at `/proc/[pid]/task/[tid]/ns/pid_for_children`
+/// (and also `/proc/[pid]/ns/pid_for_children`).
+struct PidForChildrenSymOps {
+    ns_path: Path,
+}
+
+impl PidForChildrenSymOps {
+    fn new_inode(ns_path: Path, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
+        ProcSym::new(
+            Self { ns_path },
+            parent,
+            // Reference: <https://elixir.bootlin.com/linux/v6.18/source/fs/proc/namespaces.c#L105>
+            mkmod!(a+rwx),
+        )
+    }
+}
+
+impl ProcSymOps for PidForChildrenSymOps {
     fn read_link(&self) -> Result<SymbolicLink> {
         Ok(SymbolicLink::Path(self.ns_path.clone()))
     }

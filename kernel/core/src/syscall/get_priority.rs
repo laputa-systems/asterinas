@@ -3,28 +3,33 @@
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{Pgid, Uid, pid_table, posix_thread::AsPosixThread},
+    process::{Pgid, PidNamespace, Uid, posix_thread::AsPosixThread},
     thread::{AsThread, Thread, Tid},
 };
 
 pub(super) fn sys_get_priority(which: i32, who: u32, ctx: &Context) -> Result<SyscallReturn> {
     let target = PriorityTarget::new(which, who, ctx)?;
-    let threads = get_threads(target)?;
+    let threads = get_threads(target, ctx.process.active_pid_ns())?;
     let nice = threads.iter()
         .map(|thread| thread.sched_attr().user().user_nice.value().get())
         .min().ok_or_else(|| Error::new(Errno::ESRCH))?;
     Ok(SyscallReturn::Return((20 - nice as i32) as _))
 }
 
-pub(super) fn get_threads(target: PriorityTarget) -> Result<Vec<Arc<Thread>>> {
+pub(super) fn get_threads(
+    target: PriorityTarget,
+    pid_ns: &Arc<PidNamespace>,
+) -> Result<Vec<Arc<Thread>>> {
     let threads = match target {
         PriorityTarget::Thread(tid) => {
-            let thread = pid_table::pid_table_mut().get_thread(tid)
+            let thread = pid_ns
+                .lookup_thread(tid)
                 .ok_or_else(|| Error::new(Errno::ESRCH))?;
             vec![thread]
         }
         PriorityTarget::ProcessGroup(pgid) => {
-            let group = pid_table::pid_table_mut().get_process_group(&pgid)
+            let group = pid_ns
+                .lookup_process_group(pgid)
                 .ok_or_else(|| Error::new(Errno::ESRCH))?;
             let mut threads = Vec::new();
             for process in group.lock().iter() {
@@ -33,7 +38,9 @@ pub(super) fn get_threads(target: PriorityTarget) -> Result<Vec<Arc<Thread>>> {
             }
             threads
         }
-        PriorityTarget::User(uid) => pid_table::pid_table_mut().iter_threads()
+        PriorityTarget::User(uid) => pid_ns
+            .visible_threads()
+            .into_iter()
             .filter(|thread| thread.as_posix_thread().unwrap().credentials().ruid() == uid)
             .collect(),
     };

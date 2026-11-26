@@ -37,9 +37,7 @@ impl ProcFileOpsByHandle for MemFileOps {
         _access_mode: AccessMode,
         _status_flags: StatusFlags,
     ) -> Result<Box<dyn PerOpenFileOps>> {
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
         // Hold the process VMAR lock while checking access permissions and
         // taking the VMAR identity snapshot to prevent race conditions.
         let vmar_guard = process.lock_vmar();
@@ -77,10 +75,7 @@ impl FileOps for MemFileHandle {
         writer: &mut VmWriter,
         _status_flags: StatusFlags,
     ) -> Result<usize> {
-        let Some(process) = self.0.process() else {
-            // The process does not exist.
-            return Ok(0);
-        };
+        let process = self.0.process();
         let vmar_guard = process.lock_vmar();
         if !vmar_guard.is_same_as(&self.1) {
             // The process has executed a new program.
@@ -104,10 +99,7 @@ impl FileOps for MemFileHandle {
         reader: &mut VmReader,
         _status_flags: StatusFlags,
     ) -> Result<usize> {
-        let Some(process) = self.0.process() else {
-            // The process does not exist.
-            return Ok(0);
-        };
+        let process = self.0.process();
         let vmar_guard = process.lock_vmar();
         if !vmar_guard.is_same_as(&self.1) {
             // The process has executed a new program.

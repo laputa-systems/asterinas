@@ -13,7 +13,7 @@ use crate::{
         vfs::range_lock::{FileRange, OFFSET_MAX, RangeLockItem, RangeLockType},
     },
     prelude::*,
-    process::{Pid, pid_table},
+    process::Pid,
 };
 
 pub(super) fn sys_fcntl(
@@ -196,8 +196,9 @@ fn handle_setown(fd: FileDesc, arg: u64, ctx: &Context) -> Result<SyscallReturn>
         None
     } else {
         Some(
-            pid_table::pid_table_mut()
-                .get_process(pid)
+            ctx.process
+                .active_pid_ns()
+                .lookup_process(pid)
                 .ok_or_else(|| errno!(ESRCH, "the process to be a file owner does not exist",))?,
         )
     };

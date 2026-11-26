@@ -122,6 +122,15 @@ impl ProcFileOps for StatFileOps {
             return Err(errno!(ESRCH, "the thread or the process does not exist"));
         };
         let posix_thread = thread.as_posix_thread().unwrap();
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        let ppid = process
+            .parent()
+            .lock()
+            .process()
+            .upgrade()
+            .and_then(|parent| parent.pid_in(viewer_pid_ns))
+            .unwrap_or(0);
 
         // According to the Linux implementation, a process's `/proc/<pid>/stat` should be
         // almost identical to its main thread's `/proc/<pid>/task/<pid>/stat`, except for
@@ -129,7 +138,7 @@ impl ProcFileOps for StatFileOps {
         //
         // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/array.c#L467-L681>
 
-        let pid = posix_thread.tid();
+        let pid = posix_thread.tid_in(viewer_pid_ns).unwrap_or(0);
 
         let comm = posix_thread
             .thread_name()
@@ -148,9 +157,8 @@ impl ProcFileOps for StatFileOps {
                 SleepingState::StopByPtrace => 't',
             }
         };
-        let ppid = process.parent().pid();
-        let pgrp = process.pgid();
-        let session = process.sid();
+        let pgrp = process.pgid_in(viewer_pid_ns).unwrap_or(0);
+        let session = process.sid_in(viewer_pid_ns).unwrap_or(0);
 
         let (tty_nr, tpgid) = if let Some(terminal) = process.terminal() {
             (
@@ -158,8 +166,9 @@ impl ProcFileOps for StatFileOps {
                 terminal
                     .job_control()
                     .foreground()
-                    .map(|pgrp| pgrp.pgid() as i64)
-                    .unwrap_or(-1),
+                    .and_then(|pgrp| pgrp.pgid_in(viewer_pid_ns))
+                    .map(i64::from)
+                    .unwrap_or(0),
             )
         } else {
             (0, -1)

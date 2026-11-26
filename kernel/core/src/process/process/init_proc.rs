@@ -12,13 +12,15 @@ use crate::{
     },
     prelude::*,
     process::{
-        Credentials, ProcessVm, ShebangScriptPath, UndetectedExecutable, UserNamespace, pid_table,
+        Credentials, KernelTid, PidChain, PidNamespace, PidNsForChildren, ProcessVm,
+        ShebangScriptPath, UndetectedExecutable, UserNamespace,
+        namespace::pid_ns::pid_ns_graph_lock,
         posix_thread::{PosixThreadBuilder, allocate_posix_tid, derive_thread_name},
         program_loader::ProgramToLoad,
         rlimit::new_resource_limits_for_init,
         signal::sig_disposition::SigDispositions,
     },
-    thread::Tid,
+    thread::AsThread,
     vm::vmar::VmarHandle,
 };
 
@@ -53,7 +55,9 @@ fn create_init_process(
 ) -> Result<Arc<Process>> {
     let fs = ThreadFsInfo::new(path_resolver);
 
-    let pid = allocate_posix_tid();
+    let root_pid_ns = PidNamespace::get_init_singleton().clone();
+    let pid_chain = PidChain::one(root_pid_ns.clone(), 1);
+    let kernel_tid = allocate_posix_tid();
     let vmar = VmarHandle::new(ProcessVm::new(executable_path.clone()));
     let resource_limits = new_resource_limits_for_init();
     let oom_score_adj = 0;
@@ -61,7 +65,9 @@ fn create_init_process(
     let user_ns = UserNamespace::get_init_singleton().clone();
 
     let init_proc = Process::new(
-        pid,
+        kernel_tid,
+        pid_chain.clone(),
+        root_pid_ns.clone(),
         vmar.clone_arc(),
         resource_limits,
         oom_score_adj,
@@ -69,29 +75,49 @@ fn create_init_process(
         user_ns,
     );
 
-    let init_task = create_init_task(pid, &init_proc, fs, vmar, executable_path, argv, envp)?;
+    let init_task = create_init_task(
+        kernel_tid,
+        pid_chain,
+        &init_proc,
+        fs,
+        vmar,
+        executable_path,
+        argv,
+        envp,
+    )?;
     init_proc.tasks().lock().insert(init_task).unwrap();
+    root_pid_ns.set_child_reaper(&init_proc);
 
     Ok(init_proc)
 }
 
 fn set_bootstrap_session_and_group(process: &Arc<Process>) {
-    // Locking order: PID table -> process group
-    let mut pid_table = pid_table::pid_table_mut();
+    let _pid_ns_graph_guard = pid_ns_graph_lock().lock();
 
-    // Add the process to the bootstrap process group and session
+    // Add the process to the bootstrap process group and session.
     let (session, process_group) = Session::new_bootstrap_pair(process);
-    pid_table.insert_session(session.sid(), &session);
-    pid_table.insert_process_group(process_group.pgid(), &process_group);
+    PidNamespace::insert_session_across_namespaces_with_pid_ns_graph_lock(session);
+    PidNamespace::insert_process_group_across_namespaces_with_pid_ns_graph_lock(
+        process_group.clone(),
+    );
     *process.process_group.lock() = Some(process_group);
 
-    // Add the new process to the global table
-    pid_table.insert_process(process.pid(), process);
+    // Add the new process to the per-namespace tables.
+    PidNamespace::insert_process_across_namespaces_with_pid_ns_graph_lock(process.clone());
+    let init_thread = process
+        .tasks()
+        .lock()
+        .main()
+        .as_thread()
+        .unwrap()
+        .clone();
+    PidNamespace::insert_thread_across_namespaces_with_pid_ns_graph_lock(init_thread);
 }
 
 /// Creates the init task from the given executable path.
 fn create_init_task(
-    tid: Tid,
+    kernel_tid: KernelTid,
+    pid_chain: PidChain,
     process: &Arc<Process>,
     fs: ThreadFsInfo,
     vmar: VmarHandle,
@@ -123,7 +149,8 @@ fn create_init_task(
     let thread_name = derive_thread_name(&executable_abs_path);
 
     let thread_builder = PosixThreadBuilder::new(
-        tid,
+        kernel_tid,
+        pid_chain,
         thread_name,
         Box::new(user_ctx),
         credentials,
@@ -131,6 +158,7 @@ fn create_init_task(
         CpuSet::new_full(),
     )
     .process(Arc::downgrade(process))
-    .fs(Arc::new(fs));
+    .fs(Arc::new(fs))
+    .pid_ns_for_children(PidNsForChildren::SameAsActive);
     Ok(thread_builder.build())
 }

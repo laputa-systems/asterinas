@@ -10,7 +10,7 @@ use super::{
 use crate::{
     prelude::*,
     process::{
-        Process, pid_table,
+        Process,
         posix_thread::AsPosixThread,
         signal::{
             c_types::{SigNotify, sigevent_t},
@@ -72,8 +72,10 @@ pub(super) fn sys_timer_create(
             // Send a signal to the specified thread when the timer is expired.
             SigNotify::SIGEV_THREAD_ID => {
                 let tid = sig_event.sigev_un.read_tid() as u32;
-                let thread = pid_table::pid_table_mut()
-                    .get_thread(tid)
+                let thread = ctx
+                    .process
+                    .active_pid_ns()
+                    .lookup_thread(tid)
                     .ok_or_else(|| errno!(EINVAL, "the target thread does not exist"))?;
                 let posix_thread = thread.as_posix_thread().unwrap();
                 if posix_thread.weak_process().as_ptr() != ctx.process.as_ref() {
@@ -138,8 +140,10 @@ fn create_timer<F: TimerFn>(clockid: clockid_t, func: F, ctx: &Context) -> Resul
     let dynamic_clockid_info = DynamicClockIdInfo::try_from(clockid)?;
     let timer = match dynamic_clockid_info {
         DynamicClockIdInfo::Pid(pid, clock_type) => {
-            let process = pid_table::pid_table_mut()
-                .get_process(pid)
+            let process = ctx
+                .process
+                .active_pid_ns()
+                .lookup_process(pid)
                 .ok_or_else(|| errno!(EINVAL, "invalid clock ID"))?;
             let process_timer_manager = process.timer_manager();
             match clock_type {
@@ -148,8 +152,10 @@ fn create_timer<F: TimerFn>(clockid: clockid_t, func: F, ctx: &Context) -> Resul
             }
         }
         DynamicClockIdInfo::Tid(tid, clock_type) => {
-            let thread = pid_table::pid_table_mut()
-                .get_thread(tid)
+            let thread = ctx
+                .process
+                .active_pid_ns()
+                .lookup_thread(tid)
                 .ok_or_else(|| errno!(EINVAL, "invalid clock ID"))?;
             let posix_thread = thread.as_posix_thread().unwrap();
             match clock_type {

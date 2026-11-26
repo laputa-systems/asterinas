@@ -11,7 +11,8 @@ use ostd::{
 };
 
 use super::{
-    Credentials, Pid, Process, pid_table,
+    Credentials, PidChain, PidNamespace, PidNsForChildren, PidNsState, Process,
+    namespace::pid_ns::pid_ns_graph_lock,
     posix_thread::{AsPosixThread, PosixThreadBuilder, ptrace::PtraceEvent},
     rlimit::ResourceLimits,
     signal::{constants::SIGCHLD, sig_disposition::SigDispositions, sig_num::SigNum},
@@ -27,10 +28,12 @@ use crate::{
     prelude::*,
     process::{
         NsProxy, UserNamespace,
+        credentials::capabilities::CapSet,
         pid_file::PidFile,
         posix_thread::{PosixThread, ThreadLocal, allocate_posix_tid},
         stats::PROCESS_CREATION_COUNTER,
     },
+    security::lsm::hooks as lsm_hooks,
     thread::{AsThread, Tid},
     vm::vmar::{Vmar, VmarHandle},
 };
@@ -202,10 +205,10 @@ impl CloneArgs {
                 ));
             }
 
-            if ctx.process.is_init_process() {
+            if ctx.process.is_pid_namespace_init() {
                 return Err(errno!(
                     EINVAL,
-                    "`CLONE_PARENT` cannot be used if the process is the init process"
+                    "`CLONE_PARENT` cannot be used if the process is the pid namespace init process"
                 ));
             }
         }
@@ -223,6 +226,13 @@ impl CloneArgs {
                 return Err(errno!(
                     EINVAL,
                     "`CLONE_THREAD` cannot be used together with `CLONE_PIDFD` or `CLONE_NEWUSER`"
+                ));
+            }
+
+            if clone_flags.contains(CloneFlags::CLONE_NEWPID) {
+                return Err(errno!(
+                    EINVAL,
+                    "`CLONE_THREAD` cannot be used together with `CLONE_NEWPID`"
                 ));
             }
         }
@@ -266,7 +276,8 @@ impl CloneFlags {
             | CloneFlags::CLONE_NEWCGROUP
             | CloneFlags::CLONE_NEWNS
             | CloneFlags::CLONE_NEWUTS
-            | CloneFlags::CLONE_PARENT;
+            | CloneFlags::CLONE_PARENT
+            | CloneFlags::CLONE_NEWPID;
         let unsupported_flags = *self - supported_flags;
         if !unsupported_flags.is_empty() {
             warn!("contains unsupported clone flags: {:?}", unsupported_flags);
@@ -355,7 +366,9 @@ pub(crate) fn clone_child(
             current.children_wait_queue().wait_until(cond);
         }
 
-        let child_pid = child_process.pid();
+        let child_pid = child_process
+            .pid_in(ctx.process.active_pid_ns())
+            .unwrap_or(0);
         if clone_args.flags.contains(CloneFlags::CLONE_VFORK) {
             ctx.posix_thread.ptrace_may_stop_on(PtraceEvent::VforkDone(child_pid), ctx, parent_context);
         }
@@ -435,7 +448,9 @@ fn clone_child_task(
     // Inherit the thread name.
     let thread_name = *posix_thread.thread_name().lock();
 
-    let child_tid = allocate_posix_tid();
+    let child_kernel_tid = allocate_posix_tid();
+    let child_tid_chain = process.active_pid_ns().alloc_chain()?;
+    let child_pid_ns_for_children = posix_thread.pid_ns_for_children().lock().clone();
     let child_task = {
         let credentials = {
             let credentials = ctx.posix_thread.credentials();
@@ -443,7 +458,8 @@ fn clone_child_task(
         };
 
         let mut thread_builder = PosixThreadBuilder::new(
-            child_tid,
+            child_kernel_tid,
+            child_tid_chain.clone(),
             thread_name,
             child_user_ctx,
             credentials,
@@ -458,6 +474,7 @@ fn clone_child_task(
         .fpu_context(child_fpu_context)
         .user_ns(child_user_ns)
         .ns_proxy(child_ns_proxy)
+        .pid_ns_for_children(child_pid_ns_for_children)
         .default_timer_slack_ns(default_timer_slack_ns)
         .io_priority(posix_thread.io_priority().load(Ordering::Relaxed));
         #[cfg(target_arch = "x86_64")]
@@ -466,7 +483,11 @@ fn clone_child_task(
         }
 
         // Deal with SETTID/CLEARTID flags
-        clone_parent_settid(child_tid, clone_args.parent_tid, clone_flags)?;
+        clone_parent_settid(
+            child_tid_chain.active_link().nr(),
+            clone_args.parent_tid,
+            clone_flags,
+        )?;
         thread_builder = clone_child_cleartid(thread_builder, clone_args.child_tid, clone_flags);
         thread_builder = clone_child_settid(thread_builder, clone_args.child_tid, clone_flags);
 
@@ -480,6 +501,9 @@ fn clone_child_task(
         .unwrap()
         .inherit_seccomp(posix_thread);
 
+    let child_thread = child_task.as_thread().unwrap().clone();
+    let _pid_ns_graph_guard = pid_ns_graph_lock().lock();
+
     process
         .tasks()
         .lock()
@@ -490,9 +514,7 @@ fn clone_child_task(
                 "the process has exited or has already executed a new program",
             )
         })?;
-
-    let child_thread = child_task.as_thread().unwrap();
-    pid_table::pid_table_mut().insert_thread(child_tid, child_thread);
+    PidNamespace::insert_thread_across_namespaces_with_pid_ns_graph_lock(child_thread);
 
     Ok(child_task)
 }
@@ -573,9 +595,55 @@ fn clone_child_process(
     // Inherit the parent's OOM score adjustment
     let child_oom_score_adj = process.oom_score_adj().load(Ordering::Relaxed);
 
-    let child_tid = allocate_posix_tid();
+    // Decide the PID namespace that the child will enter and allocate its PID chain.
+    //
+    // If the target namespace is still waiting for its init process, the pending-init
+    // lock is held across the whole creation so that no sibling can slip in first.
+    let pending_init_target;
+    let pending_init_guard;
+    let (child_active_pid_ns, child_pid_chain, first_process_in_ns) =
+        if matches!(ctx.process.active_pid_ns().state(), PidNsState::Dying) {
+            return Err(errno!(
+                EINVAL,
+                "the current pid namespace is dying and cannot accept new children"
+            ));
+        } else if clone_flags.contains(CloneFlags::CLONE_NEWPID) {
+            lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
+                ctx.thread_local.borrow_user_ns().as_ref(),
+                ctx.posix_thread,
+                CapSet::SYS_ADMIN,
+            ))?;
+            let child_ns = PidNamespace::new_child(
+                ctx.process.active_pid_ns().clone(),
+                ctx.thread_local.borrow_user_ns().clone(),
+            )?;
+            let pid_chain = child_ns.alloc_chain()?;
+            pending_init_target = None;
+            pending_init_guard = None;
+            (child_ns, pid_chain, true)
+        } else {
+            let pid_ns_for_children = ctx.posix_thread.pid_ns_for_children().lock().clone();
+            let target_ns = pid_ns_for_children.target(ctx.process.active_pid_ns());
+            if matches!(target_ns.state(), PidNsState::Dying) {
+                return Err(errno!(
+                    EINVAL,
+                    "the target pid namespace is dying and cannot accept new children"
+                ));
+            }
 
-    let child = {
+            pending_init_target =
+                matches!(target_ns.state(), PidNsState::PendingInit).then(|| target_ns.clone());
+            pending_init_guard = pending_init_target
+                .as_ref()
+                .map(|pid_ns| pid_ns.pending_init_lock().lock());
+
+            let first_process_in_ns = matches!(target_ns.state(), PidNsState::PendingInit);
+            let pid_chain = target_ns.alloc_chain()?;
+            (target_ns, pid_chain, first_process_in_ns)
+        };
+    let child_kernel_tid = allocate_posix_tid();
+
+    let (child, child_task) = {
         let child_vmar_arc = child_vmar.clone_arc();
 
         let mut child_thread_builder = {
@@ -588,7 +656,8 @@ fn clone_child_process(
             };
 
             PosixThreadBuilder::new(
-                child_tid,
+                child_kernel_tid,
+                child_pid_chain.clone(),
                 child_thread_name,
                 child_user_ctx,
                 credentials,
@@ -606,6 +675,7 @@ fn clone_child_process(
             .robust_list_head(thread_local.robust_list().borrow().clone())
             .user_ns(child_user_ns.clone())
             .ns_proxy(child_ns_proxy)
+            .pid_ns_for_children(PidNsForChildren::SameAsActive)
             .default_timer_slack_ns(default_timer_slack_ns)
             .io_priority(ctx.posix_thread.io_priority().load(Ordering::Relaxed))
         };
@@ -617,14 +687,22 @@ fn clone_child_process(
         }
 
         // Deal with SETTID/CLEARTID flags
-        clone_parent_settid(child_tid, clone_args.parent_tid, clone_flags)?;
+        clone_parent_settid(
+            child_pid_chain
+                .nr_in(ctx.process.active_pid_ns())
+                .unwrap_or(child_pid_chain.active_link().nr()),
+            clone_args.parent_tid,
+            clone_flags,
+        )?;
         child_thread_builder =
             clone_child_cleartid(child_thread_builder, clone_args.child_tid, clone_flags);
         child_thread_builder =
             clone_child_settid(child_thread_builder, clone_args.child_tid, clone_flags);
 
         create_child_process(
-            child_tid,
+            child_kernel_tid,
+            child_pid_chain.clone(),
+            child_active_pid_ns.clone(),
             child_vmar_arc,
             child_resource_limits,
             child_oom_score_adj,
@@ -651,7 +729,17 @@ fn clone_child_process(
     };
 
     // Sets parent process and group for child process.
-    set_parent_and_group(clone_flags, process, &child, ctx.task.as_thread().unwrap());
+    install_child_process(
+        clone_flags,
+        process,
+        &child,
+        child_task,
+        ctx.task.as_thread().unwrap(),
+        first_process_in_ns,
+    );
+
+    drop(pending_init_guard);
+    drop(pending_init_target);
 
     Ok(child)
 }
@@ -853,17 +941,22 @@ fn clone_ns_proxy(
     parent_ns_proxy.new_clone(user_ns, process, posix_thread, clone_flags)
 }
 
+#[expect(clippy::too_many_arguments)]
 fn create_child_process(
-    pid: Pid,
+    kernel_pid: crate::process::KernelPid,
+    pid_chain: PidChain,
+    active_pid_ns: Arc<PidNamespace>,
     vmar: Arc<Vmar>,
     resource_limits: ResourceLimits,
     oom_score_adj: i16,
     sig_dispositions: Arc<Mutex<SigDispositions>>,
     user_ns: Arc<UserNamespace>,
     thread_builder: PosixThreadBuilder,
-) -> Arc<Process> {
+) -> (Arc<Process>, Arc<Task>) {
     let child_proc = Process::new(
-        pid,
+        kernel_pid,
+        pid_chain,
+        active_pid_ns,
         vmar,
         resource_limits,
         oom_score_adj,
@@ -872,17 +965,20 @@ fn create_child_process(
     );
 
     let child_task = thread_builder.process(Arc::downgrade(&child_proc)).build();
-    child_proc.tasks().lock().insert(child_task).unwrap();
-
-    child_proc
+    (child_proc, child_task)
 }
 
-fn set_parent_and_group(
+fn install_child_process(
     clone_flags: CloneFlags,
     parent: &Arc<Process>,
     child: &Arc<Process>,
+    child_task: Arc<Task>,
     current_thread: &Arc<crate::thread::Thread>,
+    first_process_in_ns: bool,
 ) {
+    let child_thread = child_task.as_thread().unwrap().clone();
+    let _pid_ns_graph_guard = pid_ns_graph_lock().lock();
+
     loop {
         let real_parent = clone_parent(clone_flags, parent);
 
@@ -897,7 +993,7 @@ fn set_parent_and_group(
         };
 
         let parent_thread = if clone_flags.contains(CloneFlags::CLONE_PARENT) {
-            let Some(relation) = children_mut.get(&parent.pid()) else {
+            let Some(relation) = children_mut.get(&parent.kernel_pid()) else {
                 continue;
             };
             relation.parent_thread.clone()
@@ -906,42 +1002,49 @@ fn set_parent_and_group(
         };
 
         // Lock order: children of process -> parent of process
-        child.parent().lock().set_process(&real_parent);
+        let visible_parent_pid = real_parent.pid_in(child.active_pid_ns()).unwrap_or(0);
+        let mut parent_guard = child.parent().lock();
+        parent_guard.set_process_with_visible_pid(&real_parent, visible_parent_pid);
 
         // Update `has_child_subreaper` for the child process to
         // make sure the `has_child_subreaper` state of the child process
         // will be consistent with its parent.
-        if real_parent.has_child_subreaper.load(Ordering::Acquire) {
+        if Arc::ptr_eq(real_parent.active_pid_ns(), child.active_pid_ns())
+            && real_parent.has_child_subreaper.load(Ordering::Acquire)
+        {
             child.has_child_subreaper.store(true, Ordering::Release);
         }
 
-        // Lock order: children of process -> PID table
+        // Lock order: children of process -> PID namespace graph
         // -> group of process -> group inner
 
-        let mut pid_table = pid_table::pid_table_mut();
+        let process_group = parent.process_group.lock().as_ref().cloned().unwrap();
+        let mut process_group_inner = process_group.lock();
+        let mut child_process_group = child.process_group.lock();
+        let mut child_tasks = child.tasks().lock();
 
-        let process_group = {
-            let process_group_mut = parent.process_group.lock();
-            let process_group = process_group_mut.as_ref().unwrap();
-            let mut process_group_inner = process_group.lock();
-
-            // Put the child process in the parent's process group
-            process_group_inner.insert_process(child);
-            process_group.clone()
-        };
-        *child.process_group.lock() = Some(process_group);
+        // Put the child process in the parent's process group
+        process_group_inner.insert_process(child);
+        *child_process_group = Some(process_group.clone());
 
         // Put the child process in the parent's `children` field
         children_mut.insert(
-            child.pid(),
+            child.kernel_pid(),
             super::process::ChildProcess {
                 process: child.clone(),
                 parent_thread,
             },
         );
 
-        // Put the child process in the global table
-        pid_table.insert_process(child.pid(), child);
+        child_tasks.insert(child_task.clone()).unwrap();
+
+        if first_process_in_ns {
+            child.active_pid_ns().set_child_reaper(child);
+            child.active_pid_ns().set_state(PidNsState::Alive);
+        }
+
+        PidNamespace::insert_process_across_namespaces_with_pid_ns_graph_lock(child.clone());
+        PidNamespace::insert_thread_across_namespaces_with_pid_ns_graph_lock(child_thread.clone());
 
         return;
     }

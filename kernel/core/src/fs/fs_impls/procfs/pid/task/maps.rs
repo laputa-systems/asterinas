@@ -40,9 +40,7 @@ impl ProcFileOpsByHandle for MapsFileOps {
         _access_mode: AccessMode,
         _status_flags: StatusFlags,
     ) -> Result<Box<dyn PerOpenFileOps>> {
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
         // Hold the process VMAR lock while checking access permissions and
         // taking the VMAR identity snapshot to prevent race conditions.
         let vmar_guard = process.lock_vmar();
@@ -82,9 +80,7 @@ impl FileOps for MapsFileHandle {
     ) -> Result<usize> {
         let mut printer = VmPrinter::new_skip(writer, offset);
 
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
         let vmar_guard = process.lock_vmar();
         if !vmar_guard.is_same_as(&self.1) {
             // The process has executed a new program.

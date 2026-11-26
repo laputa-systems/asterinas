@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{
-    Pgid, Pid, Process, pid_table,
+    Pgid, Pid, Process,
     posix_thread::AsPosixThread,
     signal::{constants::SIGCONT, sig_num::SigNum, signals::Signal},
 };
@@ -36,8 +36,10 @@ pub(crate) fn kill(pid: Pid, signal: Option<Box<dyn Signal>>, ctx: &Context) -> 
     }
 
     // Slow path
-    let process = pid_table::pid_table_mut()
-        .get_process(pid)
+    let process = ctx
+        .process
+        .active_pid_ns()
+        .lookup_process(pid)
         .ok_or_else(|| errno!(ESRCH, "the target process does not exist"))?;
 
     kill_process(&process, signal, ctx)
@@ -56,8 +58,10 @@ pub(crate) fn kill_group<S: Signal + Clone>(
     signal: Option<S>,
     ctx: &Context,
 ) -> Result<()> {
-    let process_group = pid_table::pid_table_mut()
-        .get_process_group(&pgid)
+    let process_group = ctx
+        .process
+        .active_pid_ns()
+        .lookup_process_group(pgid)
         .ok_or_else(|| errno!(ESRCH, "the target group does not exist"))?;
 
     let mut result = Ok(());
@@ -90,8 +94,10 @@ pub(crate) fn tgkill(
     signal: Option<Box<dyn Signal>>,
     ctx: &Context,
 ) -> Result<()> {
-    let thread = pid_table::pid_table_mut()
-        .get_thread(tid)
+    let thread = ctx
+        .process
+        .active_pid_ns()
+        .lookup_thread(tid)
         .ok_or_else(|| errno!(ESRCH, "the target thread does not exist"))?;
     let target_posix_thread = thread.as_posix_thread().unwrap();
 
@@ -131,8 +137,10 @@ pub(crate) fn tgkill(
 pub(crate) fn kill_all<S: Signal + Clone>(signal: Option<S>, ctx: &Context) -> Result<()> {
     let mut result = Ok(());
 
-    for process in pid_table::pid_table_mut().iter_processes() {
-        if Arc::ptr_eq(&ctx.process, &process) || process.is_init_process() {
+    for process in ctx.process.active_pid_ns().visible_processes() {
+        if Arc::ptr_eq(&ctx.process, &process)
+            || process.pid_in(ctx.process.active_pid_ns()) == Some(1)
+        {
             continue;
         }
 

@@ -13,9 +13,9 @@ use crate::{
     context::current_userspace,
     prelude::*,
     process::{
-        TermStatus,
+        PidNamespace, TermStatus,
         exit::{drop_after, exit_process},
-        pid_table,
+        namespace::pid_ns::pid_ns_graph_lock,
         signal::{
             constants::SIGKILL,
             sig_num::SigNum,
@@ -97,6 +97,11 @@ fn exit_internal(
     let posix_thread = current_thread.as_posix_thread().unwrap();
     let thread_local = current_task.as_thread_local().unwrap();
     let posix_process = posix_thread.process();
+    // Non-main threads are removed from the per-namespace tables at thread exit;
+    // the main thread stays until the process is reaped (see `reap_zombie_child`).
+    let tid_chain =
+        (posix_thread.tid() != posix_process.pid()).then(|| posix_thread.tid_chain().clone());
+    let _pid_ns_graph_guard = tid_chain.as_ref().map(|_| pid_ns_graph_lock().lock());
 
     let is_last_thread = {
         let mut children = posix_process.children().lock();
@@ -124,7 +129,10 @@ fn exit_internal(
         }
         current_thread.exit();
 
-        let is_last = tasks.remove_exited(&current_task);
+        let is_last_thread = tasks.remove_exited(&current_task);
+        if let Some(tid_chain) = tid_chain.as_ref() {
+            PidNamespace::remove_thread_across_namespaces_with_pid_ns_graph_lock(tid_chain);
+        }
         if let Some(sibling) = tasks.as_slice().iter().find_map(|task| {
             let thread = task.as_thread().unwrap();
             (!thread.is_exited()).then_some(thread)
@@ -136,7 +144,7 @@ fn exit_internal(
                     }
                 }
             }
-        is_last
+        is_last_thread
     };
 
     // This is put after `current_thread.exit()`,
@@ -152,12 +160,6 @@ fn exit_internal(
     wake_clear_ctid(thread_local);
 
     wake_robust_list(thread_local, posix_thread.tid());
-
-    // According to Linux behavior, the main thread shouldn't be removed from the table until the
-    // process is reaped by its parent.
-    if posix_thread.tid() != posix_process.pid() {
-        pid_table::pid_table_mut().remove_thread(posix_thread.tid());
-    }
 
     // Drop fields in `PosixThread`.
     drop_after!(posix_thread.file_table().lock().take());

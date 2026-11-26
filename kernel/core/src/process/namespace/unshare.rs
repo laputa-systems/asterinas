@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::{fs::file::file_table::FileTable, prelude::*, process::CloneFlags};
+use crate::{
+    fs::file::file_table::FileTable,
+    prelude::*,
+    process::{
+        CloneFlags, PidNamespace, PidNsForChildren, credentials::capabilities::CapSet,
+    },
+    security::lsm::hooks as lsm_hooks,
+};
 
 /// Provides administrative APIs for disassociating execution contexts.
 pub(crate) trait ContextUnshareAdminApi {
@@ -38,11 +45,42 @@ impl ContextUnshareAdminApi for Context<'_> {
     }
 
     fn unshare_namespaces(&self, flags: CloneFlags) -> Result<()> {
+        // Note: `CLONE_NEWUSER` handling belongs to the user-namespace lane;
+        // this lane only rejects it the same way the base tree does and
+        // implements the PID-namespace path.
         if flags.contains(CloneFlags::CLONE_NEWUSER) {
             return Err(errno!(
                 EINVAL,
                 "cloning a new user namespace is not supported"
             ));
+        }
+
+        let mut remaining_flags = flags;
+
+        if flags.contains(CloneFlags::CLONE_NEWPID) {
+            let user_ns = self.thread_local.borrow_user_ns();
+            lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
+                user_ns.as_ref(),
+                self.posix_thread,
+                CapSet::SYS_ADMIN,
+            ))?;
+
+            let mut pid_ns_for_children = self.posix_thread.pid_ns_for_children().lock();
+            if !matches!(&*pid_ns_for_children, PidNsForChildren::SameAsActive) {
+                return Err(errno!(
+                    EINVAL,
+                    "the pid-for-children namespace is already pending"
+                ));
+            }
+
+            let new_pid_ns =
+                PidNamespace::new_child(self.process.active_pid_ns().clone(), user_ns.clone())?;
+            *pid_ns_for_children = PidNsForChildren::Target(new_pid_ns);
+            remaining_flags.remove(CloneFlags::CLONE_NEWPID);
+        }
+
+        if remaining_flags.is_empty() {
+            return Ok(());
         }
 
         let user_ns_ref = self.thread_local.borrow_user_ns();
@@ -54,10 +92,10 @@ impl ContextUnshareAdminApi for Context<'_> {
             &user_ns_ref,
             self.process.as_ref(),
             self.posix_thread,
-            flags,
+            remaining_flags,
         )?;
 
-        if flags.contains(CloneFlags::CLONE_NEWNS) {
+        if remaining_flags.contains(CloneFlags::CLONE_NEWNS) {
             self.thread_local
                 .borrow_fs()
                 .resolver()

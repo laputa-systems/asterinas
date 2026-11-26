@@ -15,9 +15,9 @@ use crate::{
     fs::{file::Permission, vfs::path::{Path, PerMountFlags}},
     prelude::*,
     process::{
-        ContextUnshareAdminApi, Credentials, Process, ResourceType,
+        ContextUnshareAdminApi, Credentials, PidNamespace, Process, ResourceType,
         credentials::{ExecCred, FileCapabilities},
-        pid_table,
+        namespace::pid_ns::pid_ns_graph_lock,
         posix_thread::{
             AsPosixThread, ContextPthreadAdminApi, ThreadLocal, ThreadName, ptrace::PtraceEvent,
             sigkill_other_threads,
@@ -30,6 +30,7 @@ use crate::{
             signals::kernel::KernelSignal,
         },
     },
+    thread::AsThread,
     vm::vmar::VmarHandle,
 };
 
@@ -333,8 +334,9 @@ fn make_current_main_thread(ctx: &Context) {
     }
 
     // The current thread is not the main thread.
-
-    let mut pid_table = pid_table::pid_table_mut();
+    let old_tid_chain = ctx.posix_thread.tid_chain().clone();
+    // Lock order: PID namespace graph -> tracer tracees -> tasks of process.
+    let _pid_ns_graph_guard = pid_ns_graph_lock().lock();
     let old_main = ctx.process.main_thread();
     let old_main_posix = old_main.as_posix_thread().unwrap();
     let tracer = ctx.posix_thread.tracer();
@@ -356,7 +358,8 @@ fn make_current_main_thread(ctx: &Context) {
     assert!(core::ptr::eq(ctx.task, tasks.as_slice()[1].as_ref()));
 
     tasks.swap_main();
-    ctx.posix_thread.set_main(pid);
+    let new_tid_chain = ctx.process.pid_chain().clone();
+    ctx.posix_thread.set_main(new_tid_chain);
 
     for tracees in &mut tracer_tracees {
         tracees.remove(&pid);
@@ -372,8 +375,9 @@ fn make_current_main_thread(ctx: &Context) {
     drop(tasks);
     drop(tracer_tracees);
 
-    let thread = pid_table.take_thread(old_tid).unwrap();
-    pid_table.replace_thread(pid, &thread);
+    let thread = ctx.task.as_thread().unwrap().clone();
+    PidNamespace::remove_thread_across_namespaces_with_pid_ns_graph_lock(&old_tid_chain);
+    PidNamespace::insert_thread_across_namespaces_with_pid_ns_graph_lock(thread);
 }
 
 fn set_cpu_context(

@@ -89,6 +89,15 @@ impl ProcFileOps for StatusFileOps {
         };
         let posix_thread = thread.as_posix_thread().unwrap();
         let credentials = posix_thread.credentials();
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        let ppid = process
+            .parent()
+            .lock()
+            .process()
+            .upgrade()
+            .and_then(|parent| parent.pid_in(viewer_pid_ns))
+            .unwrap_or(0);
 
         // According to the Linux implementation, a process's `/proc/<pid>/status`
         // is exactly the same as its main thread's `/proc/<pid>/task/<pid>/status`.
@@ -120,9 +129,17 @@ impl ProcFileOps for StatusFileOps {
         };
         writeln!(printer, "State:\t{}", state)?;
 
-        writeln!(printer, "Tgid:\t{}", process.pid())?;
-        writeln!(printer, "Pid:\t{}", posix_thread.tid())?;
-        writeln!(printer, "PPid:\t{}", process.parent().pid())?;
+        writeln!(
+            printer,
+            "Tgid:\t{}",
+            process.pid_in(viewer_pid_ns).unwrap_or(0)
+        )?;
+        writeln!(
+            printer,
+            "Pid:\t{}",
+            posix_thread.tid_in(viewer_pid_ns).unwrap_or(0)
+        )?;
+        writeln!(printer, "PPid:\t{}", ppid)?;
         writeln!(
             printer,
             "TracerPid:\t{}",
@@ -131,6 +148,16 @@ impl ProcFileOps for StatusFileOps {
                 .map(|tracer| tracer.as_posix_thread().unwrap().tid())
                 .unwrap_or(0)
         )?;
+        write!(printer, "NStgid:\t")?;
+        for link in process.pid_chain().links() {
+            write!(printer, "{}\t", link.nr())?;
+        }
+        writeln!(printer)?;
+        write!(printer, "NSpid:\t")?;
+        for link in posix_thread.tid_chain().links() {
+            write!(printer, "{}\t", link.nr())?;
+        }
+        writeln!(printer)?;
 
         writeln!(
             printer,

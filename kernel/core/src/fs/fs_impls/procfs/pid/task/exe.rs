@@ -29,9 +29,7 @@ impl ProcSymOps for ExeSymOps {
     }
 
     fn read_link(&self) -> Result<SymbolicLink> {
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
 
         let vmar_guard = process.lock_vmar();
         let Some(vmar) = vmar_guard.as_ref() else {
