@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "name": "adapter",
+  "inherits": [],
+  "cases": ["core.adapter"],
+  "excludes": []
+}

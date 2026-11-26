@@ -1,4 +1,16 @@
 {
+  "adapter": {
+    "disk_path": "target/qualification/inputs/cache/adapter-disk.ext2",
+    "disk_sha256": "ddef0a56c485ae91da4f112e95f8018c6c74bf5409c0fddb2dbdc7dae146b704",
+    "disk_size_bytes": 16777216,
+    "e2fsprogs_nix_path": "test/qualification/adapter/e2fsprogs.nix",
+    "e2fsprogs_nix_sha256": "ec2c1266278327351814db9545079b5e14c2f3577493ddde9b17aa0a1f5814e1",
+    "serial": "qual-lc06-adapter",
+    "wrong_disk_path": "target/qualification/inputs/cache/adapter-wrong-disk.ext2",
+    "wrong_disk_sha256": "038631dd0703f46197f8dfb843ba9d92f10e538d5f2e9304c44f7c1a48531984",
+    "wrong_filesystem_path": "target/qualification/inputs/cache/adapter-wrong-filesystem.img",
+    "wrong_filesystem_sha256": "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
+  },
   "asterinas_build": {
     "cargo_lock_path": "Cargo.lock",
     "cargo_lock_sha256": "36ddf8606e231e17091d69d52447f3e67b5c08fc15063eb4641b0b09bed9e3a9",
@@ -17,17 +29,18 @@
     "files": {
       "test/qualification/qualcore/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "test/qualification/qualcore/accounting.py": "9bbbcc5be3ab44407ff35927ca1467f4b2de9132cb6e3bded5ce081e0a1778b8",
-      "test/qualification/qualcore/compare.py": "3c2c31e1d968d6902a678e64f4c9f4017c876e9459accdc6bf227be7014e9b1d",
+      "test/qualification/qualcore/adapter.py": "9cb84cc92e743a2f6e64c0a252db8dbd7052f9a319ab7655fb7f90d5fed3cc2b",
+      "test/qualification/qualcore/compare.py": "792202f518c03349ea975cc59851b0aeb36d9efdc4196ca7308325d2de999a10",
       "test/qualification/qualcore/errors.py": "9fb4c7c408a263abf815ac5032ce5923e473e23c7874231fb355001cf7f7d6e4",
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "fc0bfaacbcf0973055e16c3f58c994da51618dd5601f4230cbf77ebb6c380ca5",
-      "test/qualification/qualcore/manifest.py": "7f82f6ee9c2de8e6d24cd4c9c01657d522b262b7159cbaa9a9b14d454cbe50b2",
+      "test/qualification/qualcore/lock.py": "7be24a8f5ee4f2aa00a714734d63c707537c639be79e6eb56a9cd42e9d831f1e",
+      "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
-      "test/qualification/qualcore/qemu.py": "7152eebe6bef827d764a4805002cfb9e2c96de28ef405b766b0d1a5f9e45b700",
+      "test/qualification/qualcore/qemu.py": "57c6f4e349bf33bf9aba960ebb492d50d7514a9c4a6d5c9157cf9a82b0822d4d",
       "test/qualification/qualcore/results.py": "09d0eed452b7a47d16f8f598b366d10383c423ec7a9b59f0b34d4cc0a68b5b1a",
-      "test/qualification/qualcore/runner.py": "f65eff14cd27234708fb35db945b9f3135a2469962223d8b80aa2c2ac851720e",
+      "test/qualification/qualcore/runner.py": "886085cbbcf8a881da1ffa3ba7ad0ee68a6a460d084ce7fbd59877a93e5348a6",
       "test/qualification/qualcore/selftest.py": "0705e06e06de7fec73e8547fb5712a9e4c283aa5582b7a848b78abc3799a8a5f",
       "test/qualification/qualcore/supervisor.py": "067c3d694359385ef35b79c60f57b2b7d9bbaf3b22080db6f9023182d582e0d5",
       "test/qualification/qualcore/util.py": "3698485c7a3a80f40c39024aefafe6c0bb46e708c4834180c8a163a5a847dd04",
@@ -46,18 +59,18 @@
     "nix_sha256": "894aa638531466b12a45f67c40fabc79aa850152c90b285d7e709a7b7854092b",
     "version": "6.18.65"
   },
-  "lock_revision": "lc05-r1",
+  "lock_revision": "lc06-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "775e0de48342064f0feb44cd2e002712162294b8f71dd087359580f46acb003e",
+    "binary_sha256": "e56f49dab2ecb830d21c6be081af2aaec5be13d56edf4180aa98837c9a34d6da",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "f01b882274d79707d1632597125d216e6b1ddb9d686d32deaee1cafd9bf8d460",
+    "initramfs_sha256": "c51fac865e0885312a4480765cb883152608e26ffdc611d92059d879a405f670",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
-    "nix_sha256": "9d5c0b4d763a4c81334b232c1a62ceb9a47c46f6c322199845f1b556526eb3d2",
+    "nix_sha256": "6101ebb596db24514d9df778f1211175bdcfd0ecfa66fa43fece3df3fd89a3c7",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "79f81e171e7c73cd956c7d7b8e7bdfc5debeddea3e2b2dd7727bb9dbff87d4b3"
+    "source_sha256": "0e7699c60e0d112fd31d1b084d76ea084c6c376c3fc6cd1560a51fe71846729e"
   },
   "python": {
     "minimum_version": "3.11"
@@ -74,6 +87,27 @@
   },
   "schema": 1,
   "selections": {
+    "adapter": {
+      "case_ids": [
+        "core.adapter"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc06-adapter-r1",
+          "deadline_seconds": 60.0,
+          "id": "core.adapter",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "48a96fc45bfb51efaac643183b03dee933deaeaacc2d742724aaf57101f4d5f8",
+      "normalization_rules": [],
+      "payload_hash": "4d373de8967c78c52285ab5ce34dd7526940084aef116de26d4ce4b62e1fe3cc"
+    },
     "lc02-selftest": {
       "case_ids": [
         "core.echo-probe"

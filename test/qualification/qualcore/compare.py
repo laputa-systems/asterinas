@@ -128,6 +128,16 @@ def compare_value(kind: str, expected: Any, actual: Any, mode: str = "exact", no
         matched = expected_bytes == actual_bytes
         return Comparison(matched, kind, mode, f"expected {len(expected_bytes)} bytes, actual {len(actual_bytes)} bytes")
 
+    if kind == "text":
+        matched = isinstance(expected, str) and isinstance(actual, str) and expected == actual
+        return Comparison(matched, kind, mode, f"expected text {expected!r}, actual {actual!r}")
+
+    if kind == "integer":
+        expected_integer = isinstance(expected, int) and not isinstance(expected, bool)
+        actual_integer = isinstance(actual, int) and not isinstance(actual, bool)
+        matched = expected_integer and actual_integer and expected == actual
+        return Comparison(matched, kind, mode, f"expected integer {expected!r}, actual {actual!r}")
+
     if kind == "permission":
         if mode == "invariant" and isinstance(expected, dict) and "one_of" in expected:
             choices = expected["one_of"]

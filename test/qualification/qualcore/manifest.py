@@ -87,7 +87,7 @@ def _parse_assertion(raw: Any, path: Path, case_id: str, subtest_id: str) -> Ass
     normalization = tuple(normalization_raw)
     if not assertion_id or not isinstance(assertion_id, str):
         raise ManifestError(f"{path}: case {case_id} has an empty assertion id")
-    if not isinstance(value_type, str) or value_type not in {"errno", "bytes", "permission"}:
+    if not isinstance(value_type, str) or value_type not in {"errno", "bytes", "permission", "text", "integer"}:
         raise ManifestError(f"{path}: case {case_id} assertion {assertion_id} has unsupported type {value_type!r}")
     if not isinstance(mode, str) or mode not in {"exact", "normalized", "invariant"}:
         raise ManifestError(f"{path}: case {case_id} assertion {assertion_id} has unsupported mode {mode!r}")

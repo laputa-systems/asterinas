@@ -1,0 +1,136 @@
+{
+  "cases": [
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_NETDEVICES": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_NET": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "core",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc06-adapter-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "serial-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "bGMwNi1hZGFwdGVyCg==",
+              "id": "marker",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "mount-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "cWMwNi13cml0ZQo=",
+              "id": "roundtrip",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "mount-writeback"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "present",
+              "id": "interface",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "network-interface"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "privilege-identity"
+        }
+      ],
+      "id": "core.adapter",
+      "item": "LC-06",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "marker_path": "/mnt/qualification/marker.txt",
+        "mount_point": "/mnt/qualification",
+        "network_interface": "eth0",
+        "roundtrip_path": "/mnt/qualification/probe-roundtrip.bin",
+        "roundtrip_text": "qc06-write\n"
+      },
+      "procedure": "Boot with a generated ext2 virtio-blk scratch disk and an isolated virtio network device; verify disk serial, write-cache mode, mount identity, write/read roundtrip, network presence, and root privileges.",
+      "replay": "python3 test/qualification/run.py run --profile adapter --candidate linux",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "adapter-r1",
+        "upstream": "asterinas-qualification-adapter"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    }
+  ],
+  "schema": 1
+}

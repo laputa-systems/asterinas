@@ -6,7 +6,7 @@ let
 in
 static.stdenv.mkDerivation {
   pname = "asterinas-qualification-probe";
-  version = "lc05-r1";
+  version = "lc06-r1";
   src = ./.;
 
   nativeBuildInputs = [ static.stdenv.cc ];

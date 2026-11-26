@@ -51,6 +51,8 @@ def _docker_build(repo: Path, script: str, description: str) -> None:
         "--privileged",
         "-v",
         f"{repo}:/root/asterinas",
+        "-v",
+        "asterinas-qualification-nix:/nix",
         "-w",
         "/root/asterinas",
         DEV_IMAGE,
@@ -85,6 +87,27 @@ def build_initramfs(repo: Path) -> None:
         repo / "test/qualification/probe/input.txt",
         repo / CACHE_DIR / "initramfs.cpio",
     )
+
+
+def build_adapter_fixtures(repo: Path) -> None:
+    script = (
+        "set -eu; "
+        "result=$(nix-build --no-out-link test/qualification/adapter/e2fsprogs.nix); "
+        "export SOURCE_DATE_EPOCH=0 E2FSPROGS_FAKE_TIME=0; "
+        "staging=target/qualification/inputs/adapter-mkfs; "
+        "rm -rf \"$staging\"; "
+        "mkdir -p \"$staging/good\" \"$staging/wrong\"; "
+        "printf 'lc06-adapter\\n' > \"$staging/good/marker.txt\"; "
+        "printf 'lc06-adapter\\n' > \"$staging/wrong/marker.txt\"; "
+        "truncate -s 16M target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
+        "\"$result/bin/mkfs.ext2\" -q -F -d \"$staging/good\" -U 6c636f36-6164-4070-7465-723031323334 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
+        "mv target/qualification/inputs/cache/adapter-disk.ext2.tmp target/qualification/inputs/cache/adapter-disk.ext2; "
+        "truncate -s 16M target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
+        "\"$result/bin/mkfs.ext2\" -q -F -d \"$staging/wrong\" -U 77726f6e-6764-4973-6b31-323334353637 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
+        "mv target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp target/qualification/inputs/cache/adapter-wrong-disk.ext2; "
+        "truncate -s 16M target/qualification/inputs/cache/adapter-wrong-filesystem.img"
+    )
+    _docker_build(repo, script, "adapter disk fixture build")
 
 
 def _docker_image_digest() -> str:
@@ -280,11 +303,16 @@ def generate_lock(repo: Path) -> dict[str, Any]:
         build_probe(repo)
     build_initramfs(repo)
     initramfs_path = repo / CACHE_DIR / "initramfs.cpio"
+    build_adapter_fixtures(repo)
+    adapter_disk = repo / CACHE_DIR / "adapter-disk.ext2"
+    adapter_wrong_disk = repo / CACHE_DIR / "adapter-wrong-disk.ext2"
+    adapter_wrong_filesystem = repo / CACHE_DIR / "adapter-wrong-filesystem.img"
     selection = _load_selection(repo, "selfcheck")
     control_selection = _load_selection(repo, "lc02-selftest")
+    adapter_selection = _load_selection(repo, "adapter")
     return {
         "schema": 1,
-        "lock_revision": "lc05-r1",
+        "lock_revision": "lc06-r1",
         "repository": repository_policy(),
         "harness": harness_lock(repo),
         "dev_container": {
@@ -306,6 +334,18 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "cmdline": BASE_CMDLINE,
             "bzimage_path": "test/qualification/linux/bzImage",
             "bzimage_sha256": _sha256_file(linux_path),
+        },
+        "adapter": {
+            "e2fsprogs_nix_path": "test/qualification/adapter/e2fsprogs.nix",
+            "e2fsprogs_nix_sha256": _sha256_file(repo / "test/qualification/adapter/e2fsprogs.nix"),
+            "disk_size_bytes": 16777216,
+            "serial": "qual-lc06-adapter",
+            "disk_path": str(CACHE_DIR / "adapter-disk.ext2"),
+            "disk_sha256": _sha256_file(adapter_disk),
+            "wrong_disk_path": str(CACHE_DIR / "adapter-wrong-disk.ext2"),
+            "wrong_disk_sha256": _sha256_file(adapter_wrong_disk),
+            "wrong_filesystem_path": str(CACHE_DIR / "adapter-wrong-filesystem.img"),
+            "wrong_filesystem_sha256": _sha256_file(adapter_wrong_filesystem),
         },
         "probe": {
             "source_path": "test/qualification/probe/probe.c",
@@ -332,6 +372,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
         "selections": {
             "selfcheck": _selection_lock(selection),
             "lc02-selftest": _selection_lock(control_selection),
+            "adapter": _selection_lock(adapter_selection),
         },
     }
 
@@ -428,6 +469,16 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("linux", "cmdline"),
         ("linux", "bzimage_path"),
         ("linux", "bzimage_sha256"),
+        ("adapter", "e2fsprogs_nix_path"),
+        ("adapter", "e2fsprogs_nix_sha256"),
+        ("adapter", "disk_size_bytes"),
+        ("adapter", "serial"),
+        ("adapter", "disk_path"),
+        ("adapter", "disk_sha256"),
+        ("adapter", "wrong_disk_path"),
+        ("adapter", "wrong_disk_sha256"),
+        ("adapter", "wrong_filesystem_path"),
+        ("adapter", "wrong_filesystem_sha256"),
         ("probe", "source_path"),
         ("probe", "source_sha256"),
         ("probe", "nix_path"),
@@ -458,6 +509,12 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("selections", "lc02-selftest", "cases"),
         ("selections", "lc02-selftest", "excluded"),
         ("selections", "lc02-selftest", "normalization_rules"),
+        ("selections", "adapter", "manifest_hash"),
+        ("selections", "adapter", "payload_hash"),
+        ("selections", "adapter", "case_ids"),
+        ("selections", "adapter", "cases"),
+        ("selections", "adapter", "excluded"),
+        ("selections", "adapter", "normalization_rules"),
     )
     missing: list[str] = []
     for path in required:
@@ -528,8 +585,10 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
 
     linux = lock["linux"]
     probe = lock["probe"]
+    adapter = lock["adapter"]
     asterinas_build = lock["asterinas_build"]
     for section, path_key, hash_key, label in (
+        (adapter, "e2fsprogs_nix_path", "e2fsprogs_nix_sha256", "adapter e2fsprogs Nix expression"),
         (linux, "makefile_path", "makefile_sha256", "Linux makefile"),
         (linux, "nix_path", "nix_sha256", "Linux Nix expression"),
         (linux, "config_path", "config_sha256", "Linux config"),
@@ -562,7 +621,21 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         build_initramfs(repo)
     _check_file_hash(repo, probe["initramfs_path"], probe["initramfs_sha256"], "probe initramfs", failures, checked)
 
-    for profile_name in ("selfcheck", "lc02-selftest"):
+    adapter_cache = repo / adapter["disk_path"]
+    if not adapter_cache.exists() and build_missing and not failures:
+        build_adapter_fixtures(repo)
+    for path_key, hash_key, label in (
+        ("disk_path", "disk_sha256", "adapter disk"),
+        ("wrong_disk_path", "wrong_disk_sha256", "adapter wrong-disk fixture"),
+        ("wrong_filesystem_path", "wrong_filesystem_sha256", "adapter wrong-filesystem fixture"),
+    ):
+        _check_file_hash(repo, adapter[path_key], adapter[hash_key], label, failures, checked)
+    if adapter["serial"] != "qual-lc06-adapter":
+        failures.append(f"adapter serial drift: {adapter['serial']!r}")
+    else:
+        checked.append("adapter serial")
+
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)
