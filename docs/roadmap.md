@@ -4,11 +4,11 @@ This is the single plan for this repository: all current and future work, and th
 
 ## Status
 
-- **State:** active. LC-01, LC-02, LC-03, and LC-04 are accepted; LC-05 is next.
+- **State:** active. LC-01, LC-02, LC-03, LC-04, and LC-05 are accepted; LC-06 is next.
 - **Campaign:** [Linux compatibility and reliability](#linux-compatibility-and-reliability) (`LC`).
-- **Last accepted revision:** `1643bdf2e` for LC-02; `c98ac38d8` for LC-04; `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
-- **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green. LC-02 closed after four independent review rounds: selftest reports 69/69 controls, compromised containment or capture now escalates panic, timeout, and hang outcomes to harness error, and XPASS accounting accepts executed pass evidence.
-- **Next slice:** LC-05.
+- **Last accepted revision:** `1e4f44fe4` for LC-05; `1643bdf2e` for LC-02; `c98ac38d8` for LC-04; `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
+- **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green. LC-02 closed after four independent review rounds: compromised containment or capture escalates panic, timeout, and hang outcomes to harness error, and XPASS accounting accepts executed pass evidence. LC-05 passed independent round-3 review with policy lock `e3d205548187b27b2b0586770c580d1b8908e5bb16940014c8813d1708651d59`, Linux self-comparison `PASS=1`, and 96/96 controls detected. An honest `--candidate asterinas` run is parked until Asterinas has a TTY-only COM2/ttyS1 result channel that kernel logs cannot contaminate.
+- **Next slice:** LC-06.
 - **First command:** `python3 test/qualification/run.py selftest && python3 test/qualification/run.py inventory --check`
 
 ## Charter
@@ -314,7 +314,7 @@ These bind every item; the controls are acceptance for LC-02, LC-05, LC-06, LC-1
 
 **Run lifecycle.** Resolve the profile and enumerate expected cases before boot. Preflight host tools, disk, memory, and CPU budget; a missing reference image or tool is `HARNESS_ERROR`, never a pass. Each run gets a new run ID, a private directory, cloned writable images, unique sockets and ports, and isolated network fixtures. Verify build identity, payload and manifest hashes, privilege identity, and the mounted filesystem, device, features, and options. The host enforces deadlines and can kill a hung guest. Validate completeness, then compare, then run validators, then publish the report atomically. Teardown removes every descendant process, VM, socket, mount, loop device, and image on success, failure, signal, and timeout. Default to one VM at a time; parallel guests are opt-in with isolated resources, and contention is recorded. Replays run offline from cached locked inputs.
 
-**Lock.** `inputs.lock.json` pins the Asterinas commit and dirty-diff hash, Cargo lockfile, toolchain, build configuration, dev-image digest and kernel artifact hash; the Linux tag, config, command line, toolchain and boot artifact hash; initramfs, probe binaries, libc and tool versions; suite source revisions, archive checksums and applied patch hashes; e2fsprogs and mkfs recipes; QEMU version; host validators and injection tools; selected case IDs, contract revisions, expected subtests, exclusions, and normalization rules. Every `__asterinas__` branch in a test is inventoried; an environment adapter may change paths or setup, never the asserted observation.
+**Lock.** The committed `inputs.lock.json` policy lock pins the Cargo lockfile, toolchain, build configuration, dev-image digest and kernel artifact hash; the Linux tag, config, command line, toolchain and boot artifact hash; initramfs, probe binaries, libc and tool versions; suite source revisions, archive checksums and applied patch hashes; e2fsprogs and mkfs recipes; QEMU version; host validators and injection tools; selected case IDs, contract revisions, expected subtests, exclusions, and normalization rules. Each run's effective input lock pins the Asterinas commit, dirty-diff hash, policy lock hash, and copied input hashes under D8. Every `__asterinas__` branch in a test is inventoried; an environment adapter may change paths or setup, never the asserted observation.
 
 **Case record.** ID, contract revision, area, item ID, upstream test or bug IDs; source, revision, license and patch hash; profile membership (required, discovery, deferred, excluded); prerequisites (arch, backend, privileges, config, flags, feature masks); procedure and expected subtests; comparison mode (exact, normalized, allowed-outcome, invariant) with every ignored field justified; deadline, budget, seed, iterations; required artifacts, validators, replay entry point.
 
@@ -364,6 +364,8 @@ External specifications: [ext4 format](https://docs.kernel.org/filesystems/ext4/
 
 ## Later
 
+- **Qualification input-copy hardening:** compare copied input hashes with the policy lock before boot, closing the narrow post-verify substitution window.
+- **Probe toolchain reuse:** treat the dev-container digest as a probe build input when deciding whether a cached probe can be reused.
 - **CI progression** (O3): add per-change manifest/parser controls; after G1, a bounded paired ext2/core suite on KVM; after G2, the ext4 short list and durability controls; scheduled longer runs. Started by the owner with "fix ci".
 - **Focused upstream adapters:** packetdrill, selected blktests, libdrm/IGT, libinput, minimized syzkaller reproducers, and full coverage-guided syzkaller integration, each admitted by a named failure class.
 - **Newer-Linux discovery lane:** run profiles against the latest mainline, independent of the qualification reference.
