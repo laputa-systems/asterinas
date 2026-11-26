@@ -1,7 +1,9 @@
 import copy
 import errno
 import json
+import os
 import shutil
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -357,6 +359,42 @@ def selftest_main() -> int:
 
     evaluate("wrong-manifest-hash", wrong_manifest_hash)
 
+    def nonfinite_timestamp() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[0]["emitted_at"] = float("nan")
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("malformed-output", mutate)
+
+    evaluate("nonfinite-emitted-at", nonfinite_timestamp)
+
+    def infinite_timestamp() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[0]["emitted_at"] = float("inf")
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("malformed-output", mutate)
+
+    evaluate("infinite-emitted-at", infinite_timestamp)
+
+    def non_string_case_id() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[0]["case_id"] = 4
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("malformed-output", mutate)
+
+    evaluate("non-string-case-id", non_string_case_id)
+
+    def unhashable_case_id() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[0]["case_id"] = []
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("malformed-output", mutate)
+
+    evaluate("unhashable-case-id", unhashable_case_id)
+
     evaluate(
         "wrong-errno",
         lambda: (
@@ -422,6 +460,48 @@ def selftest_main() -> int:
 
     evaluate("accounting-fail-all-pass", accounting_fail_all_pass)
 
+    def accounting_contradiction(disposition: str, roles: tuple[RoleResult, ...]) -> tuple[bool, str]:
+        outcome = CaseOutcome(selection.case_ids[0], disposition, roles)
+        result = reconcile(selection.case_ids, [outcome])
+        detail = "; ".join(item.render() for item in result.diagnostics)
+        return result.has("contradiction"), detail or "no diagnostics"
+
+    evaluate(
+        "accounting-reference-failure-pass",
+        lambda: accounting_contradiction(
+            "REFERENCE_FAILURE",
+            (RoleResult("candidate", "fail"), RoleResult("reference", "pass"), RoleResult("comparator", "fail"), RoleResult("validator", "pass")),
+        ),
+    )
+    evaluate(
+        "accounting-fail-comparator-pass",
+        lambda: accounting_contradiction(
+            "FAIL",
+            (RoleResult("candidate", "fail"), RoleResult("reference", "pass"), RoleResult("comparator", "pass"), RoleResult("validator", "pass")),
+        ),
+    )
+    evaluate(
+        "accounting-timeout-missing-evidence",
+        lambda: accounting_contradiction(
+            "TIMEOUT",
+            (RoleResult("reference", "not-required"), RoleResult("comparator", "fail"), RoleResult("validator", "not-required")),
+        ),
+    )
+    evaluate(
+        "accounting-panic-wrong-evidence",
+        lambda: accounting_contradiction(
+            "PANIC",
+            (RoleResult("candidate", "pass"), RoleResult("reference", "not-required"), RoleResult("comparator", "fail"), RoleResult("validator", "pass")),
+        ),
+    )
+    evaluate(
+        "accounting-harness-missing-evidence",
+        lambda: accounting_contradiction(
+            "HARNESS_ERROR",
+            (RoleResult("reference", "not-required"), RoleResult("comparator", "fail"), RoleResult("validator", "pass")),
+        ),
+    )
+
     supervisor = Supervisor()
     python = sys.executable
     budget_result = supervisor.run([python, "-c", "print('x' * 100)"], timeout=3, output_budget=10)
@@ -429,12 +509,38 @@ def selftest_main() -> int:
         checks.append("supervisor output byte budget bounds captured output")
     else:
         internal_failures.append("supervisor output byte budget positive check failed")
+    if budget_result.teardown_backend != "unsupported" and budget_result.teardown_state == "verified-empty" and budget_result.outcome == "exit":
+        checks.append("leaf target teardown is verified empty through " + budget_result.teardown_backend)
+    elif budget_result.teardown_backend == "unsupported" and budget_result.teardown_state == "fork-tainted-unproven":
+        checks.append("leaf target teardown is explicitly unproven without a strict backend")
+    else:
+        internal_failures.append(
+            f"leaf target teardown check failed: outcome={budget_result.outcome} state={budget_result.teardown_state} backend={budget_result.teardown_backend}"
+        )
 
     def guest_panic() -> tuple[bool, str]:
         result = supervisor.run([python, "-c", "print('kernel panic: injected control')"], timeout=3, output_budget=4096)
         return result.outcome == "panic", f"outcome={result.outcome}"
 
     evaluate("guest-panic", guest_panic)
+
+    def bracket_panic() -> tuple[bool, str]:
+        result = supervisor.run([python, "-c", "print('[PANIC]: setup failure')"], timeout=3, output_budget=4096)
+        return result.outcome == "panic", f"outcome={result.outcome}"
+
+    evaluate("guest-bracket-panic", bracket_panic)
+
+    def non_resettable_panic() -> tuple[bool, str]:
+        result = supervisor.run([python, "-c", "print('Non-resettable panic!')"], timeout=3, output_budget=4096)
+        return result.outcome == "panic", f"outcome={result.outcome}"
+
+    evaluate("guest-non-resettable-panic", non_resettable_panic)
+
+    plain_panic_result = supervisor.run([python, "-c", "print('panic')"], timeout=3, output_budget=4096)
+    if plain_panic_result.outcome == "exit":
+        checks.append("generic panic substring does not trigger panic classification")
+    else:
+        internal_failures.append(f"generic panic substring misclassified as {plain_panic_result.outcome}")
 
     def panic_after_output_budget() -> tuple[bool, str]:
         code = "import sys; sys.stdout.write('x' * 2048); sys.stdout.write('kernel panic: after budget'); sys.stdout.flush()"
@@ -473,21 +579,71 @@ def selftest_main() -> int:
         child = "import time; time.sleep(30)"
         code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}]); print('orphan parent exiting', flush=True)"
         result = supervisor.run([python, "-c", code], timeout=5, output_budget=4096)
-        return result.orphaned, f"orphaned={result.orphaned} outcome={result.outcome}"
+        detected = (
+            result.outcome == "harness-error"
+            and result.teardown_state == "fork-tainted-unproven"
+            and not result.observed_descendant_pids
+        )
+        return detected, f"outcome={result.outcome} teardown={result.teardown_state} observed={result.observed_descendant_pids}"
 
     evaluate("orphaned-child", orphaned_child)
 
     def regrouped_grandchild() -> tuple[bool, str]:
-        grandchild = "import os, time; os.setsid(); print('GRANDPID=%d' % os.getpid(), flush=True); time.sleep(30)"
-        child = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {grandchild!r}]); time = __import__('time'); time.sleep(30)"
-        code = f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(0.25)"
+        sync_path = bundle.work_dir / "fast-setsid-ready"
+        grandchild = (
+            f"import os, time; os.setsid(); open({str(sync_path)!r}, 'w').close(); "
+            "devnull = os.open(os.devnull, os.O_WRONLY); os.dup2(devnull, 1); os.dup2(devnull, 2); time.sleep(30)"
+        )
+        child = (
+            f"import subprocess, sys; process = subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
+            "print('GRANDPID=%d' % process.pid, flush=True)"
+        )
+        code = (
+            f"import os, subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {child!r}]); "
+            f"deadline = time.time() + 1.0\nwhile not os.path.exists({str(sync_path)!r}) and time.time() < deadline:\n time.sleep(0.005)"
+        )
         result = supervisor.run([python, "-c", code], timeout=5, output_budget=4096)
+        try:
+            sync_path.unlink()
+        except FileNotFoundError:
+            pass
         marker = next((line for line in result.stdout.decode(errors="replace").splitlines() if line.startswith("GRANDPID=")), "")
         grandchild_pid = int(marker.split("=", 1)[1]) if marker else -1
-        detected = result.orphaned and grandchild_pid in result.orphan_pids
-        return detected, f"orphaned={result.orphaned} grandchild={grandchild_pid} survivors={result.orphan_pids} outcome={result.outcome}"
+        cleanup_error = ""
+        survivor_was_alive = False
+        if grandchild_pid > 0:
+            try:
+                os.kill(grandchild_pid, 0)
+                survivor_was_alive = True
+            except ProcessLookupError:
+                pass
+            try:
+                os.kill(grandchild_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(grandchild_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.01)
+            else:
+                cleanup_error = "test-owned grandchild survived cleanup"
+        detected = (
+            grandchild_pid > 0
+            and survivor_was_alive
+            and result.outcome == "harness-error"
+            and result.teardown_state in {"fork-tainted-unproven", "failed"}
+            and not cleanup_error
+        )
+        detail = (
+            f"outcome={result.outcome} teardown={result.teardown_state} grandchild={grandchild_pid} alive={survivor_was_alive} "
+            f"observed={result.observed_descendant_pids} details={result.teardown_details} cleanup={cleanup_error or 'ok'}"
+        )
+        return detected, detail
 
-    evaluate("regrouped-orphaned-grandchild", regrouped_grandchild)
+    evaluate("fast-double-fork-setsid-unproven", regrouped_grandchild)
 
     def interrupted_cleanup() -> tuple[bool, str]:
         def cleanup() -> None:

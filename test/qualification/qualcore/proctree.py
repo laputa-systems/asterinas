@@ -1,7 +1,4 @@
-import os
-import signal
 import subprocess
-import time
 from dataclasses import dataclass
 
 
@@ -13,7 +10,6 @@ class ProcessTreeError(Exception):
 class ProcessInfo:
     pid: int
     ppid: int
-    pgid: int
     state: str
 
     @property
@@ -22,7 +18,7 @@ class ProcessInfo:
 
 
 def snapshot_processes() -> dict[int, ProcessInfo]:
-    command = ["ps", "-eo", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "stat="]
+    command = ["ps", "-eo", "pid=", "-o", "ppid=", "-o", "stat="]
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=2, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -32,13 +28,13 @@ def snapshot_processes() -> dict[int, ProcessInfo]:
     processes: dict[int, ProcessInfo] = {}
     for line in completed.stdout.splitlines():
         fields = line.split()
-        if len(fields) != 4:
+        if len(fields) != 3:
             raise ProcessTreeError(f"process snapshot line is malformed: {line!r}")
         try:
-            pid, ppid, pgid = (int(fields[0]), int(fields[1]), int(fields[2]))
+            pid, ppid = (int(fields[0]), int(fields[1]))
         except ValueError as error:
             raise ProcessTreeError(f"process snapshot line has non-numeric IDs: {line!r}") from error
-        processes[pid] = ProcessInfo(pid, ppid, pgid, fields[3])
+        processes[pid] = ProcessInfo(pid, ppid, fields[2])
     return processes
 
 
@@ -67,35 +63,3 @@ class ProcessTreeTracker:
             for pid in self.tracked_pids
             if pid != self.root_pid and pid in snapshot and not snapshot[pid].zombie
         )
-
-
-def terminate_processes(pids: list[int]) -> list[int]:
-    candidates = sorted(pid for pid in set(pids) if pid > 1)
-    if not candidates:
-        return []
-    for pid in candidates:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
-    deadline = time.monotonic() + 0.3
-    remaining = candidates
-    while time.monotonic() < deadline:
-        snapshot = snapshot_processes()
-        remaining = [pid for pid in candidates if pid in snapshot and not snapshot[pid].zombie]
-        if not remaining:
-            return []
-        time.sleep(0.02)
-    for pid in remaining:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-    deadline = time.monotonic() + 0.3
-    while time.monotonic() < deadline:
-        snapshot = snapshot_processes()
-        remaining = [pid for pid in remaining if pid in snapshot and not snapshot[pid].zombie]
-        if not remaining:
-            return []
-        time.sleep(0.02)
-    return remaining

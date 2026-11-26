@@ -3,6 +3,7 @@ import os
 import select
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -10,13 +11,32 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
-from .proctree import ProcessTreeError, ProcessTreeTracker, terminate_processes
+from .proctree import ProcessTreeError, ProcessTreeTracker
 
 
 OutputHook = Callable[[str, bytes], str | None]
 CleanupHook = Callable[[], None]
 LogOpener = Callable[[], BinaryIO]
 PipeCallback = Callable[[str, bytes, bytes], None]
+
+_PROC_NOTE_FORK = 0x40000000
+_EXEC_WRAPPER = "\n".join(
+    (
+        "import os, sys",
+        "release_fd = int(sys.argv[1])",
+        "error_fd = int(sys.argv[2])",
+        "target = sys.argv[3:]",
+        "os.read(release_fd, 1)",
+        "os.close(release_fd)",
+        "os.set_inheritable(error_fd, False)",
+        "try:",
+        "    os.execvp(target[0], target)",
+        "except OSError as error:",
+        "    message = str(error.errno or 0).encode() + b'\\n' + str(error).encode(errors='replace')",
+        "    os.write(error_fd, message)",
+        "    os._exit(127)",
+    )
+)
 
 
 @dataclass
@@ -29,14 +49,16 @@ class SupervisedResult:
     stdout_bytes: int
     stderr_bytes: int
     output_truncated: bool
-    orphaned: bool
+    teardown_state: str
+    teardown_backend: str
     duration_seconds: float
     cleanup_errors: list[str] = field(default_factory=list)
     log_errors: list[OSError] = field(default_factory=list)
     hook_errors: list[str] = field(default_factory=list)
     reader_errors: list[str] = field(default_factory=list)
     tree_errors: list[str] = field(default_factory=list)
-    orphan_pids: list[int] = field(default_factory=list)
+    teardown_details: list[str] = field(default_factory=list)
+    observed_descendant_pids: list[int] = field(default_factory=list)
 
 
 class _LogSink:
@@ -124,21 +146,42 @@ def _group_exists(pgid: int) -> bool:
         return True
 
 
-def _signal_group(process: subprocess.Popen, pgid: int, sig: int) -> None:
+def _signal_group(pgid: int, sig: int) -> bool:
     try:
         os.killpg(pgid, sig)
+        return True
     except (ProcessLookupError, PermissionError):
-        return
+        return False
 
 
 def _stop_group(process: subprocess.Popen, pgid: int) -> None:
     if process.poll() is None:
-        _signal_group(process, pgid, signal.SIGTERM)
+        _signal_group(pgid, signal.SIGTERM)
         deadline = time.monotonic() + 0.25
         while time.monotonic() < deadline and process.poll() is None:
             time.sleep(0.01)
     if process.poll() is None or _group_exists(pgid):
-        _signal_group(process, pgid, signal.SIGKILL)
+        _signal_group(pgid, signal.SIGKILL)
+
+
+def _close_fd(fd: int | None) -> None:
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _proc_fork_backend() -> str | None:
+    required = ("kqueue", "kevent", "KQ_FILTER_PROC", "KQ_EV_ADD", "KQ_EV_ENABLE", "KQ_EV_ERROR")
+    if not all(hasattr(select, name) for name in required):
+        return None
+    if sys.platform == "darwin":
+        return "macos-kqueue-proc-fork"
+    if sys.platform.startswith("freebsd"):
+        return "freebsd-kqueue-proc-fork"
+    return None
 
 
 class Supervisor:
@@ -153,7 +196,7 @@ class Supervisor:
         output_budget: int = 65536,
         cwd: str | Path | None = None,
         env: dict[str, str] | None = None,
-        panic_markers: tuple[bytes, ...] = (b"kernel panic", b"panic:"),
+        panic_markers: tuple[bytes, ...] = (b"kernel panic", b"panic:", b"[panic]", b"non-resettable panic!"),
         event_hook: OutputHook | None = None,
         cleanup: CleanupHook | None = None,
         log_path: str | Path | None = None,
@@ -171,6 +214,10 @@ class Supervisor:
             raise ValueError("process_tree_interval must be positive")
         started = time.monotonic()
         command = tuple(str(item) for item in argv)
+        if not command:
+            raise ValueError("argv must not be empty")
+        if any("\x00" in item for item in command):
+            raise ValueError("argv items must not contain NUL")
         writer = None
         open_errors: list[OSError] = []
         if log_opener is not None:
@@ -186,17 +233,39 @@ class Supervisor:
         sink = _LogSink(writer)
         sink.errors.extend(open_errors)
 
+        backend = _proc_fork_backend()
+        use_exec_wrapper = backend is not None
+        release_read = None
+        release_write = None
+        exec_error_read = None
+        exec_error_write = None
+        pipe_fds: list[int] = []
+        popen_command = command
+        pass_fds: tuple[int, ...] = ()
+
         try:
+            if use_exec_wrapper:
+                release_read, release_write = os.pipe()
+                pipe_fds.extend((release_read, release_write))
+                exec_error_read, exec_error_write = os.pipe()
+                pipe_fds.extend((exec_error_read, exec_error_write))
+                popen_command = tuple(
+                    [sys.executable, "-c", _EXEC_WRAPPER, str(release_read), str(exec_error_write), *command]
+                )
+                pass_fds = (release_read, exec_error_write)
             process = subprocess.Popen(
-                command,
+                popen_command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 cwd=cwd,
                 env=env,
                 start_new_session=True,
+                pass_fds=pass_fds,
             )
         except OSError as error:
+            for fd in pipe_fds:
+                _close_fd(fd)
             if cleanup is not None:
                 cleanup_errors = []
                 try:
@@ -207,28 +276,87 @@ class Supervisor:
                 cleanup_errors = []
             sink.close()
             return SupervisedResult(
-                command,
-                None,
-                "spawn-error",
-                b"",
-                str(error).encode(),
-                0,
-                0,
-                False,
-                False,
-                time.monotonic() - started,
-                cleanup_errors,
-                sink.errors,
+                argv=command,
+                exit_code=None,
+                outcome="spawn-error",
+                stdout=b"",
+                stderr=str(error).encode(),
+                stdout_bytes=0,
+                stderr_bytes=0,
+                output_truncated=False,
+                teardown_state="verified-empty",
+                teardown_backend=backend or "unsupported",
+                duration_seconds=time.monotonic() - started,
+                cleanup_errors=cleanup_errors,
+                log_errors=sink.errors,
             )
 
+        _close_fd(release_read)
+        _close_fd(exec_error_write)
+        release_read = None
+        exec_error_write = None
         pgid = os.getpgid(process.pid)
         tracker = ProcessTreeTracker(process.pid)
         tree_errors: list[str] = []
-        orphan_pids: list[int] = []
+        observed_descendant_pids: list[int] = []
         stop_reason: list[str] = []
         hook_errors: list[str] = []
+        watcher_errors: list[str] = []
+        teardown_details: list[str] = []
+        fork_event_seen = False
+        fork_watcher = None
         last_output = time.monotonic()
         scan_tails = {"stdout": b"", "stderr": b""}
+        if backend is None:
+            teardown_details.append("strict teardown proof backend unavailable")
+
+        def record_watcher_error(message: str) -> None:
+            if len(watcher_errors) < 4:
+                watcher_errors.append(message)
+
+        if use_exec_wrapper:
+            try:
+                fork_watcher = select.kqueue()
+                fork_event = select.kevent(
+                    process.pid,
+                    filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE,
+                    fflags=_PROC_NOTE_FORK,
+                )
+                fork_watcher.control([fork_event], 0, 0)
+            except (OSError, ValueError, OverflowError) as error:
+                record_watcher_error(f"process fork watcher registration failed: {error}")
+                if fork_watcher is not None:
+                    try:
+                        fork_watcher.close()
+                    except OSError:
+                        pass
+                    fork_watcher = None
+            try:
+                if release_write is not None:
+                    os.write(release_write, b"1")
+            except OSError as error:
+                record_watcher_error(f"controlled exec release failed: {error}")
+                if not stop_reason:
+                    stop_reason.append("harness-error")
+            finally:
+                _close_fd(release_write)
+                release_write = None
+
+        def drain_fork_events() -> None:
+            nonlocal fork_event_seen
+            if fork_watcher is None:
+                return
+            try:
+                events = fork_watcher.control(None, 16, 0)
+            except OSError as error:
+                record_watcher_error(f"process fork watcher read failed: {error}")
+                return
+            for event in events:
+                if event.flags & select.KQ_EV_ERROR:
+                    record_watcher_error(f"process fork watcher event error: {event.data}")
+                if event.fflags & _PROC_NOTE_FORK:
+                    fork_event_seen = True
 
         def observe(stream: str, chunk: bytes, retained: bytes) -> None:
             nonlocal last_output
@@ -258,6 +386,9 @@ class Supervisor:
             _stop_group(process, pgid)
             process.wait()
             sink.close()
+            _close_fd(exec_error_read)
+            if fork_watcher is not None:
+                fork_watcher.close()
             raise RuntimeError("supervised process pipes were not created")
         stop_readers = threading.Event()
         readers = [
@@ -276,33 +407,38 @@ class Supervisor:
                 if not stop_reason:
                     stop_reason.append("harness-error")
 
-        def terminate_tracked_survivors() -> None:
-            nonlocal orphan_pids
+        def observe_survivors() -> None:
+            nonlocal observed_descendant_pids
             try:
-                survivors = tracker.survivors()
+                observed_descendant_pids = tracker.survivors()
             except ProcessTreeError as error:
                 if len(tree_errors) < 4:
                     tree_errors.append(str(error))
-                return
-            orphan_pids = survivors
-            if not survivors:
-                return
-            try:
-                remaining = terminate_processes(survivors)
-            except ProcessTreeError as error:
-                if len(tree_errors) < 4:
-                    tree_errors.append(str(error))
-                return
-            if remaining and len(tree_errors) < 4:
-                tree_errors.append(f"surviving descendant processes could not be killed: {remaining}")
+
+        def read_exec_error() -> bytes:
+            if exec_error_read is None:
+                return b""
+            chunks: list[bytes] = []
+            while True:
+                try:
+                    chunk = os.read(exec_error_read, 4096)
+                except OSError as error:
+                    record_watcher_error(f"target exec error pipe read failed: {error}")
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
 
         outcome = "exit"
-        orphaned = False
         reader_errors: list[str] = []
+        exec_error = b""
+        group_teardown_failed = False
         try:
             update_tree()
             last_tree_update = time.monotonic()
             while True:
+                drain_fork_events()
                 if stop_reason:
                     outcome = stop_reason[0]
                     _stop_group(process, pgid)
@@ -326,25 +462,32 @@ class Supervisor:
 
             deadline = time.monotonic() + 2.0
             while process.poll() is None and time.monotonic() < deadline:
+                drain_fork_events()
                 time.sleep(0.01)
             if process.poll() is None:
                 _stop_group(process, pgid)
             process.wait()
+            drain_fork_events()
 
-            group_orphaned = outcome == "exit" and _group_exists(pgid)
-            if group_orphaned:
-                _signal_group(process, pgid, signal.SIGKILL)
+            if _group_exists(pgid):
+                _signal_group(pgid, signal.SIGKILL)
                 deadline = time.monotonic() + 1.0
                 while _group_exists(pgid) and time.monotonic() < deadline:
                     time.sleep(0.01)
+                if _group_exists(pgid):
+                    group_teardown_failed = True
+                    teardown_details.append("original process group still exists after SIGKILL")
 
-            terminate_tracked_survivors()
-            orphaned = group_orphaned or bool(orphan_pids)
+            observe_survivors()
+            exec_error = read_exec_error()
+            if exec_error:
+                outcome = "spawn-error"
+                teardown_details.append("target exec failed: " + exec_error.decode(errors="replace").strip())
 
             for reader in readers:
                 reader.join(timeout=1.0)
             if any(reader.is_alive() for reader in readers):
-                _signal_group(process, pgid, signal.SIGKILL)
+                _signal_group(pgid, signal.SIGKILL)
                 stop_readers.set()
                 for reader in readers:
                     reader.join(timeout=1.0)
@@ -353,18 +496,20 @@ class Supervisor:
                 outcome = stop_reason[0]
             if outcome == "exit" and (reader_errors or tree_errors):
                 outcome = "harness-error"
-        except BaseException as primary_error:
+        except BaseException:
             _stop_group(process, pgid)
             process.wait()
-            try:
-                terminate_tracked_survivors()
-            except Exception as tree_error:
-                primary_error.add_note(f"descendant cleanup failed: {tree_error}")
             raise
         finally:
             stop_readers.set()
             for reader in readers:
                 reader.join(timeout=0.2)
+            if fork_watcher is not None:
+                try:
+                    fork_watcher.close()
+                except OSError:
+                    pass
+            _close_fd(exec_error_read)
             cleanup_errors: list[str] = []
             for pipe in (process.stdout, process.stderr):
                 if pipe is None:
@@ -380,24 +525,48 @@ class Supervisor:
                     cleanup_errors.append(str(error))
             sink.close()
 
+        if fork_event_seen:
+            teardown_details.append("supervised root process forked; recursive teardown is unproven")
+        teardown_details.extend(f"fork watcher: {item}" for item in watcher_errors)
+        teardown_details.extend(f"process scan: {item}" for item in tree_errors)
+        if observed_descendant_pids:
+            teardown_details.append(f"observed descendant processes still running: {observed_descendant_pids}")
+
+        if group_teardown_failed or observed_descendant_pids:
+            teardown_state = "failed"
+        elif backend is None or fork_event_seen or watcher_errors or tree_errors:
+            teardown_state = "fork-tainted-unproven"
+        else:
+            teardown_state = "verified-empty"
+        if outcome == "exit" and teardown_state != "verified-empty":
+            outcome = "harness-error"
+
         stdout_reader, stderr_reader = readers
+        stderr = stderr_reader.data
+        result_exit_code = process.returncode
+        if exec_error:
+            message = exec_error.split(b"\n", 1)[1] if b"\n" in exec_error else exec_error
+            stderr = stderr + (b"\n" if stderr else b"") + message
+            result_exit_code = None
         return SupervisedResult(
             argv=command,
-            exit_code=process.returncode,
+            exit_code=result_exit_code,
             outcome=outcome,
             stdout=stdout_reader.data,
-            stderr=stderr_reader.data,
+            stderr=stderr,
             stdout_bytes=stdout_reader.total_bytes,
             stderr_bytes=stderr_reader.total_bytes,
             output_truncated=stdout_reader.truncated or stderr_reader.truncated,
-            orphaned=orphaned,
+            teardown_state=teardown_state,
+            teardown_backend=backend or "unsupported",
             duration_seconds=time.monotonic() - started,
             cleanup_errors=cleanup_errors,
             log_errors=sink.errors,
             hook_errors=hook_errors,
             reader_errors=reader_errors,
             tree_errors=tree_errors,
-            orphan_pids=orphan_pids,
+            teardown_details=teardown_details,
+            observed_descendant_pids=observed_descendant_pids,
         )
 
 

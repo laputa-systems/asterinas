@@ -1,4 +1,5 @@
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,6 +90,9 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
         if missing:
             _add(ingestion, "malformed-output", f"line {line_number} is missing {', '.join(missing)}")
             continue
+        if not isinstance(record["manifest_hash"], str) or not isinstance(record["payload_hash"], str):
+            _add(ingestion, "malformed-output", f"line {line_number} manifest_hash and payload_hash must be strings")
+            continue
         if record["manifest_hash"] != context.manifest_hash:
             _add(ingestion, "wrong-manifest-hash", f"line {line_number} case {record.get('case_id')}")
             continue
@@ -96,6 +100,9 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
             _add(ingestion, "wrong-payload-hash", f"line {line_number} case {record.get('case_id')}")
             continue
         case_id = record["case_id"]
+        if not isinstance(case_id, str):
+            _add(ingestion, "malformed-output", f"line {line_number} case_id is not a string")
+            continue
         if case_id not in selected:
             _add(ingestion, "unknown-case", f"line {line_number} names {case_id!r}")
             continue
@@ -112,14 +119,17 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
         seen_sequences.add(sequence)
         last_sequence = sequence
         kind = record["kind"]
-        if kind not in {"start", "subtest", "final"}:
+        if not isinstance(kind, str) or kind not in {"start", "subtest", "final"}:
             _add(ingestion, "malformed-output", f"line {line_number} has unknown kind {kind!r}")
             continue
         if isinstance(record["emitted_at"], bool) or not isinstance(record["emitted_at"], (int, float)):
             _add(ingestion, "malformed-output", f"line {line_number} emitted_at is not numeric")
             continue
+        if isinstance(record["emitted_at"], float) and not math.isfinite(record["emitted_at"]):
+            _add(ingestion, "malformed-output", f"line {line_number} emitted_at is not finite")
+            continue
         now = context.now or time.time()
-        if float(record["emitted_at"]) > now + context.future_tolerance_seconds:
+        if record["emitted_at"] > now + context.future_tolerance_seconds:
             _add(ingestion, "future-timestamp", f"line {line_number} case {case_id} is emitted in the future")
             continue
         ingestion.records.setdefault(case_id, []).append(record)
@@ -135,7 +145,7 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
         final = finals[0]
         ingestion.finals[case_id] = final
         now = context.now or time.time()
-        if now - float(final["emitted_at"]) > context.max_age_seconds:
+        if final["emitted_at"] < now - context.max_age_seconds:
             _add(ingestion, "stale-log", f"{case_id} final record is older than {context.max_age_seconds} seconds")
         _validate_case_records(case_id, context.cases[case_id], records, final, ingestion)
 
@@ -238,6 +248,9 @@ def _validate_case_records(case_id: str, case: CaseSpec, records: list[dict[str,
     actual_subtest_count = len(subtest_records)
     final_subtests = final.get("subtests_completed")
     final_assertions = final.get("assertions_completed")
+    for field_name, value in (("subtests_completed", final_subtests), ("assertions_completed", final_assertions)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            _add(ingestion, "malformed-output", f"{case_id} final {field_name} is not a nonnegative integer")
     if final_subtests != expected_subtest_count or final_subtests != actual_subtest_count:
         _add(
             ingestion,

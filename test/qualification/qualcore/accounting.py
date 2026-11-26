@@ -20,6 +20,11 @@ TERMINAL_DISPOSITIONS = {
 }
 
 RESULT_ROLES = {"candidate", "reference", "comparator", "validator"}
+RUNTIME_EVIDENCE_STATUSES = {
+    "TIMEOUT": "timeout",
+    "PANIC": "panic",
+    "HARNESS_ERROR": "harness-error",
+}
 
 
 @dataclass(frozen=True)
@@ -106,11 +111,24 @@ def reconcile(selected_case_ids: Iterable[str], outcomes: Iterable[CaseOutcome])
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts reference {reference.status}"))
             if validator is not None and validator.status not in {"pass", "not-required"}:
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts validator {validator.status}"))
-        if outcome.disposition == "FAIL" and candidate is not None and comparator is not None:
-            if candidate.status == "pass" and comparator.status == "pass":
-                diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} FAIL contradicts all-pass candidate and comparator results"))
-        if outcome.disposition == "REFERENCE_FAILURE" and reference is None:
-            diagnostics.append(Diagnostic("incomplete-accounting", f"{outcome.case_id} REFERENCE_FAILURE has no reference result"))
+        if outcome.disposition == "FAIL" and comparator is not None and comparator.status == "pass":
+            diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} FAIL contradicts comparator pass"))
+        if outcome.disposition == "REFERENCE_FAILURE":
+            if reference is None:
+                diagnostics.append(Diagnostic("incomplete-accounting", f"{outcome.case_id} REFERENCE_FAILURE has no reference result"))
+            elif reference.status == "pass":
+                diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} REFERENCE_FAILURE contradicts reference pass"))
+        runtime_status = RUNTIME_EVIDENCE_STATUSES.get(outcome.disposition)
+        if runtime_status is not None:
+            if candidate is None:
+                diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} {outcome.disposition} lacks candidate runtime evidence"))
+            elif candidate.status != runtime_status:
+                diagnostics.append(
+                    Diagnostic(
+                        "contradiction",
+                        f"{outcome.case_id} {outcome.disposition} contradicts candidate status {candidate.status}",
+                    )
+                )
 
     counts = Counter(outcome.disposition for outcome in by_case.values())
     accounting = Accounting(by_case, counts, len(supplied_selection), diagnostics)
