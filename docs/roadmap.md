@@ -4,11 +4,11 @@ This is the single plan for this repository: all current and future work, and th
 
 ## Status
 
-- **State:** active. LC-01, LC-02, LC-03, and LC-04 are accepted; LC-05 is next.
+- **State:** active. LC-01, LC-03, and LC-04 are accepted. LC-02 is integrated but its acceptance is suspended while reviewer-found correctness defects are repaired; LC-05 waits on that repair.
 - **Campaign:** [Linux compatibility and reliability](#linux-compatibility-and-reliability) (`LC`).
-- **Last accepted revision:** `a3734f2cd` for LC-02 and LC-04; `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
-- **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green.
-- **Next slice:** LC-05.
+- **Last accepted revision:** `c98ac38d8` for LC-04; `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
+- **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green. LC-02 repair is red: independent review found a fail-open exec gate and cleanup gap, non-hermetic errno comparison, incomplete strict validation, incomplete accounting contradictions, and evidence-capture failures misclassified as clean exits.
+- **Next slice:** repair LC-02, then LC-05.
 - **First command:** `python3 test/qualification/run.py selftest && python3 test/qualification/run.py inventory --check`
 
 ## Charter
