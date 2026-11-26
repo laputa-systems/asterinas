@@ -27,9 +27,7 @@ impl ProcFileOps for EnvironFileOps {
     }
 
     fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
-        let Some(process) = self.0.process() else {
-            return Err(errno!(ESRCH, "the process does not exist"));
-        };
+        let process = self.0.process().clone();
 
         let vmar_guard = process.lock_vmar();
         let Some(init_stack_reader) = vmar_guard.init_stack_reader() else {

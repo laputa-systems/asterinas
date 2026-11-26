@@ -14,7 +14,7 @@ use crate::{
         vfs::inode::{Inode, RevalidationPolicy},
     },
     prelude::*,
-    process::pid_table::{PidEntry, PidEntryType},
+    process::Process,
     thread::Thread,
 };
 
@@ -30,14 +30,14 @@ pub(super) struct PidDirOps(
 );
 
 impl PidDirOps {
-    pub(super) fn new_inode(pid_entry: Arc<PidEntry>, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        let this = Self(TidDirOps::new(pid_entry));
+    pub(super) fn new_inode(process: Arc<Process>, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
+        let this = Self(TidDirOps::new(process, None));
         // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3493>
         ProcDir::new(this, parent, mkmod!(a+rx))
     }
 
-    pub(super) fn pid_entry(&self) -> &Arc<PidEntry> {
-        self.0.pid_entry()
+    pub(super) fn process(&self) -> &Arc<Process> {
+        self.0.process()
     }
 
     pub(super) fn tid_dir_ops(&self) -> &TidDirOps {
@@ -60,7 +60,7 @@ impl ProcDirOps for PidDirOps {
     }
 
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>> {
-        if self.0.pid_entry().type_().is_none() {
+        if !self.0.is_valid() {
             return Err(errno!(ESRCH, "the process does not exist"));
         }
 
@@ -83,14 +83,14 @@ impl ProcDirOps for PidDirOps {
     }
 
     fn revalidate_exists(&self, _name: &str, _child: &dyn Inode) -> bool {
-        matches!(self.pid_entry().type_(), Some(PidEntryType::Process))
+        self.0.is_valid()
     }
 
     fn visit_entries_from_offset<'a, F>(&'a self, offset: usize, visit_fn: F) -> Result<()>
     where
         F: FnMut(ReaddirEntry<'a>) -> Result<()>,
     {
-        if self.0.pid_entry().type_().is_none() {
+        if !self.0.is_valid() {
             return Err(errno!(ENOENT, "the process does not exist"));
         }
 

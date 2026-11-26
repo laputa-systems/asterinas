@@ -30,7 +30,6 @@ Unsupported operations:
 * `PR_MPX_ENABLE_MANAGEMENT` and `PR_MPX_DISABLE_MANAGEMENT`
 * `PR_PAC_RESET_KEYS`
 * `PR_SET_PTRACER`
-* `PR_GET_SECCOMP` and `PR_SET_SECCOMP`
 * `PR_GET_SPECULATION_CTRL` and `PR_SET_SPECULATION_CTRL`
 * `PR_SVE_GET_VL` and `PR_SVE_SET_VL`
 * `PR_SET_SYSCALL_USER_DISPATCH`
@@ -47,6 +46,30 @@ Unsupported operations:
 
 For more information,
 see [the man page](https://man7.org/linux/man-pages/man2/prctl.2.html).
+
+### `seccomp`
+
+Supported functionality in SCML:
+
+```c
+{{#include seccomp.scml}}
+```
+
+Unsupported operations:
+* `SECCOMP_GET_NOTIF_SIZES` reports zeroed notification sizes
+* `SECCOMP_GET_ACTION_AVAIL` for `SECCOMP_RET_USER_NOTIF`
+
+Unsupported flags:
+* `SECCOMP_FILTER_FLAG_NEW_LISTENER`
+* `SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV`
+
+Unsupported actions:
+* `SECCOMP_RET_USER_NOTIF` (filters returning it are rejected at install time)
+* `SECCOMP_RET_TRACE` (evaluates to `ENOSYS` since the seccomp ptrace event is
+  not implemented)
+
+For more information,
+see [the man page](https://man7.org/linux/man-pages/man2/seccomp.2.html).
 
 ### `capget` and `capset`
 
@@ -73,9 +96,7 @@ Supported functionality in SCML:
 
 Unsupported flags:
 * `CLONE_NEWNET`
-* `CLONE_NEWPID`
 * `CLONE_NEWTIME`
-* `CLONE_NEWUSER`
 
 Silently-ignored flags:
 * `CLONE_SYSVSEM`
@@ -93,7 +114,6 @@ Supported functionality in SCML:
 
 Unsupported flags:
 * `CLONE_NEWNET`
-* `CLONE_NEWPID`
 * `CLONE_NEWTIME`
 * `CLONE_NEWUSER`
 

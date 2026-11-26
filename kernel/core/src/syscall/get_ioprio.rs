@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{ProcessGroup, Uid, pid_table, posix_thread::AsPosixThread},
+    process::{ProcessGroup, Uid, posix_thread::AsPosixThread},
     sched::{SchedPolicy, UserFairPolicy},
     thread::{AsThread, Thread},
 };
@@ -26,15 +26,19 @@ impl IoPrioWho {
         match which {
             1 => {
                 let target_tid = if who == 0 { ctx.posix_thread.tid() } else { who };
-                let thread = pid_table::pid_table_mut()
-                    .get_thread(target_tid)
+                let thread = ctx
+                    .process
+                    .active_pid_ns()
+                    .lookup_thread(target_tid)
                     .ok_or_else(|| errno!(ESRCH))?;
                 Ok(Self::Thread(thread))
             }
             2 => {
                 let pgid = if who == 0 { ctx.process.pgid() } else { who };
-                let group = pid_table::pid_table_mut()
-                    .get_process_group(&pgid)
+                let group = ctx
+                    .process
+                    .active_pid_ns()
+                    .lookup_process_group(pgid)
                     .ok_or_else(|| Error::new(Errno::ESRCH))?;
                 Ok(Self::ProcessGroup(group))
             }
@@ -44,8 +48,11 @@ impl IoPrioWho {
                     IoPrioAccess::Read if who == 0 => ctx.posix_thread.credentials().ruid(),
                     _ => Uid::new(who),
                 };
-                let threads: Vec<_> = pid_table::pid_table_mut()
-                    .iter_threads()
+                let threads: Vec<_> = ctx
+                    .process
+                    .active_pid_ns()
+                    .visible_threads()
+                    .into_iter()
                     .filter(|thread| thread.as_posix_thread().unwrap().credentials().ruid() == uid)
                     .collect();
                 if threads.is_empty() {

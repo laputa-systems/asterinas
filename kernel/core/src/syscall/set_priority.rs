@@ -29,7 +29,7 @@ pub(super) fn sys_set_priority(
         prio_target, new_nice
     );
 
-    let threads = get_threads(prio_target)?;
+    let threads = get_threads(prio_target, ctx.process.active_pid_ns())?;
     let mut failure = None;
     for thread in threads {
         if let Err(error) = set_thread_priority(&thread, new_nice, ctx) {

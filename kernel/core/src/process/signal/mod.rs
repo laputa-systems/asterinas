@@ -15,7 +15,7 @@ pub(crate) mod signals;
 
 use align_ext::AlignExt;
 use c_types::{siginfo_t, ucontext_t};
-use constants::SIGSEGV;
+use constants::{SIGSEGV, SIGSTOP};
 use ostd::{
     arch::cpu::context::{FpuContext, UserContext},
     mm::VmIo,
@@ -188,10 +188,16 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
             }
             return;
         }
-        SigAction::Dfl if ctx.process.is_init_process() => {
+        SigAction::Dfl
+            if sig_num != SIGKILL
+                && sig_num != SIGSTOP
+                && ctx.process.is_pid_namespace_init() =>
+        {
             // From Linux man pages "kill(2)":
             // "The only signals that can be sent to process ID 1, the init process, are those for
             // which init has explicitly installed signal handlers."
+            // `SIGKILL` and `SIGSTOP` are exceptions: like in Linux, they are always
+            // delivered, so a PID namespace can still be shut down by killing its init.
         }
         SigAction::Dfl => {
             let sig_default_action = SigDefaultAction::from_signum(sig_num);

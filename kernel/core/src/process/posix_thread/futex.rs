@@ -348,6 +348,61 @@ pub(crate) fn futex_wake_op(
     Ok(res)
 }
 
+/// Wakes up to `max_nwakes` waiters on `futex_addr` whose futex word still contains
+/// `expected_val`, and requeues up to `max_nrequeues` of the remaining waiters to
+/// `futex_new_addr`.
+///
+/// Returns the total number of waiters that are woken up or requeued.
+/// Returns [`Errno::EAGAIN`] if the futex word does not contain `expected_val`.
+pub(crate) fn futex_cmp_requeue(
+    futex_addr: Vaddr,
+    max_nwakes: usize,
+    max_nrequeues: usize,
+    futex_new_addr: Vaddr,
+    expected_val: u32,
+    ctx: &Context,
+    visibility: FutexVisibility,
+) -> Result<usize> {
+    let user_space = ctx.user_space();
+
+    // Read the futex word, resolving page faults the same way `futex_wait` does.
+    let val = loop {
+        let pf_result = ctx
+            .thread_local
+            .with_page_fault_disabled(|| user_space.atomic_load::<u32>(futex_addr));
+        if let Some(result) = pf_result {
+            break result?;
+        }
+
+        // The futex word is aligned on a 4-byte boundary, so it cannot cross the page boundary.
+        user_space
+            .vmar()
+            .handle_page_fault(&PageFaultInfo::new(futex_addr, VmPerms::READ))
+            .map_err(|_| {
+                errno!(
+                    EFAULT,
+                    "the page fault of the futex word cannot be resolved",
+                )
+            })?;
+    };
+
+    if val != expected_val {
+        return Err(errno!(
+            EAGAIN,
+            "the futex word does not contain the expected value"
+        ));
+    }
+
+    futex_requeue(
+        futex_addr,
+        max_nwakes,
+        max_nrequeues,
+        futex_new_addr,
+        ctx,
+        visibility,
+    )
+}
+
 /// Wakes up to `max_nwakes` waiters on `futex_addr` and requeues up to
 /// `max_nrequeues` of the remaining waiters to `futex_new_addr`.
 ///

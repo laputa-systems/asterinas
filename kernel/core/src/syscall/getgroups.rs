@@ -36,6 +36,13 @@ pub(super) fn sys_getgroups(
         groups.clone()
     };
 
+    // IDs are translated into the caller's user namespace;
+    // unmapped IDs show up as the overflow GID.
+    let groups: Vec<_> = {
+        let user_ns = ctx.thread_local.borrow_user_ns();
+        groups.iter().map(|gid| user_ns.kgid_to_gid(*gid)).collect()
+    };
+
     let user_space = ctx.user_space();
     for (idx, gid) in groups.iter().enumerate() {
         let addr = group_list_addr + idx * size_of_val(gid);

@@ -11,7 +11,7 @@ use ostd::{
 use super::SyscallReturn;
 use crate::{
     prelude::*,
-    process::{credentials::capabilities::CapSet, pid_table, posix_thread::AsPosixThread},
+    process::{credentials::capabilities::CapSet, posix_thread::AsPosixThread},
     security::lsm::hooks as lsm_hooks,
     thread::Tid,
 };
@@ -24,7 +24,7 @@ pub(super) fn sys_sched_getaffinity(
 ) -> Result<SyscallReturn> {
     let cpu_set = match tid {
         0 => ctx.thread.atomic_cpu_affinity().load(Ordering::Relaxed),
-        _ => match pid_table::pid_table_mut().get_thread(tid) {
+        _ => match ctx.process.active_pid_ns().lookup_thread(tid) {
             Some(thread) => thread.atomic_cpu_affinity().load(Ordering::Relaxed),
             None => return Err(errno!(ESRCH, "the target thread does not exist")),
         },
@@ -53,8 +53,10 @@ pub(super) fn sys_sched_setaffinity(
             .atomic_cpu_affinity()
             .store(&user_cpu_set, Ordering::Relaxed),
         _ => {
-            let thread = pid_table::pid_table_mut()
-                .get_thread(tid)
+            let thread = ctx
+                .process
+                .active_pid_ns()
+                .lookup_thread(tid)
                 .ok_or_else(|| errno!(ESRCH, "the target thread does not exist"))?;
             let posix_thread = thread.as_posix_thread().unwrap();
 

@@ -17,12 +17,13 @@ use crate::{
     fs::{file::file_table::FileTable, thread_info::ThreadFsInfo},
     prelude::*,
     process::{
-        Credentials, NsProxy, Process, UserNamespace,
+        Credentials, KernelTid, NsProxy, PidChain, PidNsForChildren, Process, UserNamespace,
         posix_thread::{ThreadName, thread_local::SuppUserContext},
         signal::{sig_mask::AtomicSigMask, sig_queues::SigQueues},
     },
     sched::{Nice, SchedPolicy, UserSchedAttr},
-    thread::{Thread, Tid, task},
+    security::seccomp::{SeccompState, ThreadSeccompState},
+    thread::{Thread, task},
     time::{TimerManager, clocks::ProfClock},
     vm::vmar::VmarHandle,
 };
@@ -30,7 +31,8 @@ use crate::{
 /// The builder to build a POSIX thread
 pub(crate) struct PosixThreadBuilder {
     // The essential part
-    tid: Tid,
+    kernel_tid: KernelTid,
+    tid_chain: PidChain,
     thread_name: ThreadName,
     user_ctx: Box<UserContext>,
     process: Weak<Process>,
@@ -41,6 +43,7 @@ pub(crate) struct PosixThreadBuilder {
     // Optional part
     set_child_tid: Vaddr,
     clear_child_tid: Vaddr,
+    robust_list_head: Option<Vaddr>,
     file_table: Option<RwArc<FileTable>>,
     fs: Option<Arc<ThreadFsInfo>>,
     sig_mask: AtomicSigMask,
@@ -50,13 +53,15 @@ pub(crate) struct PosixThreadBuilder {
     supp_user_context: SuppUserContext,
     user_ns: Option<Arc<UserNamespace>>,
     ns_proxy: Option<Arc<NsProxy>>,
+    pid_ns_for_children: Option<PidNsForChildren>,
     default_timer_slack_ns: u64,
     io_priority: u32,
 }
 
 impl PosixThreadBuilder {
     pub(crate) fn new(
-        tid: Tid,
+        kernel_tid: KernelTid,
+        tid_chain: PidChain,
         thread_name: ThreadName,
         user_ctx: Box<UserContext>,
         credentials: Credentials,
@@ -64,7 +69,8 @@ impl PosixThreadBuilder {
         cpu_affinity: CpuSet,
     ) -> Self {
         Self {
-            tid,
+            kernel_tid,
+            tid_chain,
             thread_name,
             user_ctx,
             process: Weak::new(),
@@ -73,6 +79,7 @@ impl PosixThreadBuilder {
             cpu_affinity,
             set_child_tid: 0,
             clear_child_tid: 0,
+            robust_list_head: None,
             file_table: None,
             fs: None,
             sig_mask: AtomicSigMask::new_empty(),
@@ -82,6 +89,7 @@ impl PosixThreadBuilder {
             supp_user_context: SuppUserContext::new(),
             user_ns: None,
             ns_proxy: None,
+            pid_ns_for_children: None,
             default_timer_slack_ns: 50_000, // 50 usec default slack
             io_priority: 0,
         }
@@ -99,6 +107,15 @@ impl PosixThreadBuilder {
 
     pub(crate) fn clear_child_tid(mut self, clear_child_tid: Vaddr) -> Self {
         self.clear_child_tid = clear_child_tid;
+        self
+    }
+
+    /// Inherits the robust list head for fork-like clones.
+    ///
+    /// Like Linux, a forked child shares the parent's robust list head pointer, while a new
+    /// thread (`CLONE_THREAD`) starts with no robust list until it calls `set_robust_list`.
+    pub(crate) fn robust_list_head(mut self, robust_list_head: Option<Vaddr>) -> Self {
+        self.robust_list_head = robust_list_head;
         self
     }
 
@@ -150,6 +167,11 @@ impl PosixThreadBuilder {
         self
     }
 
+    pub(crate) fn pid_ns_for_children(mut self, pid_ns_for_children: PidNsForChildren) -> Self {
+        self.pid_ns_for_children = Some(pid_ns_for_children);
+        self
+    }
+
     pub(crate) fn default_timer_slack_ns(mut self, slack_ns: u64) -> Self {
         self.default_timer_slack_ns = slack_ns;
         self
@@ -168,7 +190,8 @@ impl PosixThreadBuilder {
 
     pub(crate) fn build(self) -> Arc<Task> {
         let Self {
-            tid,
+            kernel_tid,
+            tid_chain,
             user_ctx,
             process,
             credentials,
@@ -177,6 +200,7 @@ impl PosixThreadBuilder {
             thread_name,
             set_child_tid,
             clear_child_tid,
+            robust_list_head,
             file_table,
             fs,
             sig_mask,
@@ -186,6 +210,7 @@ impl PosixThreadBuilder {
             supp_user_context,
             user_ns,
             ns_proxy,
+            pid_ns_for_children,
             default_timer_slack_ns,
             io_priority,
         } = self;
@@ -195,6 +220,8 @@ impl PosixThreadBuilder {
         assert_eq!(user_ns.is_none(), ns_proxy.is_none());
         let user_ns = user_ns.unwrap_or_else(|| UserNamespace::get_init_singleton().clone());
         let ns_proxy = ns_proxy.unwrap_or_else(|| NsProxy::get_init_singleton().clone());
+        let pid_ns_for_children =
+            pid_ns_for_children.unwrap_or(PidNsForChildren::SameAsActive);
 
         let fs = fs
             .unwrap_or_else(|| Arc::new(ThreadFsInfo::new(ns_proxy.mnt_ns().new_path_resolver())));
@@ -208,7 +235,8 @@ impl PosixThreadBuilder {
                 PosixThread {
                     process,
                     task: weak_task.clone(),
-                    tid: AtomicU32::new(tid),
+                    kernel_tid,
+                    tid_chain: Mutex::new(tid_chain),
                     name: Mutex::new(thread_name),
                     credentials,
                     fs: RwMutex::new(Some(fs.clone())),
@@ -221,8 +249,10 @@ impl PosixThreadBuilder {
                     prof_timer_manager,
                     io_priority: AtomicU32::new(io_priority),
                     ns_proxy: Mutex::new(Some(ns_proxy.clone())),
+                    pid_ns_for_children: Mutex::new(pid_ns_for_children),
                     timer_slack_ns: AtomicU64::new(default_timer_slack_ns),
                     default_timer_slack_ns: AtomicU64::new(default_timer_slack_ns),
+                    seccomp: Mutex::new(ThreadSeccompState::new(SeccompState::default())),
                     tracee_status: Once::new(),
                     tracees: Once::new(),
                     exit_code: AtomicU32::new(0),
@@ -241,6 +271,7 @@ impl PosixThreadBuilder {
             let thread_local = ThreadLocal::new(
                 set_child_tid,
                 clear_child_tid,
+                robust_list_head,
                 vmar,
                 file_table,
                 fs,

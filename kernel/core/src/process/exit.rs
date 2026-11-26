@@ -2,15 +2,19 @@
 
 use core::sync::atomic::Ordering;
 
-use super::{INIT_PROCESS_PID, Pid, Process, Uid, pid_table, posix_thread::AsPosixThread};
+use super::{KernelPid, Pid, Process, Uid, posix_thread::AsPosixThread};
 use crate::{
-    thread::AsThread,
     events::IoEvents, fs::cgroupfs::CgroupMembership, prelude::*,
-    process::signal::{
-        c_types::siginfo_t,
-        constants::{CLD_EXITED, CLD_KILLED, SIGCHLD},
-        signals::{kernel::KernelSignal, raw::RawSignal},
+    process::{
+        PidNamespace,
+        namespace::pid_ns::pid_ns_graph_lock,
+        signal::{
+            c_types::siginfo_t,
+            constants::{CLD_EXITED, CLD_KILLED, SIGCHLD, SIGKILL},
+            signals::{kernel::KernelSignal, raw::RawSignal},
+        },
     },
+    thread::AsThread,
 };
 
 /// Exits the current POSIX process.
@@ -87,11 +91,31 @@ pub(super) use drop_after;
 /// Returns the moved children. Note that no new processes can become this process's children after
 /// this point, so the returned children reliably represent the set of children at the time the
 /// process exits.
-fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, Arc<Process>> {
-    if current_process.is_init_process() {
+fn move_children_to_reaper_process(
+    current_process: &Process,
+) -> BTreeMap<KernelPid, Arc<Process>> {
+    if current_process.is_root_pid_ns_init() {
         return BTreeMap::new();
     }
 
+    if current_process.is_pid_namespace_init() {
+        let _pid_ns_graph_guard = pid_ns_graph_lock().lock();
+        current_process
+            .active_pid_ns()
+            .set_state(crate::process::PidNsState::Dying);
+        drop(_pid_ns_graph_guard);
+        kill_visible_processes_in_pid_namespace(current_process);
+    }
+
+    {
+        let mut current_children = current_process.children().lock();
+        if current_children.as_ref().is_some_and(BTreeMap::is_empty) {
+            *current_children = None;
+            return BTreeMap::new();
+        }
+    }
+
+    let _pid_ns_graph_guard = pid_ns_graph_lock().lock();
     while let Some(reaper_process) = find_reaper_process(current_process) {
         if let Ok(children) = move_process_children(current_process, &reaper_process) {
             reaper_process.children_wait_queue().wake_all();
@@ -99,8 +123,10 @@ fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, A
         }
     }
 
-    let init_process = pid_table::pid_table_mut()
-        .get_process(INIT_PROCESS_PID)
+    const INIT_PROCESS_PID: Pid = 1;
+
+    let init_process = PidNamespace::get_init_singleton()
+        .lookup_process(INIT_PROCESS_PID)
         .unwrap();
     let children = move_process_children(current_process, &init_process).unwrap();
     init_process.children_wait_queue().wake_all();
@@ -111,7 +137,35 @@ fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, A
 /// Finds a reaper process for `current_process`.
 ///
 /// If there is no reaper process for `current_process`, returns `None`.
+/// Finds the nearest live reaper in an ancestor namespace of `pid_ns`.
+fn first_live_ancestor_namespace_reaper(pid_ns: &Arc<PidNamespace>) -> Option<Arc<Process>> {
+    let mut current_ns = pid_ns.parent_ns().cloned();
+    while let Some(ns) = current_ns {
+        if let Some(reaper) = ns.child_reaper()
+            && !reaper.status().is_zombie()
+        {
+            return Some(reaper);
+        }
+        current_ns = ns.parent_ns().cloned();
+    }
+    None
+}
+
 fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
+    let parent_ns = current_process.active_pid_ns();
+    if matches!(
+        parent_ns.state(),
+        crate::process::PidNsState::Dying
+    ) {
+        return first_live_ancestor_namespace_reaper(parent_ns);
+    }
+
+    if !current_process.has_child_subreaper.load(Ordering::Acquire) {
+        return parent_ns
+            .child_reaper()
+            .filter(|reaper| !reaper.status().is_zombie());
+    }
+
     // The current process is not yet zombie (see `exit_process`), so it cannot have been reaped,
     // and it is still present in its parent's children map. An exiting parent will move the
     // current process to a new reaper (updating this `Weak` reference) before becoming zombie
@@ -119,17 +173,11 @@ fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
     let mut parent = current_process.parent().lock().process().upgrade().unwrap();
 
     loop {
-        if parent.is_init_process() {
-            return Some(parent);
+        if !Arc::ptr_eq(parent.active_pid_ns(), parent_ns) {
+            break;
         }
 
-        if !parent.has_child_subreaper.load(Ordering::Acquire) {
-            return None;
-        }
-
-        let is_reaper = parent.is_child_subreaper();
-        let is_zombie = parent.status().is_zombie();
-        if is_reaper && !is_zombie {
+        if parent.is_child_subreaper() && !parent.status().is_zombie() {
             return Some(parent);
         }
 
@@ -143,6 +191,22 @@ fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
             parent = current_process.parent().lock().process().upgrade().unwrap();
         }
     }
+
+    parent_ns
+        .child_reaper()
+        .filter(|reaper| !reaper.status().is_zombie())
+}
+
+/// Sends `SIGKILL` to all live processes visible in the exiting namespace init's namespace.
+fn kill_visible_processes_in_pid_namespace(current_process: &Process) {
+    for process in current_process.active_pid_ns().visible_processes() {
+        if process.kernel_pid() == current_process.kernel_pid()
+            || process.status().is_zombie()
+        {
+            continue;
+        }
+        process.enqueue_signal(Box::new(KernelSignal::new(SIGKILL)));
+    }
 }
 
 /// Moves the children of `current_process` to be the children of `reaper_process`.
@@ -152,7 +216,7 @@ fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
 fn move_process_children(
     current_process: &Process,
     reaper_process: &Arc<Process>,
-) -> Result<BTreeMap<Pid, Arc<Process>>, ()> {
+) -> Result<BTreeMap<KernelPid, Arc<Process>>, ()> {
     // Lock order: children of process -> parent of process
     let mut reaper_process_children = reaper_process.children().lock();
     let Some(reaper_process_children) = reaper_process_children.as_mut() else {
@@ -175,12 +239,18 @@ fn move_process_children(
     let children = current_children.take().unwrap();
 
     let mut moved = BTreeMap::new();
-    for (pid, mut relation) in children {
+    for (kernel_pid, mut relation) in children {
         let child_process = &relation.process;
-        child_process.parent.lock().set_process(reaper_process);
-        moved.insert(pid, child_process.clone());
+        let visible_parent_pid = reaper_process
+            .pid_in(child_process.active_pid_ns())
+            .unwrap_or(0);
+        child_process
+            .parent
+            .lock()
+            .set_process_with_visible_pid(reaper_process, visible_parent_pid);
+        moved.insert(kernel_pid, child_process.clone());
         relation.parent_thread = reaper_thread.clone();
-        reaper_process_children.insert(pid, relation);
+        reaper_process_children.insert(kernel_pid, relation);
     }
 
     Ok(moved)
@@ -191,7 +261,7 @@ fn move_process_children(
 // FIXME: According to the Linux implementation, the signal should be sent when the POSIX thread
 // that created the child exits, not when the whole process exits. For more details, see the
 // "CAVEATS" section in <https://man7.org/linux/man-pages/man2/pr_set_pdeathsig.2const.html>.
-fn send_parent_death_signal(children: &BTreeMap<Pid, Arc<Process>>) {
+fn send_parent_death_signal(children: &BTreeMap<KernelPid, Arc<Process>>) {
     for child in children.values() {
         let Some(signum) = child.parent_death_signal() else {
             continue;
@@ -218,7 +288,11 @@ fn send_child_death_signal(current_process: &Process, uid: Uid) {
                 (CLD_KILLED, (exit_code & 0x7f) as i32)
             };
             let mut info = siginfo_t::new(signum, code);
-            info.set_pid_uid(current_process.pid(), uid);
+            // Report the child's PID as observed from the parent's PID namespace.
+            let visible_pid = current_process
+                .pid_in(parent.active_pid_ns())
+                .unwrap_or(0);
+            info.set_pid_uid(visible_pid, uid);
             info.set_status(status);
             parent.enqueue_signal(Box::new(RawSignal::new(info)));
         } else {

@@ -108,6 +108,26 @@ impl Entry {
         self.key.file.upgrade().map(KeyableArc::into)
     }
 
+    /// Reports the current readiness of the file associated with this epoll entry, without
+    /// consulting or mutating the ready list.
+    ///
+    /// This is used when an epoll file itself is polled (e.g., for nested epoll): the ready list
+    /// may hold stale entries whose events were already consumed, so readiness must be re-tested
+    /// against the underlying files.
+    pub(super) fn poll_fresh(&self) -> IoEvents {
+        let (file, mask) = {
+            let inner = self.inner.lock();
+            if !self.observer.is_enabled() {
+                return IoEvents::empty();
+            }
+            let Some(file) = self.file() else {
+                return IoEvents::empty();
+            };
+            (file, inner.event.events)
+        };
+        file.poll(mask, None)
+    }
+
     /// Polls the events of the file associated with this epoll entry.
     ///
     /// This method returns `None` if the file is dead. Otherwise, it returns the epoll event (if

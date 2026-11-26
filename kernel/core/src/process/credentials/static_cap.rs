@@ -5,10 +5,10 @@ use aster_rights_proc::require;
 use ostd::sync::{PreemptDisabled, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{
-    CredentialIdentity, Credentials, ExecCred, FileCapabilities, Gid, SecureBits, Uid, capabilities::CapSet,
-    credentials_::Credentials_,
+    CredentialIdentity, Credentials, ExecCred, FileCapabilities, Gid, SecureBits, Uid,
+    capabilities::CapSet, credentials_::Credentials_,
 };
-use crate::prelude::*;
+use crate::{prelude::*, process::UserNamespace};
 
 impl<R: TRights> Credentials<R> {
     #[require(R > Write)]
@@ -413,11 +413,13 @@ impl<R: TRights> Credentials<R> {
     #[require(R > Read)]
     pub(in crate::process) fn prepare_exec_cred(
         &self,
+        current_user_ns: &UserNamespace,
         file_capabilities: Option<FileCapabilities>,
         setuid: Option<Uid>,
         setgid: Option<Gid>,
     ) -> Result<ExecCred> {
-        self.0.prepare_exec_cred(file_capabilities, setuid, setgid)
+        self.0
+            .prepare_exec_cred(current_user_ns, file_capabilities, setuid, setgid)
     }
 
     /// Applies previously computed credentials for `execve()`.

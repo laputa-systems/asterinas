@@ -263,7 +263,24 @@ impl EpollFile {
 
 impl Pollable for EpollFile {
     fn poll(&self, mask: IoEvents, poller: Option<&mut PollHandle>) -> IoEvents {
-        self.ready.poll(mask, poller)
+        // Register the poller first so that concurrent events are never missed, then report
+        // freshly tested readiness instead of the ready-list state.
+        //
+        // The ready list may hold stale entries whose events were already consumed (e.g., an
+        // inner epoll entry whose pipe was drained without an intervening wait on the inner
+        // epoll). Level-triggered semantics require re-testing the underlying files here, which
+        // matters when an epoll file is itself watched by another (outer) epoll.
+        let _ = self.ready.poll(mask, poller);
+
+        let interest = self.interest.lock();
+        let mut events = IoEvents::empty();
+        for holder in interest.iter() {
+            events |= holder.0.poll_fresh();
+            if events.contains(mask) {
+                break;
+            }
+        }
+        events & mask
     }
 }
 

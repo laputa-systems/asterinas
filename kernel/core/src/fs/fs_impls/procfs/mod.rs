@@ -38,10 +38,7 @@ use crate::{
         },
     },
     prelude::*,
-    process::{
-        Pid,
-        pid_table::{self, PidEntryType},
-    },
+    process::{Pid, posix_thread::AsPosixThread},
 };
 
 mod cmdline;
@@ -192,22 +189,24 @@ impl RootDirOps {
 
 impl ProcDirOps for RootDirOps {
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>> {
+        // Numeric `/proc` entries are resolved from the viewer's PID namespace, so that
+        // each PID namespace observes its own local process IDs.
         if let Ok(pid) = name.parse::<Pid>() {
-            let pid_entry = {
-                let pid_table = pid_table::pid_table_mut();
-                pid_table.get_entry(pid)
-            };
-            if let Some(pid_entry) = pid_entry
-                && let Some(type_) = pid_entry.type_()
-            {
-                return Ok(match type_ {
-                    PidEntryType::Process => {
-                        PidDirOps::new_inode(pid_entry, this_dir.this_weak().clone())
-                    }
-                    PidEntryType::Thread => {
-                        TidDirOps::new_inode(pid_entry, this_dir.this_weak().clone())
-                    }
-                });
+            let viewer = current!();
+            let viewer_pid_ns = viewer.active_pid_ns();
+            if let Some(process) = viewer_pid_ns.lookup_process(pid) {
+                return Ok(PidDirOps::new_inode(
+                    process,
+                    this_dir.this_weak().clone(),
+                ));
+            }
+            if let Some(thread) = viewer_pid_ns.lookup_thread(pid) {
+                let process = thread.as_posix_thread().unwrap().process();
+                return Ok(TidDirOps::new_inode(
+                    process,
+                    thread,
+                    this_dir.this_weak().clone(),
+                ));
             }
         }
 
@@ -231,13 +230,15 @@ impl ProcDirOps for RootDirOps {
         )?;
 
         // Collect PIDs before visiting entries, as `visit_fn` may copy data to user memory.
-        let process_pids = {
-            let pid_table = pid_table::pid_table_mut();
-            pid_table
-                .iter_processes()
-                .filter_map(|process| usize::try_from(process.pid()).ok())
-                .collect::<Vec<_>>()
-        };
+        // PIDs are reported as observed from the viewer's PID namespace.
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        let process_pids = viewer_pid_ns
+            .visible_processes()
+            .iter()
+            .filter_map(|process| process.pid_in(viewer_pid_ns))
+            .filter_map(|pid| usize::try_from(pid).ok())
+            .collect::<Vec<_>>();
 
         visit_readdir_entries(
             keyed_readdir_entries(offset, FIRST_PID_OFFSET, process_pids, |process_pid| {
@@ -252,26 +253,33 @@ impl ProcDirOps for RootDirOps {
     }
 
     fn revalidate_exists(&self, name: &str, child: &dyn Inode) -> bool {
-        if name.parse::<Pid>().is_err() {
+        let Ok(pid) = name.parse::<Pid>() else {
             // For non-numeric names, the set of valid children does not change over time,
             // so we can rely on the cache without revalidating.
             return true;
         };
 
+        // The cached child must still be mapped from this PID in the viewer's namespace.
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
         if let Some(child) = child.downcast_ref::<ProcDir<PidDirOps>>() {
-            // If the child's `PidEntry` still has the associated process, it will not be removed
-            // from the `PidTable` and remains alive.
-            matches!(
-                child.inner().pid_entry().type_(),
-                Some(PidEntryType::Process)
-            )
+            let process = child.inner().process();
+            process.pid_in(viewer_pid_ns) == Some(pid)
+                && viewer_pid_ns
+                    .lookup_process(pid)
+                    .is_some_and(|target| Arc::ptr_eq(&target, process))
         } else if let Some(child) = child.downcast_ref::<ProcDir<TidDirOps>>() {
-            // If the child's `PidEntry` still has the associated thread, it will not be removed
-            // from the `PidTable` and remains alive.
-            matches!(
-                child.inner().pid_entry().type_(),
-                Some(PidEntryType::Thread)
-            )
+            // Bare-thread entries always carry an explicit thread.
+            // (Process-level entries are served by `PidDirOps`.)
+            let thread_ops = child.inner();
+            let Some(thread) = thread_ops.thread() else {
+                return false;
+            };
+            let posix_thread = thread.as_posix_thread().unwrap();
+            posix_thread.tid_in(viewer_pid_ns) == Some(pid)
+                && viewer_pid_ns
+                    .lookup_thread(pid)
+                    .is_some_and(|target| Arc::ptr_eq(&target, &thread))
         } else {
             false
         }
@@ -282,12 +290,10 @@ impl ProcDirOps for RootDirOps {
             return true;
         };
 
-        let pid_entry = {
-            let pid_table = pid_table::pid_table_mut();
-            pid_table.get_entry(pid)
-        };
-
-        pid_entry.is_none_or(|pid_entry| pid_entry.type_().is_none())
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        viewer_pid_ns.lookup_process(pid).is_none()
+            && viewer_pid_ns.lookup_thread(pid).is_none()
     }
 }
 

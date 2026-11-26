@@ -15,14 +15,17 @@ pub(super) fn sys_getresuid(
 
     let credentials = ctx.posix_thread.credentials();
     let user_space = ctx.user_space();
+    // IDs are translated into the caller's user namespace;
+    // unmapped IDs show up as the overflow UID.
+    let user_ns = ctx.thread_local.borrow_user_ns();
 
-    let ruid = credentials.ruid();
+    let ruid = user_ns.kuid_to_uid(credentials.ruid());
     user_space.write_val(ruid_ptr, &ruid)?;
 
-    let euid = credentials.euid();
+    let euid = user_ns.kuid_to_uid(credentials.euid());
     user_space.write_val(euid_ptr, &euid)?;
 
-    let suid = credentials.suid();
+    let suid = user_ns.kuid_to_uid(credentials.suid());
     user_space.write_val(suid_ptr, &suid)?;
 
     Ok(SyscallReturn::Return(0))

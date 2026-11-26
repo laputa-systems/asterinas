@@ -616,6 +616,16 @@ impl VmMapping {
             // The page index is outside the VMO. This is only allowed in private mapping.
             return Ok((FrameAllocOptions::new().alloc_frame()?.into(), is_readonly));
         }
+        if self.map_mode.is_shared() && page_offset >= vmo.valid_size() {
+            // Accessing a shared file-backed page beyond the end of the file (e.g., after
+            // the file was truncated) is a bus error on Linux, not a segmentation fault.
+            // Report it with `EIO` so the fault handler can deliver `SIGBUS`.
+            // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/mm/memory.c#L6593>
+            return Err(VmoCommitError::Err(errno!(
+                EIO,
+                "the page is beyond the end of the shared file mapping"
+            )));
+        }
 
         let (page, mode) =
             vmo.get_committed_frame(page_offset, self.vmo_map_mode_from_is_write(is_write))?;

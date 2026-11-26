@@ -37,6 +37,16 @@ futex(
     max_waiters, max_requeue_waiters, uaddr2
 );
 
+// If the value at `uaddr` matches `expected_value`, unblock up to `max_waiters`
+// threads waiting on `uaddr`, and requeue up to `max_requeue_waiters` of the
+// remaining waiters to the target futex at `uaddr2`.
+// Otherwise, fail with `EAGAIN`.
+futex(
+    uaddr,
+    futex_op = FUTEX_CMP_REQUEUE | <opt_flags>,
+    max_waiters, max_requeue_waiters, uaddr2, expected_value
+);
+
 // Perform atomic operation encoded in `operation` on `uaddr2`. Unblock up to `max_waiters`
 // threads waiting on `uaddr`, and conditionally unblock up to `max_waiters2` threads
 // waiting on `uaddr2` based on the result of the atomic operation.

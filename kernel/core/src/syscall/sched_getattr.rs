@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     prelude::*,
-    process::{ResourceType, UserNamespace, credentials::capabilities::CapSet, pid_table, posix_thread::AsPosixThread},
+    process::{ResourceType, UserNamespace, credentials::capabilities::CapSet, posix_thread::AsPosixThread},
     sched::{LinuxSchedPolicy, Nice, RealTimePolicy, SchedAttr, SchedPolicy, UserFairPolicy, UserSchedAttr},
     security::lsm::hooks as lsm_hooks,
     thread::{Thread, Tid},
@@ -259,7 +259,7 @@ pub(super) fn access_sched_attr_with<T>(
         return f(ctx.thread.sched_attr());
     }
 
-    let Some(thread) = pid_table::pid_table_mut().get_thread(tid) else {
+    let Some(thread) = ctx.process.active_pid_ns().lookup_thread(tid) else {
         return Err(errno!(ESRCH, "the target thread does not exist"));
     };
     f(thread.sched_attr())
@@ -278,7 +278,7 @@ pub(super) fn change_sched_attr(tid: Tid, ctx: &Context, change: SchedChange) ->
     if tid == 0 {
         return change_thread_sched_attr(ctx.thread, ctx, change);
     }
-    let Some(thread) = pid_table::pid_table_mut().get_thread(tid) else {
+    let Some(thread) = ctx.process.active_pid_ns().lookup_thread(tid) else {
         return Err(errno!(ESRCH, "the target thread does not exist"));
     };
     change_thread_sched_attr(&thread, ctx, change)

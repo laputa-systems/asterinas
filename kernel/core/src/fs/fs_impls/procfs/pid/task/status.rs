@@ -89,6 +89,15 @@ impl ProcFileOps for StatusFileOps {
         };
         let posix_thread = thread.as_posix_thread().unwrap();
         let credentials = posix_thread.credentials();
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        let ppid = process
+            .parent()
+            .lock()
+            .process()
+            .upgrade()
+            .and_then(|parent| parent.pid_in(viewer_pid_ns))
+            .unwrap_or(0);
 
         // According to the Linux implementation, a process's `/proc/<pid>/status`
         // is exactly the same as its main thread's `/proc/<pid>/task/<pid>/status`.
@@ -120,9 +129,17 @@ impl ProcFileOps for StatusFileOps {
         };
         writeln!(printer, "State:\t{}", state)?;
 
-        writeln!(printer, "Tgid:\t{}", process.pid())?;
-        writeln!(printer, "Pid:\t{}", posix_thread.tid())?;
-        writeln!(printer, "PPid:\t{}", process.parent().pid())?;
+        writeln!(
+            printer,
+            "Tgid:\t{}",
+            process.pid_in(viewer_pid_ns).unwrap_or(0)
+        )?;
+        writeln!(
+            printer,
+            "Pid:\t{}",
+            posix_thread.tid_in(viewer_pid_ns).unwrap_or(0)
+        )?;
+        writeln!(printer, "PPid:\t{}", ppid)?;
         writeln!(
             printer,
             "TracerPid:\t{}",
@@ -131,22 +148,41 @@ impl ProcFileOps for StatusFileOps {
                 .map(|tracer| tracer.as_posix_thread().unwrap().tid())
                 .unwrap_or(0)
         )?;
+        write!(printer, "NStgid:\t")?;
+        for link in process.pid_chain().links() {
+            write!(printer, "{}\t", link.nr())?;
+        }
+        writeln!(printer)?;
+        write!(printer, "NSpid:\t")?;
+        for link in posix_thread.tid_chain().links() {
+            write!(printer, "{}\t", link.nr())?;
+        }
+        writeln!(printer)?;
 
+        // IDs are translated into the viewer's user namespace;
+        // unmapped IDs show up as the overflow IDs.
+        let viewer_ns = current_thread!()
+            .as_posix_thread()
+            .unwrap()
+            .process()
+            .user_ns()
+            .lock()
+            .clone();
         writeln!(
             printer,
             "Uid:\t{}\t{}\t{}\t{}",
-            u32::from(credentials.ruid()),
-            u32::from(credentials.euid()),
-            u32::from(credentials.suid()),
-            u32::from(credentials.fsuid()),
+            u32::from(viewer_ns.kuid_to_uid(credentials.ruid())),
+            u32::from(viewer_ns.kuid_to_uid(credentials.euid())),
+            u32::from(viewer_ns.kuid_to_uid(credentials.suid())),
+            u32::from(viewer_ns.kuid_to_uid(credentials.fsuid())),
         )?;
         writeln!(
             printer,
             "Gid:\t{}\t{}\t{}\t{}",
-            u32::from(credentials.rgid()),
-            u32::from(credentials.egid()),
-            u32::from(credentials.sgid()),
-            u32::from(credentials.fsgid()),
+            u32::from(viewer_ns.kgid_to_gid(credentials.rgid())),
+            u32::from(viewer_ns.kgid_to_gid(credentials.egid())),
+            u32::from(viewer_ns.kgid_to_gid(credentials.sgid())),
+            u32::from(viewer_ns.kgid_to_gid(credentials.fsgid())),
         )?;
 
         writeln!(
@@ -239,6 +275,13 @@ impl ProcFileOps for StatusFileOps {
             "NoNewPrivs:\t{}",
             u8::from(credentials.no_new_privs())
         )?;
+
+        // Use the target thread, including for reads by another process.
+        // Read mode and count together so concurrent TSYNC cannot split them.
+        // Reference: <https://github.com/torvalds/linux/blob/v6.18/fs/proc/array.c>.
+        let (seccomp_mode, filter_count) = posix_thread.seccomp_status();
+        writeln!(printer, "Seccomp:\t{}", seccomp_mode)?;
+        writeln!(printer, "Seccomp_filters:\t{}", filter_count)?;
 
         let affinity = thread.atomic_cpu_affinity().load(Ordering::Relaxed);
         let mut mask = vec![0u32; num_cpus().div_ceil(u32::BITS as usize)];

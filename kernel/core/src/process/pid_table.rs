@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![expect(dead_code)]
+
 //! A unified PID table that maps numeric identifiers to threads, processes,
 //! process groups, and sessions.
 //!

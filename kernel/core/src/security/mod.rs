@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 pub mod lsm;
+pub(crate) mod seccomp;
 pub(crate) mod syslog;
 
 cfg_select! {

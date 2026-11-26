@@ -9,11 +9,12 @@ use crate::{
         procfs::{
             StaticEntryWithOps,
             pid::task::{
-                auxv::AuxvFileOps, cgroup::CgroupFileOps, children::ChildrenFileOps, cmdline::CmdlineFileOps,
-                comm::CommFileOps, environ::EnvironFileOps, exe::ExeSymOps, fd::FdDirOps,
-                fs_links::FsLinkOps, gid_map::GidMapFileOps, maps::MapsFileOps, mem::MemFileOps,
-                mountinfo::MountInfoFileOps, mounts::MountsFileOps, mountstats::MountStatsFileOps,
-                ns::NsDirOps, oom_score_adj::OomScoreAdjFileOps, stat::StatFileOps,
+                auxv::AuxvFileOps, cgroup::CgroupFileOps, children::ChildrenFileOps,
+                cmdline::CmdlineFileOps, comm::CommFileOps, environ::EnvironFileOps,
+                exe::ExeSymOps, fd::FdDirOps, fs_links::FsLinkOps, gid_map::GidMapFileOps,
+                maps::MapsFileOps, mem::MemFileOps, mountinfo::MountInfoFileOps,
+                mounts::MountsFileOps, mountstats::MountStatsFileOps, ns::NsDirOps,
+                oom_score_adj::OomScoreAdjFileOps, setgroups::SetgroupsFileOps, stat::StatFileOps,
                 statm::StatmFileOps, status::StatusFileOps, uid_map::UidMapFileOps,
                 wchan::WchanFileOps,
             },
@@ -26,8 +27,8 @@ use crate::{
         vfs::inode::{Inode, RevalidationPolicy},
     },
     prelude::*,
-    process::{Process, pid_table, pid_table::PidEntry, posix_thread::AsPosixThread},
-    thread::{Thread, Tid},
+    process::{Process, posix_thread::AsPosixThread},
+    thread::{AsThread, Thread, Tid},
 };
 
 mod auxv;
@@ -47,6 +48,7 @@ mod mounts;
 mod mountstats;
 mod ns;
 mod oom_score_adj;
+mod setgroups;
 pub(super) mod stat;
 mod statm;
 mod status;
@@ -54,59 +56,63 @@ mod uid_map;
 mod wchan;
 
 /// Represents the inode at `/proc/[pid]/task`.
-pub(super) struct TaskDirOps(Arc<PidEntry>);
+pub(super) struct TaskDirOps(Arc<Process>);
 
 impl TaskDirOps {
     pub(super) fn new_inode(dir: &PidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
         // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3316>
-        ProcDir::new(Self(dir.pid_entry().clone()), parent, mkmod!(a+rx))
+        ProcDir::new(Self(dir.process().clone()), parent, mkmod!(a+rx))
     }
 
     fn process(&self) -> Option<Arc<Process>> {
-        self.0.process_of_thread()
+        Some(self.0.clone())
     }
 }
 
 /// Represents the inode at `/proc/[pid]/task/[tid]`.
 #[derive(Clone)]
 pub(in procfs) struct TidDirOps {
-    pid_entry: Arc<PidEntry>,
+    process: Arc<Process>,
+    /// If `thread` is `None`, this corresponds to a process-level `/proc/[pid]/*` file.
+    /// Otherwise, this corresponds to a thread-level `/proc/[pid]/task/[tid]/*` file.
+    thread: Option<Arc<Thread>>,
 }
 
 impl TidDirOps {
-    pub(super) fn new(pid_entry: Arc<PidEntry>) -> Self {
-        Self { pid_entry }
+    pub(super) fn new(process: Arc<Process>, thread: Option<Arc<Thread>>) -> Self {
+        Self { process, thread }
     }
 
     pub(in procfs) fn new_inode(
-        pid_entry: Arc<PidEntry>,
+        process: Arc<Process>,
+        thread: Arc<Thread>,
         parent: Weak<dyn Inode>,
     ) -> Arc<dyn Inode> {
         ProcDir::new(
-            Self { pid_entry },
+            Self {
+                process,
+                thread: Some(thread),
+            },
             parent,
             // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3796>
             mkmod!(a+rx),
         )
     }
 
-    pub(in procfs) fn pid_entry(&self) -> &Arc<PidEntry> {
-        &self.pid_entry
+    pub(in procfs) fn process(&self) -> &Arc<Process> {
+        &self.process
     }
 
-    pub(super) fn process(&self) -> Option<Arc<Process>> {
-        self.pid_entry.process_of_thread()
+    pub(in procfs) fn thread(&self) -> Option<Arc<Thread>> {
+        Some(
+            self.thread
+                .clone()
+                .unwrap_or_else(|| self.process.main_thread()),
+        )
     }
 
-    pub(super) fn thread(&self) -> Option<Arc<Thread>> {
-        self.pid_entry.thread()
-    }
-
-    pub(super) fn thread_and_process(&self) -> Option<(Arc<Thread>, Arc<Process>)> {
-        let thread = self.thread()?;
-        let process = thread.as_posix_thread().unwrap().weak_process().upgrade()?;
-
-        Some((thread, process))
+    pub(in procfs) fn thread_and_process(&self) -> Option<(Arc<Thread>, Arc<Process>)> {
+        Some((self.thread()?, self.process.clone()))
     }
 
     const TASK_ONLY_ENTRIES: &'static [StaticEntryWithOps<TidDirOps>] = &[
@@ -138,6 +144,7 @@ impl TidDirOps {
             InodeType::File,
             OomScoreAdjFileOps::new_inode,
         ),
+        ("setgroups", InodeType::File, SetgroupsFileOps::new_inode),
         ("stat", InodeType::File, StatFileOps::new_thread_inode),
         ("statm", InodeType::File, StatmFileOps::new_inode),
         ("status", InodeType::File, StatusFileOps::new_inode),
@@ -154,7 +161,7 @@ impl ProcDirOps for TidDirOps {
     }
 
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>> {
-        if self.pid_entry().type_().is_none() {
+        if !self.is_valid() {
             return Err(errno!(ENOENT, "the thread or the process does not exist"));
         };
 
@@ -171,7 +178,7 @@ impl ProcDirOps for TidDirOps {
     where
         F: FnMut(ReaddirEntry<'a>) -> Result<()>,
     {
-        if self.pid_entry().type_().is_none() {
+        if !self.is_valid() {
             return Err(errno!(ENOENT, "the thread or the process does not exist"));
         };
 
@@ -186,11 +193,33 @@ impl ProcDirOps for TidDirOps {
     }
 
     fn revalidate_exists(&self, _name: &str, _child: &dyn Inode) -> bool {
-        self.pid_entry().type_().is_some()
+        self.is_valid()
     }
 }
 
 impl TidDirOps {
+    /// Returns whether the thread or process backing this directory is still observable.
+    ///
+    /// The check is performed from the viewer's PID namespace so that dentries cached
+    /// by one namespace are not wrongly reused by another.
+    pub(super) fn is_valid(&self) -> bool {
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        if let Some(thread) = self.thread.as_ref() {
+            thread
+                .as_posix_thread()
+                .unwrap()
+                .tid_in(viewer_pid_ns)
+                .and_then(|tid| viewer_pid_ns.lookup_thread(tid))
+                .is_some_and(|target| Arc::ptr_eq(&target, thread))
+        } else {
+            self.process
+                .pid_in(viewer_pid_ns)
+                .and_then(|pid| viewer_pid_ns.lookup_process(pid))
+                .is_some_and(|target| Arc::ptr_eq(&target, &self.process))
+        }
+    }
+
     pub(super) fn lookup_static_child(
         &self,
         this_ptr: Weak<dyn Inode>,
@@ -212,7 +241,7 @@ impl TidDirOps {
 
 impl ProcDirOps for TaskDirOps {
     fn owner_thread(&self) -> Option<Arc<Thread>> {
-        self.0.thread()
+        Some(self.0.main_thread())
     }
 
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>> {
@@ -220,42 +249,28 @@ impl ProcDirOps for TaskDirOps {
             return Err(errno!(ENOENT, "the name is not a valid TID"));
         };
 
-        // Note: After a PID-number recycling mechanism is introduced, there may be a race here:
-        // - If a PID number is recycled as soon as its `PidEntry` is removed from the `PidTable`,
-        //   then before the `PidTable` lock is acquired below, the current inode’s `PidEntry` may
-        //   already have been removed and replaced with a new entry using the same PID number.
-        //   In that case, it is possible that the main thread of the `Process` obtained here has not
-        //   yet been deleted, causing `contains_tid` to return true even though we have actually
-        //   retrieved the wrong `PidEntry`.
-        // - If the PID number is not recycled until the `PidEntry` is dropped, then this race does not arise.
-        //
-        // TODO: Revisit and handle this potential race as appropriate once PID-number recycling is implemented.
         let Some(process) = self.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
 
-        // Lock order: PID table -> tasks of process
+        // TIDs in `/proc/[pid]/task` are resolved from the viewer's PID namespace.
+        // The viewer is the process performing the lookup.
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
 
-        let pid_table = pid_table::pid_table_mut();
-
-        let contains_tid = process
-            .tasks()
-            .lock()
-            .as_slice()
-            .iter()
-            .any(|task| task.as_posix_thread().unwrap().tid() == tid);
-        if !contains_tid {
-            return Err(errno!(ENOENT, "the thread does not exist"));
+        for task in process.tasks().lock().as_slice() {
+            let thread = task.as_thread().unwrap();
+            if thread.as_posix_thread().unwrap().tid_in(viewer_pid_ns) != Some(tid) {
+                continue;
+            }
+            return Ok(TidDirOps::new_inode(
+                process.clone(),
+                thread.clone(),
+                this_dir.this_weak().clone(),
+            ));
         }
 
-        let Some(pid_entry) = pid_table.get_entry(tid) else {
-            return Err(errno!(ENOENT, "the thread does not exist"));
-        };
-
-        Ok(TidDirOps::new_inode(
-            pid_entry,
-            this_dir.this_weak().clone(),
-        ))
+        Err(errno!(ENOENT, "the thread does not exist"))
     }
 
     fn visit_entries_from_offset<'a, F>(&'a self, offset: usize, visit_fn: F) -> Result<()>
@@ -266,13 +281,19 @@ impl ProcDirOps for TaskDirOps {
             return Err(errno!(ENOENT, "the process does not exist"));
         };
 
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+
         // Collect TIDs before visiting entries, as `visit_fn` may copy data to user memory.
         let tids = process
             .tasks()
             .lock()
             .as_slice()
             .iter()
-            .filter_map(|task| usize::try_from(task.as_posix_thread().unwrap().tid()).ok())
+            .filter_map(|task| {
+                let tid = task.as_posix_thread().unwrap().tid_in(viewer_pid_ns)?;
+                usize::try_from(tid).ok()
+            })
             .collect::<Vec<_>>();
 
         visit_readdir_entries(
@@ -288,19 +309,29 @@ impl ProcDirOps for TaskDirOps {
     }
 
     fn revalidate_exists(&self, name: &str, child: &dyn Inode) -> bool {
-        if name.parse::<Tid>().is_err() {
+        let Ok(tid) = name.parse::<Tid>() else {
             // For non-numeric names, the set of valid children does not change over time,
             // so we can rely on the cache without revalidating.
             return true;
-        }
+        };
 
-        if let Some(child) = child.downcast_ref::<ProcDir<TidDirOps>>() {
-            // If the child's `PidEntry` still has the associated thread, it will not be removed
-            // from the `PidTable` and remains alive.
-            child.inner().pid_entry().type_().is_some()
-        } else {
-            false
+        let Some(child) = child.downcast_ref::<ProcDir<TidDirOps>>() else {
+            return false;
+        };
+
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
+        let child_ops = child.inner();
+        // The cached thread must be the task of the same process
+        // and still carry this TID in the viewer's namespace.
+        if !Arc::ptr_eq(child_ops.process(), &self.0) {
+            return false;
         }
+        child_ops
+            .thread
+            .as_ref()
+            .and_then(|thread| thread.as_posix_thread().unwrap().tid_in(viewer_pid_ns))
+            == Some(tid)
     }
 
     fn revalidate_absent(&self, name: &str) -> bool {
@@ -312,11 +343,15 @@ impl ProcDirOps for TaskDirOps {
             return true;
         };
 
+        let viewer = current!();
+        let viewer_pid_ns = viewer.active_pid_ns();
         process
             .tasks()
             .lock()
             .as_slice()
             .iter()
-            .all(|task| task.as_posix_thread().unwrap().tid() != tid)
+            .all(|task| {
+                task.as_posix_thread().unwrap().tid_in(viewer_pid_ns) != Some(tid)
+            })
     }
 }

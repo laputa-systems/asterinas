@@ -20,7 +20,14 @@ set -e
 ./namespace/cgroup_ns
 ./namespace/ipc_ns_sem
 ./namespace/mnt_ns
+./namespace/pid_ns
 ./namespace/proc_nsfs
 ./namespace/setns
 ./namespace/unshare
 ./namespace/unshare_privilege
+./namespace/user_ns
+
+./seccomp/install
+./seccomp/filter
+./seccomp/trap
+./seccomp/tsync

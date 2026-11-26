@@ -14,7 +14,7 @@ use crate::{
     },
     prelude::*,
     process::{
-        credentials::capabilities::CapSet, pid_table::PidTable, posix_thread::AsPosixThread,
+        PidNamespace, credentials::capabilities::CapSet, posix_thread::AsPosixThread,
     },
     security::lsm::hooks as lsm_hooks,
 };
@@ -441,7 +441,7 @@ impl PathResolver {
         &mut self,
         new_root_path: Path,
         put_old_path: Path,
-        pid_table: &PidTable,
+        pid_ns: &Arc<PidNamespace>,
         ctx: &Context,
     ) -> Result<()> {
         if new_root_path.type_() != InodeType::Dir || put_old_path.type_() != InodeType::Dir {
@@ -528,9 +528,7 @@ impl PathResolver {
         // Release the mount topology lock before taking other threads' resolver locks.
         drop(topology_guard);
 
-        // TODO: This method should only iterate threads in the current PID namespace instead of
-        // the whole PID table.
-        for thread in pid_table.iter_threads() {
+        for thread in pid_ns.visible_threads() {
             let posix_thread = thread.as_posix_thread().unwrap();
             let ns_proxy = posix_thread.ns_proxy().lock();
             let Some(ns_proxy) = ns_proxy.as_ref() else {

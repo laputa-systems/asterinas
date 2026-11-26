@@ -60,7 +60,9 @@ impl NsProxy {
         posix_thread: &PosixThread,
         clone_flags: CloneFlags,
     ) -> Result<Arc<Self>> {
-        let clone_ns_flags = (clone_flags & CloneFlags::CLONE_NS_FLAGS) - CloneFlags::CLONE_NEWUSER;
+        let clone_ns_flags = (clone_flags & CloneFlags::CLONE_NS_FLAGS)
+            - CloneFlags::CLONE_NEWUSER
+            - CloneFlags::CLONE_NEWPID;
 
         // Fast path: If there are no new namespaces to clone,
         // we can directly clone the proxy and return.

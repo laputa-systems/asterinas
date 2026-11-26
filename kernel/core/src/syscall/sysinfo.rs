@@ -7,7 +7,7 @@ use aster_util::fixed_point::FixedU64;
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
-use crate::{prelude::*, process::pid_table, sched::loadavg};
+use crate::{prelude::*, sched::loadavg};
 
 #[padding_struct]
 #[repr(C)]
@@ -40,7 +40,7 @@ pub(super) fn sys_sysinfo(sysinfo_addr: Vaddr, ctx: &Context) -> Result<SyscallR
         ],
         totalram: crate::vm::mem_total() as u64,
         freeram: osdk_frame_allocator::load_total_free_size() as u64,
-        procs: pid_table::pid_table_mut().process_count() as u16,
+        procs: ctx.process.active_pid_ns().visible_process_count() as u16,
         // `mem_unit` will always be 1 byte since Asterinas only supports
         // 64-bit CPU architectures.
         mem_unit: 1,

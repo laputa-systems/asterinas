@@ -11,7 +11,7 @@ use ostd::{
 use spin::Once;
 
 use super::{
-    Credentials, Process,
+    Credentials, KernelTid, PidChain, PidNsForChildren, Process, kernel_id_allocator,
     signal::{sig_mask::AtomicSigMask, sig_num::SigNum, sig_queues::SigQueues, signals::Signal},
 };
 use crate::{
@@ -19,11 +19,12 @@ use crate::{
     fs::{file::file_table::FileTable, thread_info::ThreadFsInfo},
     prelude::*,
     process::{
-        ExitCode, Pid,
+        ExitCode, PidNamespace,
         namespace::nsproxy::NsProxy,
         posix_thread::ptrace::TraceeStatus,
         signal::{PauseReason, PollHandle, sig_mask::SigMask},
     },
+    security::seccomp::{SeccompState, ThreadSeccompState},
     thread::{Thread, Tid},
     time::{Timer, TimerManager, clocks::ProfClock, timer::TimerFn},
 };
@@ -41,7 +42,7 @@ mod thread_local;
 
 pub(crate) use builder::PosixThreadBuilder;
 pub(super) use exit::sigkill_other_threads;
-pub(crate) use exit::{do_exit, do_exit_group};
+pub(crate) use exit::{do_exit, do_exit_group, do_seccomp_exit_group, do_seccomp_exit_thread};
 pub(crate) use personality::Personality;
 pub use posix_thread_ext::AsPosixThread;
 pub(crate) use robust_list::RobustListHead;
@@ -53,9 +54,10 @@ pub struct PosixThread {
     // Immutable part
     process: Weak<Process>,
     task: Weak<Task>,
+    kernel_tid: KernelTid,
 
     // Mutable part
-    tid: AtomicU32,
+    tid_chain: Mutex<PidChain>,
 
     name: Mutex<ThreadName>,
 
@@ -92,10 +94,16 @@ pub struct PosixThread {
     /// The namespaces that the thread belongs to.
     ns_proxy: Mutex<Option<Arc<NsProxy>>>,
 
+    /// The PID namespace that future children of this thread should enter.
+    pid_ns_for_children: Mutex<PidNsForChildren>,
+
     /// The current timer slack value for this thread.
     timer_slack_ns: AtomicU64,
     /// The default timer slack value for this thread.
     default_timer_slack_ns: AtomicU64,
+
+    /// The effective per-thread syscall filtering policy.
+    seccomp: Mutex<ThreadSeccompState>,
 
     // Ptrace
     /// Status of being traced.
@@ -111,6 +119,31 @@ pub struct PosixThread {
 }
 
 impl PosixThread {
+    pub(crate) fn seccomp_snapshot(&self) -> SeccompState {
+        self.seccomp.lock().snapshot()
+    }
+
+    /// Returns the mode and filter count from the same seccomp policy.
+    pub(crate) fn seccomp_status(&self) -> (u32, usize) {
+        self.seccomp.lock().status()
+    }
+
+    pub(crate) fn set_seccomp(&self, state: SeccompState) {
+        *self.seccomp.lock() = ThreadSeccompState::new(state);
+    }
+
+    /// Inherits a thread's seccomp policy and its monotonic privilege restriction.
+    ///
+    /// The destination must be an unpublished child or a validated TSYNC
+    /// target; TSYNC callers must hold the process task-set lock to exclude
+    /// concurrent synchronization.
+    pub(crate) fn inherit_seccomp(&self, source: &Self) {
+        if source.credentials.no_new_privs() {
+            self.credentials.set_no_new_privs();
+        }
+        self.set_seccomp(source.seccomp_snapshot());
+    }
+
     pub(crate) fn process(&self) -> Arc<Process> {
         self.process.upgrade().unwrap()
     }
@@ -119,17 +152,30 @@ impl PosixThread {
         &self.process
     }
 
-    /// Returns the thread id
+    /// Returns the thread ID, as observed from the active PID namespace of the process.
     pub(crate) fn tid(&self) -> Tid {
-        self.tid.load(Ordering::Relaxed)
+        let process = self.process();
+        self.tid_in(process.active_pid_ns()).unwrap()
     }
 
-    /// Sets the thread as the main thread by changing its thread ID.
-    pub(super) fn set_main(&self, pid: Pid) {
-        debug_assert_eq!(pid, self.process.upgrade().unwrap().pid());
-        debug_assert_ne!(pid, self.tid.load(Ordering::Relaxed));
+    /// Returns the stable kernel-global identifier of the thread.
+    #[expect(dead_code)]
+    pub(crate) fn kernel_tid(&self) -> KernelTid {
+        self.kernel_tid
+    }
 
-        self.tid.store(pid, Ordering::Relaxed);
+    pub(crate) fn tid_chain(&self) -> MutexGuard<'_, PidChain> {
+        self.tid_chain.lock()
+    }
+
+    /// Returns the TID of the thread as observed from `ns`, if visible there.
+    pub(crate) fn tid_in(&self, ns: &PidNamespace) -> Option<Tid> {
+        self.tid_chain.lock().nr_in(ns)
+    }
+
+    /// Sets the thread as the main thread by changing its thread ID chain.
+    pub(super) fn set_main(&self, pid_chain: PidChain) {
+        *self.tid_chain.lock() = pid_chain;
     }
 
     pub(crate) fn thread_name(&self) -> &Mutex<ThreadName> {
@@ -323,6 +369,11 @@ impl PosixThread {
         self.timer_slack_ns.store(slack_ns, Ordering::Relaxed);
     }
 
+    /// Returns the PID namespace that future children of this thread should enter.
+    pub(crate) fn pid_ns_for_children(&self) -> &Mutex<PidNsForChildren> {
+        &self.pid_ns_for_children
+    }
+
     /// Resets the current timer slack to the default value.
     pub(crate) fn reset_timer_slack_to_default(&self) {
         let default = self.default_timer_slack_ns.load(Ordering::Relaxed);
@@ -420,27 +471,14 @@ pub(crate) fn derive_thread_name(exec_path: &str) -> ThreadName {
 /// The TID of the first POSIX thread (i.e., the main thread of the init process).
 pub(crate) const FIRST_POSIX_TID: Tid = 1;
 
-static POSIX_TID_ALLOCATOR: AtomicU32 = AtomicU32::new(FIRST_POSIX_TID);
-
-/// Allocates a new TID for the new POSIX thread.
-pub(crate) fn allocate_posix_tid() -> Tid {
-    let tid = POSIX_TID_ALLOCATOR.fetch_add(1, Ordering::Relaxed);
-    if tid >= PID_MAX {
-        // When the kernel's next PID value reaches `PID_MAX`,
-        // it should wrap back to a minimum PID value.
-        // PIDs with a value of `PID_MAX` or larger should not be allocated.
-        // Reference: <https://docs.kernel.org/admin-guide/sysctl/kernel.html#pid-max>.
-        //
-        // FIXME: Currently, we cannot determine which PID is recycled,
-        // so we are unable to allocate smaller PIDs.
-        warn!("the allocated ID is greater than the maximum allowed PID");
-    }
-    tid
+/// Allocates a new stable kernel-global thread ID.
+pub(crate) fn allocate_posix_tid() -> KernelTid {
+    kernel_id_allocator().alloc().unwrap()
 }
 
-/// Returns the last allocated TID.
+/// Returns the last allocated kernel thread ID, truncated to `u32`.
 pub(crate) fn last_tid() -> Tid {
-    POSIX_TID_ALLOCATOR.load(Ordering::Relaxed) - 1
+    kernel_id_allocator().last_allocated() as Tid
 }
 
 /// The maximum allowed process ID.

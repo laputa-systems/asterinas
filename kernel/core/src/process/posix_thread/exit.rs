@@ -6,16 +6,21 @@ use super::{
     AsPosixThread, ThreadLocal,
     futex::{FutexVisibility, futex_wake},
     ptrace::PtraceEvent,
-    robust_list::wake_robust_futex,
+    robust_list::{RobustListHead, wake_robust_futex},
 };
+
 use crate::{
     context::current_userspace,
     prelude::*,
     process::{
-        TermStatus,
+        PidNamespace, TermStatus,
         exit::{drop_after, exit_process},
-        pid_table,
-        signal::{constants::SIGKILL, signals::kernel::KernelSignal},
+        namespace::pid_ns::pid_ns_graph_lock,
+        signal::{
+            constants::SIGKILL,
+            sig_num::SigNum,
+            signals::kernel::KernelSignal,
+        },
         task_set::TaskSet,
     },
     thread::{AsThread, Tid},
@@ -39,6 +44,39 @@ pub(crate) fn do_exit_group(term_status: TermStatus, ctx: &Context, user_ctx: &m
     exit_internal(term_status, true, ctx, user_ctx);
 }
 
+/// Terminates the process with a fatal signal using group-exit arbitration.
+///
+/// Used for fatal seccomp decisions (`SECCOMP_RET_KILL_PROCESS` and
+/// strict-mode violations, which use `SIGSYS` and `SIGKILL` respectively).
+pub(crate) fn do_seccomp_exit_group(
+    signal: SigNum,
+    ctx: &Context,
+    user_ctx: &mut UserContext,
+) {
+    do_seccomp_exit(signal, true, ctx, user_ctx);
+}
+
+/// Terminates the current thread after a fatal seccomp decision.
+///
+/// Used for `SECCOMP_RET_KILL_THREAD` and for `SECCOMP_RET_TRAP` when SIGSYS
+/// can not be delivered to the thread.
+pub(crate) fn do_seccomp_exit_thread(
+    signal: SigNum,
+    ctx: &Context,
+    user_ctx: &mut UserContext,
+) {
+    do_seccomp_exit(signal, false, ctx, user_ctx);
+}
+
+fn do_seccomp_exit(
+    signal: SigNum,
+    is_exiting_group: bool,
+    ctx: &Context,
+    user_ctx: &mut UserContext,
+) {
+    exit_internal(TermStatus::Killed(signal), is_exiting_group, ctx, user_ctx);
+}
+
 /// Exits the current POSIX thread or process.
 //
 // A mutable reference to `user_ctx` is needed because exiting a traced thread
@@ -59,6 +97,11 @@ fn exit_internal(
     let posix_thread = current_thread.as_posix_thread().unwrap();
     let thread_local = current_task.as_thread_local().unwrap();
     let posix_process = posix_thread.process();
+    // Non-main threads are removed from the per-namespace tables at thread exit;
+    // the main thread stays until the process is reaped (see `reap_zombie_child`).
+    let tid_chain =
+        (posix_thread.tid() != posix_process.pid()).then(|| posix_thread.tid_chain().clone());
+    let _pid_ns_graph_guard = tid_chain.as_ref().map(|_| pid_ns_graph_lock().lock());
 
     let is_last_thread = {
         let mut children = posix_process.children().lock();
@@ -86,7 +129,10 @@ fn exit_internal(
         }
         current_thread.exit();
 
-        let is_last = tasks.remove_exited(&current_task);
+        let is_last_thread = tasks.remove_exited(&current_task);
+        if let Some(tid_chain) = tid_chain.as_ref() {
+            PidNamespace::remove_thread_across_namespaces_with_pid_ns_graph_lock(tid_chain);
+        }
         if let Some(sibling) = tasks.as_slice().iter().find_map(|task| {
             let thread = task.as_thread().unwrap();
             (!thread.is_exited()).then_some(thread)
@@ -98,7 +144,7 @@ fn exit_internal(
                     }
                 }
             }
-        is_last
+        is_last_thread
     };
 
     // This is put after `current_thread.exit()`,
@@ -114,12 +160,6 @@ fn exit_internal(
     wake_clear_ctid(thread_local);
 
     wake_robust_list(thread_local, posix_thread.tid());
-
-    // According to Linux behavior, the main thread shouldn't be removed from the table until the
-    // process is reaped by its parent.
-    if posix_thread.tid() != posix_process.pid() {
-        pid_table::pid_table_mut().remove_thread(posix_thread.tid());
-    }
 
     // Drop fields in `PosixThread`.
     drop_after!(posix_thread.file_table().lock().take());
@@ -177,9 +217,27 @@ fn wake_clear_ctid(thread_local: &ThreadLocal) {
 ///
 /// This corresponds to Linux's `exit_robust_list`. Errors are silently ignored.
 fn wake_robust_list(thread_local: &ThreadLocal, tid: Tid) {
-    let list_head = match thread_local.robust_list().borrow_mut().take() {
-        Some(robust_list_head) => robust_list_head,
+    let head_ptr = match thread_local.robust_list().borrow_mut().take() {
+        Some(head_ptr) => head_ptr,
         None => return,
+    };
+    if head_ptr == 0 {
+        return;
+    }
+
+    // Re-read the head from userspace: userspace mutates it after `set_robust_list` whenever
+    // robust mutexes are locked or unlocked, so a copy taken at `set_robust_list` time would be
+    // stale.
+    let user_space = CurrentUserSpace::new(thread_local);
+    let list_head = match user_space.read_val::<RobustListHead>(head_ptr) {
+        Ok(list_head) => list_head,
+        Err(err) => {
+            debug!(
+                "exit: cannot read the robust list head at {:#x}: {:?}",
+                head_ptr, err
+            );
+            return;
+        }
     };
 
     debug!("exit: wake up the robust list: {:?}", list_head);

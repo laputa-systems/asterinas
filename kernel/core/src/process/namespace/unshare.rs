@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::{fs::file::file_table::FileTable, prelude::*, process::CloneFlags};
+use crate::{
+    fs::file::file_table::FileTable,
+    prelude::*,
+    process::{
+        CloneFlags, PidNamespace, PidNsForChildren, UserNamespace,
+        credentials::capabilities::CapSet,
+        posix_thread::ContextPthreadAdminApi,
+    },
+    security::lsm::hooks as lsm_hooks,
+};
 
 /// Provides administrative APIs for disassociating execution contexts.
 pub(crate) trait ContextUnshareAdminApi {
@@ -38,14 +47,50 @@ impl ContextUnshareAdminApi for Context<'_> {
     }
 
     fn unshare_namespaces(&self, flags: CloneFlags) -> Result<()> {
-        if flags.contains(CloneFlags::CLONE_NEWUSER) {
-            return Err(errno!(
-                EINVAL,
-                "cloning a new user namespace is not supported"
-            ));
+        // Creating a new user namespace never requires privileges,
+        // mirroring unprivileged user namespace creation in Linux.
+        // The new namespace starts out with empty ID maps; IDs observed
+        // through it translate to the overflow IDs until maps are written.
+        let new_user_ns = if flags.contains(CloneFlags::CLONE_NEWUSER) {
+            let parent_ns = self.thread_local.borrow_user_ns().clone();
+            let euid = self.posix_thread.credentials().euid();
+            Some(UserNamespace::new_child(&parent_ns, euid)?)
+        } else {
+            None
+        };
+
+        let mut remaining_flags = flags;
+
+        if flags.contains(CloneFlags::CLONE_NEWPID) {
+            let user_ns = self.thread_local.borrow_user_ns();
+            lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
+                user_ns.as_ref(),
+                self.posix_thread,
+                CapSet::SYS_ADMIN,
+            ))?;
+
+            let mut pid_ns_for_children = self.posix_thread.pid_ns_for_children().lock();
+            if !matches!(&*pid_ns_for_children, PidNsForChildren::SameAsActive) {
+                return Err(errno!(
+                    EINVAL,
+                    "the pid-for-children namespace is already pending"
+                ));
+            }
+
+            let new_pid_ns =
+                PidNamespace::new_child(self.process.active_pid_ns().clone(), user_ns.clone())?;
+            *pid_ns_for_children = PidNsForChildren::Target(new_pid_ns);
+            remaining_flags.remove(CloneFlags::CLONE_NEWPID);
         }
 
-        let user_ns_ref = self.thread_local.borrow_user_ns();
+        if remaining_flags.is_empty() {
+            return Ok(());
+        }
+
+        let user_ns_ref = match new_user_ns.as_ref() {
+            Some(new_user_ns) => new_user_ns.clone(),
+            None => self.thread_local.borrow_user_ns().clone(),
+        };
 
         let mut pthread_ns_proxy = self.posix_thread.ns_proxy().lock();
         let mut thread_local_ns_proxy = self.thread_local.borrow_ns_proxy_mut();
@@ -54,10 +99,10 @@ impl ContextUnshareAdminApi for Context<'_> {
             &user_ns_ref,
             self.process.as_ref(),
             self.posix_thread,
-            flags,
+            remaining_flags,
         )?;
 
-        if flags.contains(CloneFlags::CLONE_NEWNS) {
+        if remaining_flags.contains(CloneFlags::CLONE_NEWNS) {
             self.thread_local
                 .borrow_fs()
                 .resolver()
@@ -67,6 +112,16 @@ impl ContextUnshareAdminApi for Context<'_> {
 
         *pthread_ns_proxy = Some(new_ns_proxy.clone());
         *thread_local_ns_proxy = new_ns_proxy;
+
+        if let Some(new_user_ns) = new_user_ns {
+            // Entering a new user namespace grants the full set of capabilities
+            // within that namespace, mirroring Linux.
+            *self.process.user_ns().lock() = new_user_ns.clone();
+            self.thread_local.set_user_ns(new_user_ns);
+            let credentials = self.credentials_mut();
+            credentials.set_permitted_capset(CapSet::all());
+            credentials.set_effective_capset(CapSet::all());
+        }
 
         Ok(())
     }

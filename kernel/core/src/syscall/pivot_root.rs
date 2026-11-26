@@ -2,7 +2,7 @@
 
 use super::SyscallReturn;
 use crate::{
-    fs::vfs::path::FsPath, prelude::*, process::pid_table, syscall::constants::MAX_FILENAME_LEN,
+    fs::vfs::path::FsPath, prelude::*, syscall::constants::MAX_FILENAME_LEN,
 };
 
 pub(super) fn sys_pivot_root(
@@ -32,9 +32,13 @@ pub(super) fn sys_pivot_root(
         let path_resolver = fs_ref.resolver().read();
         (path_resolver.lookup(&new_root_path)?, path_resolver.lookup(&put_old_path)?)
     };
-    let pid_table = pid_table::pid_table_mut();
     let mut path_resolver = fs_ref.resolver().write();
-    path_resolver.pivot_root(new_root_path, put_old_path, &pid_table, ctx)?;
+    path_resolver.pivot_root(
+        new_root_path,
+        put_old_path,
+        ctx.process.active_pid_ns(),
+        ctx,
+    )?;
 
     Ok(SyscallReturn::Return(0))
 }
