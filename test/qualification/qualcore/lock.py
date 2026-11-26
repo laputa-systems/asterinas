@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -179,10 +180,21 @@ def repository_provenance(repo: Path) -> dict[str, Any]:
     }
 
 
+SOURCE_TREE_EXCLUDED_DIRS = frozenset({".git", "target", ".work"})
+SOURCE_TREE_EXCLUDED_FILES = frozenset(
+    {"test/qualification/inputs.lock.json", "qemu.log", "qemu-serial.log"}
+)
+
+
 def repository_policy() -> dict[str, str]:
     return {
         "binding": "run-effective-lock",
         "delta_semantics": "content digest of the working-tree delta against HEAD, excluding inputs.lock.json and target outputs",
+        "source_tree_semantics": (
+            "content digest over every repository file except generated output directories "
+            f"{sorted(SOURCE_TREE_EXCLUDED_DIRS)} and self-referential files "
+            f"{sorted(SOURCE_TREE_EXCLUDED_FILES)}; includes vendored dependencies and nested Cargo configuration"
+        ),
     }
 
 
@@ -258,17 +270,22 @@ def _qemu_lock() -> dict[str, str]:
 
 def asterinas_source_tree_hash(repo: Path) -> str:
     entries: list[dict[str, Any]] = []
-    for root in ("kernel", "ostd", "osdk"):
-        for path in sorted((repo / root).rglob("*")):
-            relative_path = path.relative_to(repo)
-            if not path.is_file() or "target" in relative_path.parts or any(part.startswith(".") for part in relative_path.parts[1:]):
+    for root, directories, files in os.walk(repo):
+        directories[:] = sorted(name for name in directories if name not in SOURCE_TREE_EXCLUDED_DIRS)
+        root_path = Path(root)
+        for name in sorted(files):
+            path = root_path / name
+            relative = path.relative_to(repo).as_posix()
+            if relative in SOURCE_TREE_EXCLUDED_FILES:
                 continue
-            relative = str(relative_path)
-            entries.append({"path": relative, "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
-    for relative in ("Cargo.toml", "Makefile", "OSDK.toml"):
-        path = repo / relative
-        if path.is_file():
-            entries.append({"path": relative, "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
+            entry: dict[str, Any] = {"path": relative}
+            if path.is_symlink():
+                entry.update({"kind": "symlink", "target": os.readlink(path)})
+            elif path.is_file():
+                entry.update({"kind": "file", "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
+            else:
+                entry["kind"] = "missing"
+            entries.append(entry)
     return sha256_canonical(entries)
 
 

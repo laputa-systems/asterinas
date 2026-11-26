@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -15,10 +16,19 @@ from unittest import mock
 
 from . import supervisor as supervisor_module
 from .accounting import CaseOutcome, RoleResult, reconcile
+from .adapter import (
+    LOG_DISCARD_FLAG,
+    LOG_FLUSH_FLAG,
+    WRITE_LOG_ENTRY_SIZE,
+    WRITE_LOG_MAGIC,
+    WRITE_LOG_VERSION,
+    validate_blklogwrites,
+)
 from .compare import compare_value, verify_comparison_claim
 from .errors import EvidenceError, ManifestError
 from .evidence import EvidenceBundle
 from .gtest import parse_gtest_report
+from .lock import asterinas_source_tree_hash
 from .manifest import Selection, load_case_index, load_case_manifest, load_profile
 from .results import ResultContext, ingest_result_stream, make_result_line
 from .supervisor import _EXEC_RELEASE_BYTE, _EXEC_WRAPPER, Supervisor, is_full_disk_error
@@ -100,6 +110,25 @@ def _first_matching(categories: list[str], category: str) -> str:
         if item.startswith(category + ":"):
             return item
     return "no diagnostic"
+
+
+def _blklog_fixture(
+    path: Path,
+    entries: list[tuple[int, int, int]],
+    declared: int | None = None,
+    sector_size: int = 512,
+    magic: int = WRITE_LOG_MAGIC,
+    version: int = WRITE_LOG_VERSION,
+) -> Path:
+    header = struct.pack("<QQQI", magic, version, len(entries) if declared is None else declared, sector_size)
+    data = bytearray(header + b"\0" * (sector_size - len(header)))
+    for sector, nr_sectors, flags in entries:
+        data.extend(struct.pack("<QQQQ", sector, nr_sectors, flags, 0))
+        data.extend(b"\0" * (sector_size - WRITE_LOG_ENTRY_SIZE))
+        if not (flags & LOG_DISCARD_FLAG):
+            data.extend(b"\xAB" * min(nr_sectors * sector_size, 4096))
+    path.write_bytes(data)
+    return path
 
 
 def _render_os_errors(errors: list[OSError]) -> str:
@@ -1026,6 +1055,53 @@ def selftest_main() -> int:
             shutil.rmtree(control_bundle.root)
 
     evaluate("checksum-mismatch", checksum_mismatch)
+
+    def source_hash_input_sensitivity() -> tuple[bool, str]:
+        fixture = bundle.work_dir / "source-hash-inputs"
+        vendor = fixture / "vendor" / "smoltcp" / "src"
+        vendor.mkdir(parents=True, exist_ok=True)
+        (fixture / "kernel").mkdir(parents=True, exist_ok=True)
+        (fixture / ".cargo").mkdir(parents=True, exist_ok=True)
+        (fixture / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        (fixture / "kernel" / "lib.rs").write_text("pub fn kernel() {}\n", encoding="utf-8")
+        baseline = asterinas_source_tree_hash(fixture)
+        (vendor / "lib.rs").write_text("pub fn changed() {}\n", encoding="utf-8")
+        with_vendor = asterinas_source_tree_hash(fixture)
+        (fixture / ".cargo" / "config.toml").write_text("[source.crates-io]\nreplace-with = \"mirror\"\n", encoding="utf-8")
+        with_cargo = asterinas_source_tree_hash(fixture)
+        detected = baseline != with_vendor and with_vendor != with_cargo
+        detail = f"base={baseline[:12]} vendor={with_vendor[:12]} cargo={with_cargo[:12]}"
+        return detected, detail
+
+    evaluate("source-hash-vendored-and-cargo-sensitivity", source_hash_input_sensitivity)
+
+    valid_log = bundle.work_dir / "blklog-valid.log"
+    _blklog_fixture(valid_log, [(0, 1, 0), (8, 1, LOG_FLUSH_FLAG)])
+    valid_failures = validate_blklogwrites(valid_log)
+    if not valid_failures:
+        checks.append("complete blklogwrites log with a flush record is accepted")
+    else:
+        internal_failures.append("valid blklogwrites fixture was rejected: " + "; ".join(valid_failures))
+
+    def blklog_control(name, entries, cut=None, declared=None, want_fail=True):
+        def function() -> tuple[bool, str]:
+            path = bundle.work_dir / f"blklog-{name}.log"
+            _blklog_fixture(path, entries, declared=declared)
+            if cut is not None:
+                raw = path.read_bytes()
+                path.write_bytes(raw[:cut])
+            failures = validate_blklogwrites(path)
+            return (bool(failures) == want_fail), ("; ".join(failures) if failures else "log was accepted")
+        return function
+
+    two_writes = [(0, 1, 0), (8, 1, 0)]
+    evaluate("blklog-truncated-final-header-fields", blklog_control("final-header-fields", two_writes, cut=1552))
+    evaluate("blklog-truncated-final-header-padding", blklog_control("final-header-padding", two_writes, cut=1576))
+    evaluate("blklog-truncated-final-payload", blklog_control("final-payload", two_writes, cut=2304))
+    evaluate("blklog-inconsistent-count", blklog_control("inconsistent-count", two_writes, declared=3))
+    evaluate("blklog-impossible-size", blklog_control("impossible-size", [(0, 1 << 62, 0)]))
+    evaluate("blklog-unsupported-flags", blklog_control("unsupported-flags", [(0, 1, 1 << 20)]))
+    evaluate("blklog-no-data-writes", blklog_control("no-data-writes", [(0, 0, LOG_FLUSH_FLAG)]))
 
     bundle.register_artifact("stdout.log", b"lc02 selftest\n")
 
