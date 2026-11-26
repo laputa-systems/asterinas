@@ -30,9 +30,64 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc07-ext2-pilot-r1",
+      "contract_revision": "lc07-ext2-pilot-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext2",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
         {
           "assertions": [
             {
@@ -134,9 +189,64 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc07-ext2-pilot-r1",
+      "contract_revision": "lc07-ext2-pilot-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext2",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
         {
           "assertions": [
             {
@@ -271,9 +381,64 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc07-ext2-pilot-r1",
+      "contract_revision": "lc07-ext2-pilot-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext2",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
         {
           "assertions": [
             {
@@ -408,9 +573,64 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc07-ext2-pilot-r1",
+      "contract_revision": "lc07-ext2-pilot-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext2",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
         {
           "assertions": [
             {
@@ -523,9 +743,64 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc07-ext2-pilot-r1",
+      "contract_revision": "lc07-ext2-pilot-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext2",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
         {
           "assertions": [
             {
@@ -660,9 +935,64 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc07-ext2-pilot-r1",
+      "contract_revision": "lc07-ext2-pilot-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext2",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
         {
           "assertions": [
             {
