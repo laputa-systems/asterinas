@@ -632,6 +632,35 @@ def selftest_main() -> int:
             (RoleResult("candidate", "fail"), RoleResult("reference", "pass"), RoleResult("comparator", "pass"), RoleResult("validator", "pass")),
         ),
     )
+    for disposition, candidate_status in (
+        ("TIMEOUT", "timeout"),
+        ("PANIC", "panic"),
+        ("HARNESS_ERROR", "harness-error"),
+    ):
+        evaluate(
+            f"accounting-{disposition.lower().replace('_', '-')}-comparator-pass",
+            lambda disposition=disposition, candidate_status=candidate_status: accounting_contradiction(
+                disposition,
+                (
+                    RoleResult("candidate", candidate_status),
+                    RoleResult("reference", "pass"),
+                    RoleResult("comparator", "pass"),
+                    RoleResult("validator", "pass"),
+                ),
+            ),
+        )
+    evaluate(
+        "accounting-reference-failure-comparator-pass",
+        lambda: accounting_contradiction(
+            "REFERENCE_FAILURE",
+            (
+                RoleResult("candidate", "fail"),
+                RoleResult("reference", "fail"),
+                RoleResult("comparator", "pass"),
+                RoleResult("validator", "fail"),
+            ),
+        ),
+    )
     evaluate(
         "accounting-timeout-missing-evidence",
         lambda: accounting_contradiction(

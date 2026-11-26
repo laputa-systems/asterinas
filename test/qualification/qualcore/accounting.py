@@ -113,6 +113,8 @@ def reconcile(selected_case_ids: Iterable[str], outcomes: Iterable[CaseOutcome])
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} PASS contradicts validator {validator.status}"))
         if outcome.disposition == "FAIL" and comparator is not None and comparator.status == "pass":
             diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} FAIL contradicts comparator pass"))
+        if outcome.disposition in {"TIMEOUT", "PANIC", "HARNESS_ERROR", "REFERENCE_FAILURE"} and comparator is not None and comparator.status == "pass":
+            diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} {outcome.disposition} contradicts comparator pass"))
         if outcome.disposition == "REFERENCE_FAILURE":
             if reference is None:
                 diagnostics.append(Diagnostic("incomplete-accounting", f"{outcome.case_id} REFERENCE_FAILURE has no reference result"))

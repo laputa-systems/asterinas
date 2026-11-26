@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "name": "selfcheck",
+  "inherits": [],
+  "cases": ["core.selfcheck"],
+  "excludes": []
+}

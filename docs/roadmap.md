@@ -221,6 +221,7 @@ Profiles, each a manifest in `test/qualification/profiles/` that names the profi
 - **D5 Intentional divergence from Linux:** allowed only with a narrow test, retained transcripts, and a contract entry. Security-sensitive divergence needs an independent `review` lane.
 - **D6 Missing ABI additions** (`recvmmsg`, `mincore`, `mlock`, `membarrier`, atomic KMS, virtio-gpu 2D): implement only when a named case or workload in the item needs them, with exact semantics, never as a successful no-op.
 - **D7 Host process teardown:** on macOS the standard-library supervisor is fail-closed and leaf-only. Qualification adapters must run controlled VM processes that do not fork; teardown is `verified-empty` only for those leaf targets. Any observed fork, watcher failure, or scan failure makes the run `HARNESS_ERROR` rather than claiming recursive removal. Strict recursive containment for forking host processes needs a Linux cgroup backend and is not claimed on macOS.
+- **D8 Lock representation:** `inputs.lock.json` is the committed policy lock for external inputs, selections, and harness source content. It cannot honestly name the commit that introduces it, so every run writes an effective input lock into that run's evidence inputs binding the policy lock hash, Asterinas commit, dirty-diff content hash, selection, and copied input hashes. The effective lock is the repository pin used by evidence and replay.
 
 ### Baseline
 

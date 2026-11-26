@@ -1,0 +1,90 @@
+{
+  "cases": [
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y"
+        }
+      },
+      "area": "core",
+      "artifacts": [],
+      "budget_bytes": 65536,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc05-selfcheck-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "ENOENT",
+              "id": "errno",
+              "mode": "exact",
+              "type": "errno"
+            }
+          ],
+          "id": "errno-on-failure"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "aGVsbG8K",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "read-fixed-input"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "allow",
+              "id": "permission",
+              "mode": "exact",
+              "type": "permission"
+            }
+          ],
+          "id": "dev-null-write"
+        }
+      ],
+      "id": "core.selfcheck",
+      "item": "LC-05",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "input_b64": "aGVsbG8K",
+        "input_path": "/qual/input.txt",
+        "missing_path": "/qual/no-such-file",
+        "null_path": "/dev/null"
+      },
+      "procedure": "Boot the pinned initramfs probe; open a missing path, read the fixed input payload, and write one byte to /dev/null.",
+      "replay": "python3 test/qualification/run.py run --profile selfcheck --candidate linux",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "probe-r1",
+        "upstream": "asterinas-qualification-probe"
+      },
+      "validators": [
+        "reference-contract"
+      ]
+    }
+  ],
+  "schema": 1
+}
