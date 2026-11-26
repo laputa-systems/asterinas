@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ class LockVerification:
     lock_hash: str
     checked: tuple[str, ...]
     repository: dict[str, Any]
+    document: dict[str, Any]
 
 
 def _sha256_file(path: Path) -> str:
@@ -179,10 +181,21 @@ def repository_provenance(repo: Path) -> dict[str, Any]:
     }
 
 
+SOURCE_TREE_EXCLUDED_DIRS = frozenset({".git", "target", ".work"})
+SOURCE_TREE_EXCLUDED_FILES = frozenset(
+    {"test/qualification/inputs.lock.json", "qemu.log", "qemu-serial.log"}
+)
+
+
 def repository_policy() -> dict[str, str]:
     return {
         "binding": "run-effective-lock",
         "delta_semantics": "content digest of the working-tree delta against HEAD, excluding inputs.lock.json and target outputs",
+        "source_tree_semantics": (
+            "content digest over every repository file except generated output directories "
+            f"{sorted(SOURCE_TREE_EXCLUDED_DIRS)} and self-referential files "
+            f"{sorted(SOURCE_TREE_EXCLUDED_FILES)}; includes vendored dependencies and nested Cargo configuration"
+        ),
     }
 
 
@@ -258,17 +271,22 @@ def _qemu_lock() -> dict[str, str]:
 
 def asterinas_source_tree_hash(repo: Path) -> str:
     entries: list[dict[str, Any]] = []
-    for root in ("kernel", "ostd", "osdk"):
-        for path in sorted((repo / root).rglob("*")):
-            relative_path = path.relative_to(repo)
-            if not path.is_file() or "target" in relative_path.parts or any(part.startswith(".") for part in relative_path.parts[1:]):
+    for root, directories, files in os.walk(repo):
+        directories[:] = sorted(name for name in directories if name not in SOURCE_TREE_EXCLUDED_DIRS)
+        root_path = Path(root)
+        for name in sorted(files):
+            path = root_path / name
+            relative = path.relative_to(repo).as_posix()
+            if relative in SOURCE_TREE_EXCLUDED_FILES:
                 continue
-            relative = str(relative_path)
-            entries.append({"path": relative, "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
-    for relative in ("Cargo.toml", "Makefile", "OSDK.toml"):
-        path = repo / relative
-        if path.is_file():
-            entries.append({"path": relative, "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
+            entry: dict[str, Any] = {"path": relative}
+            if path.is_symlink():
+                entry.update({"kind": "symlink", "target": os.readlink(path)})
+            elif path.is_file():
+                entry.update({"kind": "file", "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
+            else:
+                entry["kind"] = "missing"
+            entries.append(entry)
     return sha256_canonical(entries)
 
 
@@ -301,7 +319,7 @@ def _linux_rebuild_required(repo: Path, linux_path: Path, dev_digest: str) -> bo
     return not (build_inputs_match and linux_inputs_match)
 
 
-def _probe_rebuild_required(repo: Path, probe_path: Path) -> bool:
+def _probe_rebuild_required(repo: Path, probe_path: Path, dev_digest: str) -> bool:
     if not probe_path.is_file():
         return True
     try:
@@ -312,19 +330,22 @@ def _probe_rebuild_required(repo: Path, probe_path: Path) -> bool:
         return True
     probe = previous.get("probe")
     build = previous.get("asterinas_build")
-    if not isinstance(probe, dict) or not isinstance(build, dict):
+    container = previous.get("dev_container")
+    if not isinstance(probe, dict) or not isinstance(build, dict) or not isinstance(container, dict):
         return True
+    recorded: dict[str, Any] = dict(probe)
+    recorded.update(build)
+    recorded["dev_container_digest"] = container.get("digest")
     current = {
         "source_sha256": _sha256_file(repo / "test/qualification/probe/probe.c"),
         "nix_sha256": _sha256_file(repo / "test/qualification/probe/default.nix"),
         "binary_sha256": _sha256_file(probe_path),
         "flake_lock_sha256": _sha256_file(repo / "flake.lock"),
         "nixpkgs_sha256": _sha256_file(repo / "distro/nixpkgs.nix"),
+        "rust_toolchain_sha256": _sha256_file(repo / "rust-toolchain.toml"),
+        "dev_container_digest": dev_digest,
     }
-    return any(
-        probe.get(key) != value and build.get(key) != value
-        for key, value in current.items()
-    )
+    return any(recorded.get(key) != value for key, value in current.items())
 
 
 def generate_lock(repo: Path) -> dict[str, Any]:
@@ -333,7 +354,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     if _linux_rebuild_required(repo, linux_path, dev_digest):
         build_linux(repo, clean=True)
     probe_path = repo / CACHE_DIR / "probe"
-    if _probe_rebuild_required(repo, probe_path):
+    if _probe_rebuild_required(repo, probe_path, dev_digest):
         build_probe(repo)
     build_initramfs(repo)
     initramfs_path = repo / CACHE_DIR / "initramfs.cpio"
@@ -702,7 +723,13 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
     if failures:
         raise LockError("; ".join(failures))
     lock_bytes = (repo / LOCK_PATH).read_bytes()
-    return LockVerification(lock_hash=sha256_bytes(lock_bytes), checked=tuple(checked), repository=repository)
+    document_at_verification = json.loads(lock_bytes)
+    return LockVerification(
+        lock_hash=sha256_bytes(lock_bytes),
+        checked=tuple(checked),
+        repository=repository,
+        document=document_at_verification,
+    )
 
 
 def verify_lock(repo: Path, build_missing: bool = True) -> LockVerification:
@@ -713,6 +740,7 @@ def effective_lock_bytes(
     verification: LockVerification,
     selection: Selection,
     input_hashes: dict[str, str],
+    backend: dict[str, str] | None = None,
 ) -> bytes:
     document = {
         "schema": 1,
@@ -722,6 +750,7 @@ def effective_lock_bytes(
         "selection": _selection_lock(selection),
         "checked_inputs": list(verification.checked),
         "input_hashes": input_hashes,
+        "backend": backend or {},
     }
     return (json.dumps(document, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
@@ -731,7 +760,8 @@ def write_effective_lock(
     verification: LockVerification,
     selection: Selection,
     input_hashes: dict[str, str],
+    backend: dict[str, str] | None = None,
 ) -> str:
-    data = effective_lock_bytes(verification, selection, input_hashes)
+    data = effective_lock_bytes(verification, selection, input_hashes, backend)
     atomic_write_bytes(path, data)
     return sha256_bytes(data)

@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ from .lock import (
     write_effective_lock,
 )
 from .manifest import CaseSpec, Selection, load_case_index, load_profile
-from .qemu import VmExclusion, run_qemu
+from .qemu import VmExclusion, qemu_version, resolve_qemu_path, run_qemu
 from .supervisor import Supervisor
 from .results import ResultContext, ingest_result_stream, make_result_line
 from .util import sha256_bytes
@@ -50,6 +50,42 @@ class RunFailure(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class RunSnapshot:
+    policy_hash: str
+    qemu_path: Path
+    qemu_resolved_path: Path
+    qemu_version: str
+    qemu_sha256: str
+    manifest_hash: str
+    payload_hash: str
+    case_ids: tuple[str, ...]
+    expected_hashes: dict[str, str]
+
+    @property
+    def backend_identity(self) -> dict[str, str]:
+        return {
+            "qemu_path": str(self.qemu_path),
+            "qemu_resolved_path": str(self.qemu_resolved_path),
+            "qemu_version": self.qemu_version,
+            "qemu_sha256": self.qemu_sha256,
+        }
+
+
+@dataclass
+class RunState:
+    bundle: EvidenceBundle | None = None
+    selection: Selection | None = None
+    verification: LockVerification | None = None
+    snapshot: RunSnapshot | None = None
+    reference_evidence: dict[str, BackendEvidence] = field(default_factory=dict)
+    candidate_evidence: dict[str, BackendEvidence] = field(default_factory=dict)
+    outcomes: dict[str, CaseOutcome] = field(default_factory=dict)
+    run_errors: list[str] = field(default_factory=list)
+    input_hashes: dict[str, str] = field(default_factory=dict)
+    effective_lock_hash: str = ""
+
+
 PENDING_CONTROLS = {
     "persistence:omitted-sync-crash-cut": "LC-11",
 }
@@ -60,6 +96,84 @@ def load_selection(repo: Path, profile_name: str) -> Selection:
     if not contracts:
         raise RunFailure("no contract manifests found")
     return load_profile(profile_name, repo / "test/qualification/profiles", load_case_index(contracts))
+
+
+def create_snapshot(verification: LockVerification, selection: Selection) -> RunSnapshot:
+    document = verification.document
+    qemu_path = Path(document["qemu"]["path"])
+    resolved = resolve_qemu_path(qemu_path)
+    if not resolved.is_file():
+        raise RunFailure(f"verified qemu binary is missing: {qemu_path}")
+    expected_hashes = {
+        "linux-bzImage": document["linux"]["bzimage_sha256"],
+        "linux-config": document["linux"]["config_sha256"],
+        "asterinas-kernel": document["asterinas_build"]["kernel_sha256"],
+        "initramfs.cpio": document["probe"]["initramfs_sha256"],
+        "probe": document["probe"]["binary_sha256"],
+        "probe-input.txt": document["probe"]["input_payload_sha256"],
+        "inputs.lock.json": verification.lock_hash,
+        "adapter-disk.ext2": document["adapter"]["disk_sha256"],
+        "adapter-wrong-disk.ext2": document["adapter"]["wrong_disk_sha256"],
+        "adapter-wrong-filesystem.img": document["adapter"]["wrong_filesystem_sha256"],
+    }
+    return RunSnapshot(
+        policy_hash=verification.lock_hash,
+        qemu_path=qemu_path,
+        qemu_resolved_path=resolved,
+        qemu_version=qemu_version(qemu_path),
+        qemu_sha256=sha256_bytes(resolved.read_bytes()),
+        manifest_hash=selection.manifest_hash,
+        payload_hash=selection.payload_hash,
+        case_ids=tuple(selection.case_ids),
+        expected_hashes=expected_hashes,
+    )
+
+
+def verify_copied_input_hashes(copied: dict[str, Path], expected: dict[str, str]) -> list[str]:
+    failures: list[str] = []
+    for name, path in sorted(copied.items()):
+        wanted = expected.get(name)
+        if wanted is None:
+            failures.append(f"copied input has no verified identity: {name}")
+            continue
+        actual = sha256_bytes(path.read_bytes())
+        if actual != wanted:
+            failures.append(f"copied input hash drift: {name} got {actual} expected {wanted}")
+    return failures
+
+
+def verify_backend_identity(path: Path, expected_hash: str, expected_version: str | None) -> list[str]:
+    resolved = resolve_qemu_path(path)
+    if not resolved.is_file():
+        return [f"backend binary is missing: {path}"]
+    failures: list[str] = []
+    actual_hash = sha256_bytes(resolved.read_bytes())
+    if actual_hash != expected_hash:
+        failures.append(f"backend binary hash drift: got {actual_hash} expected {expected_hash}")
+    if expected_version is not None:
+        try:
+            actual_version = qemu_version(path)
+        except Exception as error:
+            failures.append(f"backend version probe failed: {error}")
+        else:
+            if actual_version != expected_version:
+                failures.append(f"backend version drift: got {actual_version} expected {expected_version}")
+    return failures
+
+
+def assert_selection_snapshot(selection: Selection, snapshot: RunSnapshot) -> None:
+    if selection.manifest_hash != snapshot.manifest_hash:
+        raise RunFailure("selection manifest hash drift between verification and use")
+    if selection.payload_hash != snapshot.payload_hash:
+        raise RunFailure("selection payload hash drift between verification and use")
+    if tuple(selection.case_ids) != snapshot.case_ids:
+        raise RunFailure("selection case ids drift between verification and use")
+
+
+def assert_backend_snapshot(path: Path, snapshot: RunSnapshot) -> None:
+    failures = verify_backend_identity(path, snapshot.qemu_sha256, snapshot.qemu_version)
+    if failures:
+        raise RunFailure("backend identity changed between verification and use: " + "; ".join(failures))
 
 
 def required_config_failures(case: CaseSpec, config_text: str) -> list[str]:
@@ -78,7 +192,12 @@ def required_config_failures(case: CaseSpec, config_text: str) -> list[str]:
     return failures
 
 
-def copy_run_inputs(repo: Path, bundle: EvidenceBundle, include_adapter: bool = False) -> dict[str, Path]:
+def copy_run_inputs(
+    repo: Path,
+    bundle: EvidenceBundle,
+    snapshot: RunSnapshot,
+    include_adapter: bool = False,
+) -> dict[str, Path]:
     sources = {
         "linux-bzImage": repo / "test/qualification/linux/bzImage",
         "linux-config": repo / "test/qualification/linux/config",
@@ -103,18 +222,27 @@ def copy_run_inputs(repo: Path, bundle: EvidenceBundle, include_adapter: bool = 
         destination = bundle.inputs_dir / name
         shutil.copyfile(source, destination)
         copied[name] = destination
+    drift = verify_copied_input_hashes(copied, snapshot.expected_hashes)
+    if drift:
+        raise RunFailure("copied run inputs do not match the verified snapshot: " + "; ".join(drift))
     input_manifest = {name: sha256_bytes(path.read_bytes()) for name, path in sorted(copied.items())}
     (bundle.inputs_dir / "manifest.json").write_text(json.dumps(input_manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return copied
 
 
-def bind_run_inputs(bundle: EvidenceBundle, verification: LockVerification, selection: Selection) -> tuple[dict[str, str], str]:
+def bind_run_inputs(
+    bundle: EvidenceBundle,
+    verification: LockVerification,
+    selection: Selection,
+    snapshot: RunSnapshot,
+) -> tuple[dict[str, str], str]:
     input_hashes = json.loads((bundle.inputs_dir / "manifest.json").read_text(encoding="utf-8"))
     effective_hash = write_effective_lock(
         bundle.inputs_dir / "effective-inputs.lock.json",
         verification,
         selection,
         input_hashes,
+        snapshot.backend_identity,
     )
     return input_hashes, effective_hash
 
@@ -203,6 +331,7 @@ def execute_backend(
     repo: Path,
     bundle: EvidenceBundle,
     inputs: dict[str, Path],
+    snapshot: RunSnapshot,
     selection: Selection,
     label: str,
     control: str = "none",
@@ -215,7 +344,8 @@ def execute_backend(
     nonce = secrets.token_hex(16)
     case = selection.cases[0] if case is None else case
     expected_cases = {case.case_id: case}
-    lock_document = json.loads((repo / LOCK_PATH).read_text(encoding="utf-8"))
+    assert_selection_snapshot(selection, snapshot)
+    assert_backend_snapshot(snapshot.qemu_path, snapshot)
     adapter_enabled = bool(case.payload.get("adapter"))
     adapter_image = None
     if adapter_enabled and control != "missing-device":
@@ -226,7 +356,7 @@ def execute_backend(
             image_name = "adapter-wrong-filesystem.img"
         adapter_image = inputs[image_name]
     execution = run_qemu(
-        qemu_path=Path(lock_document["qemu"]["path"]),
+        qemu_path=snapshot.qemu_path,
         kernel=inputs["asterinas-kernel" if backend == "asterinas" else "linux-bzImage"],
         initramfs=inputs["initramfs.cpio"],
         work_dir=bundle.work_dir,
@@ -313,13 +443,34 @@ def _backend_role(evidence: BackendEvidence) -> tuple[str, str, str | None]:
     return "fail", f"final status {evidence.final_status!r}", None
 
 
+def evidence_compromise(evidence: BackendEvidence) -> list[str]:
+    issues = [f"required storage evidence: {item}" for item in evidence.storage_diagnostics]
+    issues.extend(f"required result evidence: {item}" for item in evidence.ingestion_diagnostics)
+    if evidence.teardown_state != "verified-empty":
+        issues.append(f"incomplete teardown: {evidence.teardown_state}")
+    return issues
+
+
 def evaluate_case(case: CaseSpec, reference: BackendEvidence, candidate: BackendEvidence) -> CaseOutcome:
     reference_status, reference_detail, reference_terminal = _backend_role(reference)
     candidate_status, candidate_detail, candidate_terminal = _backend_role(candidate)
     reference_role = RoleResult("reference", reference_status, reference_detail)
     candidate_role = RoleResult("candidate", candidate_status, candidate_detail)
-    if candidate.storage_diagnostics and candidate_terminal is None:
-        candidate_role = RoleResult("candidate", "harness-error", "; ".join(candidate.storage_diagnostics[:3]))
+    reference_compromise = evidence_compromise(reference)
+    if reference_compromise:
+        reference_role = RoleResult(
+            "reference",
+            "harness-error",
+            "; ".join(reference_compromise[:3]) + " | runtime observation before evidence escalation: " + reference_detail,
+        )
+        reference_terminal = "HARNESS_ERROR"
+    candidate_compromise = evidence_compromise(candidate)
+    if candidate_compromise:
+        candidate_role = RoleResult(
+            "candidate",
+            "harness-error",
+            "; ".join(candidate_compromise[:3]) + " | runtime observation before evidence escalation: " + candidate_detail,
+        )
         candidate_terminal = "HARNESS_ERROR"
 
     reference_observed = reference.observed.get(case.case_id, {})
@@ -362,6 +513,113 @@ def evaluate_case(case: CaseSpec, reference: BackendEvidence, candidate: Backend
     return CaseOutcome(case.case_id, "PASS", roles, "candidate and reference agree with the contract")
 
 
+def finalize_run(state: RunState, profile_name: str, candidate: str, baseline: bool = False) -> int:
+    selection = state.selection
+    selected = list(selection.case_ids) if selection is not None else []
+    outcomes = dict(state.outcomes)
+    for case_id in selected:
+        if case_id not in outcomes:
+            outcomes[case_id] = CaseOutcome(
+                case_id,
+                "NOT_RUN",
+                (
+                    RoleResult("candidate", "not-run"),
+                    RoleResult("comparator", "not-comparable", "case did not complete"),
+                ),
+                "case did not complete",
+            )
+    accounting = reconcile(selected, outcomes.values())
+
+    teardown_errors: list[str] = []
+    if state.bundle is not None:
+        try:
+            teardown_errors = list(state.bundle.teardown())
+        except Exception as error:
+            teardown_errors = [f"teardown raised {type(error).__name__}: {error}"]
+    if state.run_errors and state.bundle is not None:
+        try:
+            state.bundle.register_artifact(
+                "harness-error.txt",
+                ("\n".join(state.run_errors) + "\n").encode("utf-8", errors="replace"),
+            )
+        except Exception as error:
+            state.run_errors.append(f"failure artifact registration raised {type(error).__name__}: {error}")
+
+    report = {
+        "run_id": state.bundle.run_id if state.bundle is not None else None,
+        "profile": profile_name,
+        "candidate": candidate,
+        "baseline": baseline,
+        "lock_hash": state.verification.lock_hash if state.verification is not None else None,
+        "manifest_hash": selection.manifest_hash if selection is not None else None,
+        "payload_hash": selection.payload_hash if selection is not None else None,
+        "selected_count": len(selected),
+        "input_hashes": state.input_hashes,
+        "effective_lock_sha256": state.effective_lock_hash,
+        "backend_identity": state.snapshot.backend_identity if state.snapshot is not None else {},
+        "selection_snapshot": (
+            {
+                "manifest_hash": state.snapshot.manifest_hash,
+                "payload_hash": state.snapshot.payload_hash,
+                "case_ids": list(state.snapshot.case_ids),
+            }
+            if state.snapshot is not None
+            else {}
+        ),
+        "replay": replay_index(selection) if selection is not None else {},
+        "backends": {
+            "reference": {case_id: _backend_json(evidence) for case_id, evidence in sorted(state.reference_evidence.items())},
+            "candidate": {case_id: _backend_json(evidence) for case_id, evidence in sorted(state.candidate_evidence.items())},
+        },
+        "outcomes": {
+            case_id: {
+                "disposition": outcome.disposition,
+                "reason": outcome.reason,
+                "results": [_role_json(role) for role in outcome.results],
+            }
+            for case_id, outcome in sorted(outcomes.items())
+        },
+        "dispositions": dict(accounting.counts),
+        "accounting_diagnostics": [item.render() for item in accounting.diagnostics],
+        "run_errors": list(state.run_errors),
+        "teardown_errors": teardown_errors,
+    }
+    publication_errors: list[str] = []
+    if state.bundle is not None:
+        try:
+            state.bundle.publish_report(report)
+        except Exception as error:
+            publication_errors.append(f"{type(error).__name__}: {error}")
+    else:
+        publication_errors.append("no evidence bundle was created")
+
+    if state.bundle is not None:
+        print(f"run evidence: {state.bundle.root}")
+        print(f"report: {state.bundle.report_path}")
+    print(f"dispositions: {dict(accounting.counts)}")
+    for item in accounting.diagnostics:
+        print(f"accounting diagnostic: {item.render()}")
+    for error in state.run_errors:
+        print(f"run error: {error}")
+    for error in teardown_errors:
+        print(f"teardown error: {error}")
+    for error in publication_errors:
+        print(f"publication error: {error}")
+
+    clean = not accounting.diagnostics and not teardown_errors and not state.run_errors and not publication_errors
+    if baseline:
+        ok = (
+            clean
+            and sum(accounting.counts.values()) == len(selected)
+            and accounting.counts.get("HARNESS_ERROR", 0) == 0
+            and accounting.counts.get("REFERENCE_FAILURE", 0) == 0
+            and accounting.counts.get("NOT_RUN", 0) == 0
+        )
+    else:
+        ok = clean and accounting.counts.get("PASS", 0) == len(selected)
+    return 0 if ok else 1
+
+
 def _role_json(role: RoleResult) -> dict[str, str]:
     return {"role": role.role, "status": role.status, "detail": role.detail}
 
@@ -387,101 +645,55 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str, baseline: bool 
     if candidate not in {"linux", "asterinas"}:
         print(f"HARNESS_ERROR unsupported candidate {candidate!r}; supported candidates are linux and asterinas", file=sys.stderr)
         return 2
-    bundle: EvidenceBundle | None = None
+    state = RunState()
     try:
         verification = verify_lock(repo)
+        state.verification = verification
         selection = load_selection(repo, profile_name)
+        state.selection = selection
+        snapshot = create_snapshot(verification, selection)
+        state.snapshot = snapshot
+        assert_selection_snapshot(selection, snapshot)
         bundle = EvidenceBundle.create(repo / "target/qualification")
-        inputs = copy_run_inputs(repo, bundle, any(bool(case.payload.get("adapter")) for case in selection.cases))
-        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection)
-        reference_evidence: dict[str, BackendEvidence] = {}
-        candidate_evidence: dict[str, BackendEvidence] = {}
+        state.bundle = bundle
+        inputs = copy_run_inputs(
+            repo,
+            bundle,
+            snapshot,
+            any(bool(case.payload.get("adapter")) for case in selection.cases),
+        )
+        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection, snapshot)
+        state.input_hashes = input_hashes
+        state.effective_lock_hash = effective_lock_hash
         with VmExclusion(repo / "target/qualification/vm.lock"):
             for case in selection.cases:
-                reference_evidence[case.case_id] = execute_backend(
+                reference_evidence = execute_backend(
                     repo,
                     bundle,
                     inputs,
+                    snapshot,
                     selection,
                     _case_label("reference", case.case_id),
                     case=case,
                     backend="linux",
                 )
-                candidate_evidence[case.case_id] = execute_backend(
+                state.reference_evidence[case.case_id] = reference_evidence
+                candidate_evidence = execute_backend(
                     repo,
                     bundle,
                     inputs,
+                    snapshot,
                     selection,
                     _case_label("candidate", case.case_id),
                     case=case,
                     backend=candidate,
                 )
-        outcomes = tuple(
-            evaluate_case(case, reference_evidence[case.case_id], candidate_evidence[case.case_id])
-            for case in selection.cases
-        )
-        accounting = reconcile(selection.case_ids, outcomes)
-        report = {
-            "run_id": bundle.run_id,
-            "profile": profile_name,
-            "candidate": candidate,
-            "baseline": baseline,
-            "lock_hash": verification.lock_hash,
-            "manifest_hash": selection.manifest_hash,
-            "payload_hash": selection.payload_hash,
-            "selected_count": len(selection.case_ids),
-            "input_hashes": input_hashes,
-            "effective_lock_sha256": effective_lock_hash,
-            "replay": replay_index(selection),
-            "backends": {
-                "reference": {case_id: _backend_json(evidence) for case_id, evidence in sorted(reference_evidence.items())},
-                "candidate": {case_id: _backend_json(evidence) for case_id, evidence in sorted(candidate_evidence.items())},
-            },
-            "outcomes": {
-                outcome.case_id: {
-                    "disposition": outcome.disposition,
-                    "reason": outcome.reason,
-                    "results": [_role_json(role) for role in outcome.results],
-                }
-                for outcome in outcomes
-            },
-            "dispositions": dict(accounting.counts),
-            "accounting_diagnostics": [item.render() for item in accounting.diagnostics],
-        }
-        teardown_errors = bundle.teardown()
-        report["teardown_errors"] = teardown_errors
-        bundle.publish_report(report)
-        print(f"run evidence: {bundle.root}")
-        print(f"report: {bundle.report_path}")
-        print(f"dispositions: {dict(accounting.counts)}")
-        for item in accounting.diagnostics:
-            print(f"accounting diagnostic: {item.render()}")
-        for error in teardown_errors:
-            print(f"teardown error: {error}")
-        harness_errors = accounting.counts.get("HARNESS_ERROR", 0)
-        reference_failures = accounting.counts.get("REFERENCE_FAILURE", 0)
-        if baseline:
-            ok = sum(accounting.counts.values()) == len(selection.case_ids) and harness_errors == 0 and reference_failures == 0 and not accounting.diagnostics and not teardown_errors
-        else:
-            ok = accounting.counts.get("PASS", 0) == len(selection.case_ids) and not accounting.diagnostics and not teardown_errors
-        return 0 if ok else 1
+                state.candidate_evidence[case.case_id] = candidate_evidence
+                state.outcomes[case.case_id] = evaluate_case(case, reference_evidence, candidate_evidence)
     except Exception as error:
-        if bundle is not None and not bundle.report_path.exists():
-            try:
-                bundle.register_artifact("harness-error.txt", f"{type(error).__name__}: {error}\n".encode("utf-8", errors="replace"))
-                bundle.publish_report(
-                    {
-                        "run_id": bundle.run_id,
-                        "profile": profile_name,
-                        "candidate": candidate,
-                        "dispositions": {"HARNESS_ERROR": 1},
-                        "error": f"{type(error).__name__}: {error}",
-                    }
-                )
-            except Exception:
-                pass
+        state.run_errors.append(f"{type(error).__name__}: {error}")
         print(f"HARNESS_ERROR {type(error).__name__}: {error}", file=sys.stderr)
-        return 1
+    return finalize_run(state, profile_name, candidate, baseline)
 
 
 def parse_qual_stream(text: str) -> list[tuple[list[str], dict[str, Any]]]:
@@ -658,13 +870,20 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
     try:
         verification = verify_lock(repo)
         selection = load_selection(repo, profile_name)
+        snapshot = create_snapshot(verification, selection)
+        assert_selection_snapshot(selection, snapshot)
         bundle = EvidenceBundle.create(repo / "target/qualification")
-        inputs = copy_run_inputs(repo, bundle, any(bool(case.payload.get("adapter")) for case in selection.cases))
-        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection)
+        inputs = copy_run_inputs(
+            repo,
+            bundle,
+            snapshot,
+            any(bool(case.payload.get("adapter")) for case in selection.cases),
+        )
+        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection, snapshot)
         _delegate_lc02_controls(repo, bundle, controls)
 
         with VmExclusion(repo / "target/qualification/vm.lock"):
-            base = execute_backend(repo, bundle, inputs, selection, "control-base")
+            base = execute_backend(repo, bundle, inputs, snapshot, selection, "control-base")
             control_backends["base"] = _backend_json(base)
             qemu_command_text = ""
             qemu_command_path = bundle.artifacts_dir / "control-base/qemu-command.json"
@@ -691,7 +910,7 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
             original_config = config_input.read_text(encoding="utf-8")
             config_input.write_text(original_config.replace("CONFIG_EXT2_FS=y", "# CONFIG_EXT2_FS is not set", 1), encoding="utf-8")
             try:
-                missing_config_evidence = execute_backend(repo, bundle, inputs, selection, "control-missing-reference-configuration")
+                missing_config_evidence = execute_backend(repo, bundle, inputs, snapshot, selection, "control-missing-reference-configuration")
             finally:
                 config_input.write_text(original_config, encoding="utf-8")
             control_backends["missing-reference-configuration"] = _backend_json(missing_config_evidence)
@@ -735,7 +954,7 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
                 ),
             ):
                 guest_control = "drop-sys-admin" if label == "missing-privileges" else label
-                evidence = execute_backend(repo, bundle, inputs, selection, f"control-{label}", control=guest_control)
+                evidence = execute_backend(repo, bundle, inputs, snapshot, selection, f"control-{label}", control=guest_control)
                 control_backends[label] = _backend_json(evidence)
                 detected = _adapter_stream_clean(evidence) and evidence.final_status == "fail" and extra_predicate(evidence)
                 controls[control_name] = {
@@ -746,15 +965,14 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
                     ),
                 }
 
-            hang = execute_backend(repo, bundle, inputs, selection, "control-guest-hang", control="hang", deadline=20, silence_timeout=3)
+            hang = execute_backend(repo, bundle, inputs, snapshot, selection, "control-guest-hang", control="hang", deadline=20, silence_timeout=3)
             control_backends["guest-hang"] = _backend_json(hang)
             controls["adapter:guest-hang"] = {
                 "detected": hang.execution_outcome == "hang" and hang.teardown_state == "verified-empty",
                 "detail": f"outcome={hang.execution_outcome} teardown={hang.teardown_state}",
             }
 
-            lock_document = json.loads((repo / LOCK_PATH).read_text(encoding="utf-8"))
-            qemu_path = lock_document["qemu"]["path"]
+            qemu_path = str(snapshot.qemu_path)
             orphan_command = [
                 "/bin/sh",
                 "-c",
@@ -806,6 +1024,12 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
             "payload_hash": selection.payload_hash,
             "input_hashes": input_hashes,
             "effective_lock_sha256": effective_lock_hash,
+            "backend_identity": snapshot.backend_identity,
+            "selection_snapshot": {
+                "manifest_hash": snapshot.manifest_hash,
+                "payload_hash": snapshot.payload_hash,
+                "case_ids": list(snapshot.case_ids),
+            },
             "replay": replay_index(selection),
             "control_backends": control_backends,
             "controls": controls,
@@ -849,6 +1073,11 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
                 )
             except Exception:
                 pass
+        if bundle is not None:
+            try:
+                bundle.teardown()
+            except Exception:
+                pass
         print(f"HARNESS_ERROR {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
@@ -862,9 +1091,16 @@ def run_controls(repo: Path, profile_name: str) -> int:
     try:
         verification = verify_lock(repo)
         selection = load_selection(repo, profile_name)
+        snapshot = create_snapshot(verification, selection)
+        assert_selection_snapshot(selection, snapshot)
         bundle = EvidenceBundle.create(repo / "target/qualification")
-        inputs = copy_run_inputs(repo, bundle, any(bool(case.payload.get("adapter")) for case in selection.cases))
-        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection)
+        inputs = copy_run_inputs(
+            repo,
+            bundle,
+            snapshot,
+            any(bool(case.payload.get("adapter")) for case in selection.cases),
+        )
+        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection, snapshot)
         selftest = subprocess.run(
             [sys.executable, str(repo / "test/qualification/run.py"), "selftest"],
             cwd=repo,
@@ -918,26 +1154,26 @@ def run_controls(repo: Path, profile_name: str) -> int:
             controls["lock-control-selection-drift"] = {"detected": False, "detail": "mutated control-selection lock verification passed"}
 
         with VmExclusion(repo / "target/qualification/vm.lock"):
-            base = execute_backend(repo, bundle, inputs, selection, "control-base")
+            base = execute_backend(repo, bundle, inputs, snapshot, selection, "control-base")
             if base.execution_outcome != "exit" or base.ingestion_diagnostics or base.final_status != "pass":
                 internal_failures.append(
                     f"control base stream is not valid: outcome={base.execution_outcome} final={base.final_status} diagnostics={list(base.ingestion_diagnostics)}"
                 )
             controls.update(real_stream_controls(base, selection))
 
-            panic = execute_backend(repo, bundle, inputs, selection, "control-panic", control="panic", deadline=20)
+            panic = execute_backend(repo, bundle, inputs, snapshot, selection, "control-panic", control="panic", deadline=20)
             controls["real-guest-panic"] = {
                 "detected": panic.execution_outcome == "panic",
                 "detail": f"outcome={panic.execution_outcome} teardown={panic.teardown_state}",
             }
 
-            hang = execute_backend(repo, bundle, inputs, selection, "control-hang", control="hang", deadline=20, silence_timeout=3)
+            hang = execute_backend(repo, bundle, inputs, snapshot, selection, "control-hang", control="hang", deadline=20, silence_timeout=3)
             controls["real-guest-hang"] = {
                 "detected": hang.execution_outcome == "hang",
                 "detail": f"outcome={hang.execution_outcome} teardown={hang.teardown_state}",
             }
 
-            timeout = execute_backend(repo, bundle, inputs, selection, "control-timeout", deadline=1)
+            timeout = execute_backend(repo, bundle, inputs, snapshot, selection, "control-timeout", deadline=1)
             controls["real-host-timeout"] = {
                 "detected": timeout.execution_outcome == "timeout",
                 "detail": f"outcome={timeout.execution_outcome} teardown={timeout.teardown_state}",
@@ -975,6 +1211,12 @@ def run_controls(repo: Path, profile_name: str) -> int:
             "payload_hash": selection.payload_hash,
             "input_hashes": input_hashes,
             "effective_lock_sha256": effective_lock_hash,
+            "backend_identity": snapshot.backend_identity,
+            "selection_snapshot": {
+                "manifest_hash": snapshot.manifest_hash,
+                "payload_hash": snapshot.payload_hash,
+                "case_ids": list(snapshot.case_ids),
+            },
             "replay": replay_index(selection),
             "control_backends": control_backends,
             "controls": controls,
@@ -1016,6 +1258,11 @@ def run_controls(repo: Path, profile_name: str) -> int:
                         "controls": controls,
                     }
                 )
+            except Exception:
+                pass
+        if bundle is not None:
+            try:
+                bundle.teardown()
             except Exception:
                 pass
         print(f"HARNESS_ERROR {type(error).__name__}: {error}", file=sys.stderr)
