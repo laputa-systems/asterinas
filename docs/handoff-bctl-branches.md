@@ -25,11 +25,11 @@ Both AS2 lanes were needed. `main`'s `pid_table` was kept as a legacy lookup
 surface for syscalls not yet moved to the namespace graph.
 
 Verification: `cargo osdk check -p aster-core` passes on x86_64 and aarch64;
-workspace clippy passes except for `cargo-udeps`, which is absent on this host.
-`make test` has one failure in `short-vis-path` that reproduces on unmodified
-`main`. The kernel build and regression boot were not run from the nested
-worktree because the host-installed `cargo-osdk` embeds main-checkout paths in
-the generated base crate.
+the full workspace clippy and `cargo-udeps` gates pass in the dev container;
+and `cargo osdk build` produces the boot ISO there. `make test` has one failure
+in `short-vis-path` that reproduces on unmodified `main`. The host-installed
+`cargo-osdk` embeds main-checkout paths in its generated base crate, so builds
+from this nested worktree must run in the container.
 
 ## Branch inventory
 
