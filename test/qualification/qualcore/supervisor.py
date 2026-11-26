@@ -214,8 +214,8 @@ class Supervisor:
             raise ValueError("output_budget must be positive")
         if silence_timeout is not None and (not math.isfinite(silence_timeout) or silence_timeout <= 0):
             raise ValueError("silence_timeout must be a finite positive number")
-        if process_tree_interval <= 0:
-            raise ValueError("process_tree_interval must be positive")
+        if not math.isfinite(process_tree_interval) or process_tree_interval <= 0:
+            raise ValueError("process_tree_interval must be a finite positive number")
         started = time.monotonic()
         command = tuple(str(item) for item in argv)
         if not command:
@@ -500,8 +500,6 @@ class Supervisor:
             reader_errors = [f"{reader.stream_name}: {reader.error}" for reader in readers if reader.error is not None]
             if outcome == "exit" and stop_reason:
                 outcome = stop_reason[0]
-            if outcome == "exit" and (reader_errors or tree_errors):
-                outcome = "harness-error"
         except BaseException:
             _stop_group(process, pgid)
             process.wait()
@@ -545,7 +543,7 @@ class Supervisor:
             teardown_state = "fork-tainted-unproven"
         else:
             teardown_state = "verified-empty"
-        if teardown_state != "verified-empty" or sink.errors or cleanup_errors or hook_errors:
+        if teardown_state != "verified-empty" or sink.errors or cleanup_errors or hook_errors or reader_errors:
             if outcome != "harness-error":
                 teardown_details.append(f"runtime outcome before harness-error escalation: {outcome}")
             outcome = "harness-error"

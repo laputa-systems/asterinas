@@ -783,9 +783,18 @@ def selftest_main() -> int:
 
     evaluate("fork-panic-escalates", fork_panic_escalates)
 
+    def reader_capture_failure_escalates() -> tuple[bool, str]:
+        code = "import os\nfor _ in range(200):\n os.write(1, b'x' * 1024)"
+        with mock.patch.object(supervisor_module.select, "select", side_effect=ValueError("filedescriptor out of range in select()")):
+            result = supervisor.run([python, "-c", code], timeout=0.4, output_budget=4096)
+        detail = f"outcome={result.outcome} reader_errors={result.reader_errors} bytes={result.stdout_bytes}"
+        return bool(result.reader_errors) and result.outcome == "harness-error", detail
+
+    evaluate("reader-capture-failure-escalates", reader_capture_failure_escalates)
+
     def supervisor_nonfinite_timeouts() -> tuple[bool, str]:
         rejected = []
-        for kwargs in ({"timeout": float("nan")}, {"timeout": float("inf")}, {"timeout": 1, "silence_timeout": float("nan")}):
+        for kwargs in ({"timeout": float("nan")}, {"timeout": float("inf")}, {"timeout": 1, "silence_timeout": float("nan")}, {"timeout": 1, "process_tree_interval": float("nan")}):
             try:
                 supervisor.run([python, "-c", "pass"], output_budget=1024, **kwargs)
             except ValueError:
