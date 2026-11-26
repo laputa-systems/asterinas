@@ -17,12 +17,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "da135b5171f03200b1a89953e1dfb5fe1168f00cf8ca98b8faa208d9cde7f5d2",
+    "kernel_sha256": "7c19a721208be97836cccfd1e772c1f0f6eaa185cf1c670ee3dec12a9babfa83",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "ed16c45424563de9500ab726370300efbdfe6b8eb28095d35413c78d09cf73d7"
+    "source_tree_sha256": "5c15a85f25756b8a7c0f9062d4567b55d23356470b2ce41a66daf219604fd056"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
