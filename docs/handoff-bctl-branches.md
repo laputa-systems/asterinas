@@ -26,10 +26,13 @@ surface for syscalls not yet moved to the namespace graph.
 
 Verification: `cargo osdk check -p aster-core` passes on x86_64 and aarch64;
 the full workspace clippy and `cargo-udeps` gates pass in the dev container;
-and `cargo osdk build` produces the boot ISO there. `make test` has one failure
-in `short-vis-path` that reproduces on unmodified `main`. The host-installed
+and `cargo osdk build` produces the boot ISO there. `make ktest` passes on a
+fresh worktree of the settlement branch; an unmodified `main` baseline exits 2
+on a QEMU Unknown video-mode case. `make test` has one failure in
+`short-vis-path` that reproduces on unmodified `main`. The host-installed
 `cargo-osdk` embeds main-checkout paths in its generated base crate, so builds
-from this nested worktree must run in the container.
+from this nested worktree must run in the container; stale host-build artifacts
+in it also make `cargo osdk test` panic before any test runs.
 
 ## Branch inventory
 
