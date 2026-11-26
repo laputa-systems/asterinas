@@ -7,6 +7,30 @@ or delete their branches without that owner's decision.
 Captured from integration checkout `main` at
 `2826f4446637c48254cac5665a9ca0095b7ce43a` (2026-11-26).
 
+## Settlement status (2026-11-26)
+
+All four lanes have been ported onto `main` in the local branch
+`settle/bctl-lanes`, in this order: seccomp (AS1), IPC tail (AS3), PID
+namespaces and user namespaces (AS2), then a lint-cleanup commit. `main`'s
+qualification fixes through `512a44370` are merged into that branch. `main`
+itself was left untouched: a concurrent Linux-compatibility lane is committing
+to the main checkout and had an in-progress `probe.c` edit when the settlement
+was completed. The four lane worktrees and their bridge leases are therefore
+still live and must not be retired until the settlement branch is integrated
+into `main`.
+
+`main` had only namespace scaffolding, not working namespace isolation:
+`unshare(CLONE_NEWUSER)` returned `EINVAL` and `CLONE_NEWPID` was unsupported.
+Both AS2 lanes were needed. `main`'s `pid_table` was kept as a legacy lookup
+surface for syscalls not yet moved to the namespace graph.
+
+Verification: `cargo osdk check -p aster-core` passes on x86_64 and aarch64;
+workspace clippy passes except for `cargo-udeps`, which is absent on this host.
+`make test` has one failure in `short-vis-path` that reproduces on unmodified
+`main`. The kernel build and regression boot were not run from the nested
+worktree because the host-installed `cargo-osdk` embeds main-checkout paths in
+the generated base crate.
+
 ## Branch inventory
 
 | Branch | HEAD | Worktree | Own commits beyond `fleet/scoped-clean` | Lane |
@@ -92,13 +116,14 @@ bctl owner before deleting it.
 
 ## Suggested next steps for the owner
 
-1. Confirm which lanes are accepted in the bctl campaign.
-2. Port each accepted lane's 5–7 commits (or `git diff fleet/scoped-clean..<branch>`)
-   onto the target branch; expect conflicts where `main` already changed the
-   same files, especially PID/user namespaces.
-3. Run the fork's `make lint` / build / ktest gates on the result.
-4. Release the bridge leases above, then retire only accepted, integrated
-   worktrees with `worktree-retire <path> --into <integration-head>`.
+1. Once the concurrent Linux-compatibility lane is idle and `main` is clean,
+   integrate `settle/bctl-lanes` into `main` locally (fast-forward or merge;
+   never force-push or reset).
+2. Run the fork's PVH build, `make ktest` and the regression suites on the
+   integrated tree, including the new seccomp, namespace and IPC fixtures.
+3. Release the bridge leases above, then retire the four lane worktrees with
+   `worktree-retire <path> --into <integration-head>`; leave `upstream-pidns`
+   alone until its superseded status is confirmed.
 
 ## Evidence commands
 
