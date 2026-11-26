@@ -131,7 +131,8 @@ impl SeccompState {
 
     pub(super) fn to_strict(&self) -> Result<Self> {
         if !matches!(self.policy, Policy::Disabled | Policy::Strict) {
-            return Err(errno!(EINVAL, "cannot change seccomp filter mode to strict"));        }
+            return Err(errno!(EINVAL, "cannot change seccomp filter mode to strict"));
+            }
         Ok(Self {
             policy: Policy::Strict,
         })
@@ -168,13 +169,15 @@ impl SeccompState {
 
     pub(super) fn append(&self, program: VerifiedProgram, logging: bool) -> Result<Self> {
         if self.is_strict() {
-            return Err(errno!(EINVAL, "cannot change strict seccomp mode to filter"));        }
+            return Err(errno!(EINVAL, "cannot change strict seccomp mode to filter"));
+            }
         let path_insns = program.len()
             + self
                 .head()
                 .map_or(0, |head| head.path_insns + PREVIOUS_FILTER_PENALTY);
         if path_insns > MAX_INSNS_PER_PATH {
-            return Err(errno!(ENOMEM, "seccomp filter chain is too long"));        }
+            return Err(errno!(ENOMEM, "seccomp filter chain is too long"));
+            }
 
         let head = Arc::new(FilterNode {
             program,

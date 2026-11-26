@@ -45,13 +45,15 @@ pub(crate) fn seccomp(operation: u32, flags: u32, args_addr: Vaddr, ctx: &Contex
     match operation {
         SET_MODE_STRICT => {
             if flags != 0 || args_addr != 0 {
-                return Err(errno!(EINVAL, "invalid strict seccomp arguments"));            }
+                return Err(errno!(EINVAL, "invalid strict seccomp arguments"));
+                }
             install::install_strict(ctx).map(|()| 0)
         }
         SET_MODE_FILTER => install::install_filter(ctx, flags, args_addr),
         GET_NOTIF_SIZES => {
             if flags != 0 {
-                return Err(errno!(EINVAL, "invalid seccomp query flags"));            }
+                return Err(errno!(EINVAL, "invalid seccomp query flags"));
+            }
             ctx.user_space().write_val(
                 args_addr,
                 &SeccompNotifSizes {
@@ -64,7 +66,8 @@ pub(crate) fn seccomp(operation: u32, flags: u32, args_addr: Vaddr, ctx: &Contex
         }
         GET_ACTION_AVAIL => {
             if flags != 0 {
-                return Err(errno!(EINVAL, "invalid seccomp query flags"));            }
+                return Err(errno!(EINVAL, "invalid seccomp query flags"));
+            }
             let action: u32 = ctx.user_space().read_val(args_addr)?;
             // Only the actions implemented by this port are reported. In
             // particular, USER_NOTIF is unsupported and unknown or
@@ -73,10 +76,10 @@ pub(crate) fn seccomp(operation: u32, flags: u32, args_addr: Vaddr, ctx: &Contex
             match action {
                 RET_ALLOW | RET_ERRNO | RET_KILL_PROCESS | RET_KILL_THREAD | RET_TRAP
                 | RET_TRACE | RET_LOG => Ok(0),
-                _ => return Err(errno!(EOPNOTSUPP, "unsupported seccomp action")),
+                _ => Err(errno!(EOPNOTSUPP, "unsupported seccomp action")),
             }
         }
-        _ => return Err(errno!(EINVAL, "unsupported seccomp operation")),
+        _ => Err(errno!(EINVAL, "unsupported seccomp operation")),
     }
 }
 
@@ -119,7 +122,8 @@ pub(crate) fn prctl_set_seccomp(mode: u64, fprog_addr: Vaddr, ctx: &Context) -> 
         return install::install_strict(ctx);
     }
     if mode != MODE_FILTER as u64 {
-        return Err(errno!(EINVAL, "unsupported seccomp mode"));    }
+        return Err(errno!(EINVAL, "unsupported seccomp mode"));
+        }
     // With zero flags, a successful installation always returns 0.
     install::install_filter(ctx, 0, fprog_addr).map(|_| ())
 }

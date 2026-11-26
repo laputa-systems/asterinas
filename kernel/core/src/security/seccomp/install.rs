@@ -45,17 +45,20 @@ pub(super) fn install_filter(ctx: &Context, flags: u32, fprog_addr: Vaddr) -> Re
         | FILTER_FLAG_TSYNC_ESRCH)
         != 0
     {
-        return Err(errno!(EINVAL, "unsupported seccomp filter flags"));    }
+        return Err(errno!(EINVAL, "unsupported seccomp filter flags"));
+        }
     let sync_threads = flags & FILTER_FLAG_TSYNC != 0;
 
     let user_space = ctx.user_space();
     let fprog: SockFprog = user_space.read_val(fprog_addr)?;
     let len = fprog.len as usize;
     if len == 0 || len > MAX_INSNS {
-        return Err(errno!(EINVAL, "invalid seccomp program length"));    }
+        return Err(errno!(EINVAL, "invalid seccomp program length"));
+        }
     check_install_permission(ctx)?;
     if fprog.filter == 0 {
-        return Err(errno!(EINVAL, "null seccomp instruction array"));    }
+        return Err(errno!(EINVAL, "null seccomp instruction array"));
+        }
 
     let mut raw = Vec::<SockFilter>::new();
     raw.try_reserve_exact(len)
@@ -84,7 +87,8 @@ pub(super) fn install_filter(ctx: &Context, flags: u32, fprog_addr: Vaddr) -> Re
             let target = task.as_posix_thread().unwrap();
             if !target.seccomp_snapshot().can_sync_from(&old_state) {
                 if flags & FILTER_FLAG_TSYNC_ESRCH != 0 {
-                    return Err(errno!(ESRCH, "seccomp thread synchronization failed"));                }
+                    return Err(errno!(ESRCH, "seccomp thread synchronization failed"));
+                    }
                 return Ok(target.tid() as isize);
             }
         }
@@ -119,7 +123,8 @@ fn reject_user_notification(raw: &[SockFilter]) -> Result<()> {
     if raw.iter().any(|insn| {
         insn.code == RET_K && (insn.k & RET_ACTION_FULL) == RET_USER_NOTIF
     }) {
-        return Err(errno!(EINVAL, "seccomp user notification is not supported"));    }
+        return Err(errno!(EINVAL, "seccomp user notification is not supported"));
+        }
     Ok(())
 }
 

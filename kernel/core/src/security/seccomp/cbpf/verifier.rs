@@ -17,7 +17,8 @@ use crate::{
 impl VerifiedProgram {
     pub(in crate::security::seccomp) fn new(raw: Vec<SockFilter>) -> Result<Self> {
         if raw.is_empty() || raw.len() > MAX_INSNS {
-            return Err(errno!(EINVAL, "invalid seccomp program length"));        }
+            return Err(errno!(EINVAL, "invalid seccomp program length"));
+            }
 
         let mut instructions = Vec::new();
         instructions.try_reserve_exact(raw.len()).map_err(|_| {
@@ -37,7 +38,8 @@ impl VerifiedProgram {
         }
 
         if !matches!(instructions.last().unwrap().op, Opcode::RetK | Opcode::RetA) {
-            return Err(errno!(EINVAL, "seccomp program must end with a return"));        }
+            return Err(errno!(EINVAL, "seccomp program must end with a return"));
+            }
         check_scratch_memory(&instructions)?;
         Ok(Self { instructions })
     }
@@ -61,7 +63,8 @@ fn check_instruction(op: Opcode, insn: &SockFilter, remaining: usize) -> Result<
         _ => true,
     };
     if !is_valid {
-        return Err(errno!(EINVAL, "invalid seccomp instruction operand"));    }
+        return Err(errno!(EINVAL, "invalid seccomp instruction operand"));
+        }
     Ok(())
 }
 
@@ -81,7 +84,8 @@ fn check_scratch_memory(instructions: &[Instruction]) -> Result<()> {
             Opcode::St | Opcode::Stx => initialized |= 1 << insn.k,
             Opcode::LdMem | Opcode::LdxMem => {
                 if initialized & (1 << insn.k) == 0 {
-                    return Err(errno!(EINVAL, "uninitialized seccomp scratch word"));                }
+                    return Err(errno!(EINVAL, "uninitialized seccomp scratch word"));
+                    }
             }
             Opcode::Ja => {
                 masks[pc + 1 + insn.k as usize] &= initialized;

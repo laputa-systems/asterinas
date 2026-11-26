@@ -115,6 +115,7 @@ fn set_bootstrap_session_and_group(process: &Arc<Process>) {
 }
 
 /// Creates the init task from the given executable path.
+#[expect(clippy::too_many_arguments)]
 fn create_init_task(
     kernel_tid: KernelTid,
     pid_chain: PidChain,

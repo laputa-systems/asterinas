@@ -31,7 +31,7 @@ pub(super) fn sys_get_robust_list(
     // accessible by design. Queries for other existing threads fail with `EPERM`, matching the
     // Linux error for disallowed queries; unknown tids fail with `ESRCH`.
     let head = if pid == 0 || pid as Tid == ctx.posix_thread.tid() {
-        ctx.thread_local.robust_list().borrow().clone()
+        *ctx.thread_local.robust_list().borrow()
     } else if pid_table::pid_table_mut().get_thread(pid as Tid).is_some() {
         return Err(errno!(EPERM, "only the calling thread may be inspected"));
     } else {

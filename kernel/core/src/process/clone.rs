@@ -682,7 +682,7 @@ fn clone_child_process(
             // Like Linux, a forked child inherits the parent's robust list head pointer.
             // (Threads created with `CLONE_THREAD` go through `clone_child_task` and start
             // with no robust list.) The head itself is re-read from userspace on thread exit.
-            .robust_list_head(thread_local.robust_list().borrow().clone())
+            .robust_list_head(*thread_local.robust_list().borrow())
             .user_ns(child_user_ns.clone())
             .ns_proxy(child_ns_proxy)
             .pid_ns_for_children(PidNsForChildren::SameAsActive)
