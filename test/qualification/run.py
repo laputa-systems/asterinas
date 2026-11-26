@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import os
 import signal
+import subprocess
 import sys
+from pathlib import Path
 from types import FrameType
 
 from qualcore.selftest import selftest_main
@@ -29,10 +31,22 @@ def run_selftest() -> int:
             signal.signal(handled_signum, previous_handler)
 
 
+def run_inventory_check() -> int:
+    repo_root = Path(__file__).resolve().parents[2]
+    inventory = Path(__file__).resolve().parent / "inventory" / "inventory.py"
+    completed = subprocess.run(
+        [sys.executable, str(inventory), "check", "--repo-root", str(repo_root)],
+        check=False,
+    )
+    return completed.returncode
+
+
 def main(argv: list[str]) -> int:
     if argv == ["selftest"]:
         return run_selftest()
-    print("usage: python3 test/qualification/run.py selftest", file=sys.stderr)
+    if argv == ["inventory", "--check"]:
+        return run_inventory_check()
+    print("usage: python3 test/qualification/run.py selftest | inventory --check", file=sys.stderr)
     return 2
 
 
