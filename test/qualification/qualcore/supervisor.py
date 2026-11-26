@@ -20,14 +20,17 @@ LogOpener = Callable[[], BinaryIO]
 PipeCallback = Callable[[str, bytes, bytes], None]
 
 _PROC_NOTE_FORK = 0x40000000
+_EXEC_RELEASE_BYTE = b"1"
 _EXEC_WRAPPER = "\n".join(
     (
         "import os, sys",
         "release_fd = int(sys.argv[1])",
         "error_fd = int(sys.argv[2])",
         "target = sys.argv[3:]",
-        "os.read(release_fd, 1)",
+        "release_byte = os.read(release_fd, 1)",
         "os.close(release_fd)",
+        "if release_byte != " + repr(_EXEC_RELEASE_BYTE) + ":",
+        "    os._exit(126)",
         "os.set_inheritable(error_fd, False)",
         "try:",
         "    os.execvp(target[0], target)",
@@ -295,146 +298,148 @@ class Supervisor:
         _close_fd(exec_error_write)
         release_read = None
         exec_error_write = None
-        pgid = os.getpgid(process.pid)
-        tracker = ProcessTreeTracker(process.pid)
+
+        pgid = process.pid
         tree_errors: list[str] = []
         observed_descendant_pids: list[int] = []
         stop_reason: list[str] = []
         hook_errors: list[str] = []
         watcher_errors: list[str] = []
         teardown_details: list[str] = []
+        cleanup_errors: list[str] = []
+        reader_errors: list[str] = []
         fork_event_seen = False
         fork_watcher = None
+        readers: list[_PipeReader] = []
+        stop_readers = threading.Event()
+        outcome = "exit"
+        exec_error = b""
+        group_teardown_failed = False
         last_output = time.monotonic()
         scan_tails = {"stdout": b"", "stderr": b""}
         if backend is None:
             teardown_details.append("strict teardown proof backend unavailable")
 
-        def record_watcher_error(message: str) -> None:
-            if len(watcher_errors) < 4:
-                watcher_errors.append(message)
-
-        if use_exec_wrapper:
+        try:
             try:
-                fork_watcher = select.kqueue()
-                fork_event = select.kevent(
-                    process.pid,
-                    filter=select.KQ_FILTER_PROC,
-                    flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE,
-                    fflags=_PROC_NOTE_FORK,
-                )
-                fork_watcher.control([fork_event], 0, 0)
-            except (OSError, ValueError, OverflowError) as error:
-                record_watcher_error(f"process fork watcher registration failed: {error}")
-                if fork_watcher is not None:
-                    try:
-                        fork_watcher.close()
-                    except OSError:
-                        pass
-                    fork_watcher = None
-            try:
-                if release_write is not None:
-                    os.write(release_write, b"1")
-            except OSError as error:
-                record_watcher_error(f"controlled exec release failed: {error}")
-                if not stop_reason:
-                    stop_reason.append("harness-error")
-            finally:
-                _close_fd(release_write)
-                release_write = None
+                pgid = os.getpgid(process.pid)
+            except OSError:
+                pgid = process.pid
+            tracker = ProcessTreeTracker(process.pid)
 
-        def drain_fork_events() -> None:
-            nonlocal fork_event_seen
-            if fork_watcher is None:
-                return
-            try:
-                events = fork_watcher.control(None, 16, 0)
-            except OSError as error:
-                record_watcher_error(f"process fork watcher read failed: {error}")
-                return
-            for event in events:
-                if event.flags & select.KQ_EV_ERROR:
-                    record_watcher_error(f"process fork watcher event error: {event.data}")
-                if event.fflags & _PROC_NOTE_FORK:
-                    fork_event_seen = True
+            def record_watcher_error(message: str) -> None:
+                if len(watcher_errors) < 4:
+                    watcher_errors.append(message)
 
-        def observe(stream: str, chunk: bytes, retained: bytes) -> None:
-            nonlocal last_output
-            last_output = time.monotonic()
-            sink.write(retained)
-            scan = scan_tails[stream] + chunk
-            lowered = scan.lower()
-            if any(marker.lower() in lowered for marker in panic_markers):
-                if not stop_reason:
-                    stop_reason.append("panic")
-            scan_tails[stream] = scan[-256:]
-            if event_hook is not None:
+            if use_exec_wrapper:
                 try:
-                    event = event_hook(stream, chunk)
-                except Exception as error:
-                    if len(hook_errors) < 4:
-                        hook_errors.append(f"{type(error).__name__}: {error}")
+                    fork_watcher = select.kqueue()
+                    fork_event = select.kevent(
+                        process.pid,
+                        filter=select.KQ_FILTER_PROC,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE,
+                        fflags=_PROC_NOTE_FORK,
+                    )
+                    fork_watcher.control([fork_event], 0, 0)
+                except (OSError, ValueError, OverflowError) as error:
+                    record_watcher_error(f"process fork watcher registration failed: {error}")
+                    if fork_watcher is not None:
+                        try:
+                            fork_watcher.close()
+                        except OSError:
+                            pass
+                        fork_watcher = None
+                try:
+                    if release_write is not None:
+                        os.write(release_write, _EXEC_RELEASE_BYTE)
+                except OSError as error:
+                    record_watcher_error(f"controlled exec release failed: {error}")
                     if not stop_reason:
                         stop_reason.append("harness-error")
-                else:
-                    if event in {"panic", "hang"} and not stop_reason:
-                        stop_reason.append(event)
+                finally:
+                    _close_fd(release_write)
+                    release_write = None
 
-        stdout_pipe = process.stdout
-        stderr_pipe = process.stderr
-        if stdout_pipe is None or stderr_pipe is None:
-            _stop_group(process, pgid)
-            process.wait()
-            sink.close()
-            _close_fd(exec_error_read)
-            if fork_watcher is not None:
-                fork_watcher.close()
-            raise RuntimeError("supervised process pipes were not created")
-        stop_readers = threading.Event()
-        readers = [
-            _PipeReader("stdout", stdout_pipe, output_budget, observe, stop_readers),
-            _PipeReader("stderr", stderr_pipe, output_budget, observe, stop_readers),
-        ]
-        for reader in readers:
-            reader.start()
-
-        def update_tree() -> None:
-            try:
-                tracker.update()
-            except ProcessTreeError as error:
-                if len(tree_errors) < 4:
-                    tree_errors.append(str(error))
-                if not stop_reason:
-                    stop_reason.append("harness-error")
-
-        def observe_survivors() -> None:
-            nonlocal observed_descendant_pids
-            try:
-                observed_descendant_pids = tracker.survivors()
-            except ProcessTreeError as error:
-                if len(tree_errors) < 4:
-                    tree_errors.append(str(error))
-
-        def read_exec_error() -> bytes:
-            if exec_error_read is None:
-                return b""
-            chunks: list[bytes] = []
-            while True:
+            def drain_fork_events() -> None:
+                nonlocal fork_event_seen
+                if fork_watcher is None:
+                    return
                 try:
-                    chunk = os.read(exec_error_read, 4096)
+                    events = fork_watcher.control(None, 16, 0)
                 except OSError as error:
-                    record_watcher_error(f"target exec error pipe read failed: {error}")
-                    break
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            return b"".join(chunks)
+                    record_watcher_error(f"process fork watcher read failed: {error}")
+                    return
+                for event in events:
+                    if event.flags & select.KQ_EV_ERROR:
+                        record_watcher_error(f"process fork watcher event error: {event.data}")
+                    if event.fflags & _PROC_NOTE_FORK:
+                        fork_event_seen = True
 
-        outcome = "exit"
-        reader_errors: list[str] = []
-        exec_error = b""
-        group_teardown_failed = False
-        try:
+            def observe(stream: str, chunk: bytes, retained: bytes) -> None:
+                nonlocal last_output
+                last_output = time.monotonic()
+                sink.write(retained)
+                scan = scan_tails[stream] + chunk
+                lowered = scan.lower()
+                if any(marker.lower() in lowered for marker in panic_markers):
+                    if not stop_reason:
+                        stop_reason.append("panic")
+                scan_tails[stream] = scan[-256:]
+                if event_hook is not None:
+                    try:
+                        event = event_hook(stream, chunk)
+                    except Exception as error:
+                        if len(hook_errors) < 4:
+                            hook_errors.append(f"{type(error).__name__}: {error}")
+                        if not stop_reason:
+                            stop_reason.append("harness-error")
+                    else:
+                        if event in {"panic", "hang"} and not stop_reason:
+                            stop_reason.append(event)
+
+            stdout_pipe = process.stdout
+            stderr_pipe = process.stderr
+            if stdout_pipe is None or stderr_pipe is None:
+                raise RuntimeError("supervised process pipes were not created")
+            readers = [
+                _PipeReader("stdout", stdout_pipe, output_budget, observe, stop_readers),
+                _PipeReader("stderr", stderr_pipe, output_budget, observe, stop_readers),
+            ]
+            for reader in readers:
+                reader.start()
+
+            def update_tree() -> None:
+                try:
+                    tracker.update()
+                except ProcessTreeError as error:
+                    if len(tree_errors) < 4:
+                        tree_errors.append(str(error))
+                    if not stop_reason:
+                        stop_reason.append("harness-error")
+
+            def observe_survivors() -> None:
+                nonlocal observed_descendant_pids
+                try:
+                    observed_descendant_pids = tracker.survivors()
+                except ProcessTreeError as error:
+                    if len(tree_errors) < 4:
+                        tree_errors.append(str(error))
+
+            def read_exec_error() -> bytes:
+                if exec_error_read is None:
+                    return b""
+                chunks: list[bytes] = []
+                while True:
+                    try:
+                        chunk = os.read(exec_error_read, 4096)
+                    except OSError as error:
+                        record_watcher_error(f"target exec error pipe read failed: {error}")
+                        break
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                return b"".join(chunks)
+
             update_tree()
             last_tree_update = time.monotonic()
             while True:
@@ -501,6 +506,8 @@ class Supervisor:
             process.wait()
             raise
         finally:
+            _close_fd(release_write)
+            release_write = None
             stop_readers.set()
             for reader in readers:
                 reader.join(timeout=0.2)
@@ -510,7 +517,6 @@ class Supervisor:
                 except OSError:
                     pass
             _close_fd(exec_error_read)
-            cleanup_errors: list[str] = []
             for pipe in (process.stdout, process.stderr):
                 if pipe is None:
                     continue
@@ -539,6 +545,8 @@ class Supervisor:
         else:
             teardown_state = "verified-empty"
         if outcome == "exit" and teardown_state != "verified-empty":
+            outcome = "harness-error"
+        if outcome == "exit" and (sink.errors or cleanup_errors or hook_errors):
             outcome = "harness-error"
 
         stdout_reader, stderr_reader = readers

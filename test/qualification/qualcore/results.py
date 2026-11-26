@@ -237,6 +237,8 @@ def _validate_case_records(case_id: str, case: CaseSpec, records: list[dict[str,
                     _add(ingestion, "malformed-output", f"{case_id}/{subtest_id} has a malformed assertion")
                     continue
                 assertion_id = assertion["id"]
+                if "value" not in assertion:
+                    _add(ingestion, "malformed-output", f"{case_id}/{subtest_id}/{assertion_id} carries no observed value")
                 if assertion_id in seen:
                     _add(ingestion, "contradiction", f"{case_id}/{subtest_id}/{assertion_id} is duplicated")
                 seen.add(assertion_id)
@@ -271,7 +273,7 @@ def _validate_case_records(case_id: str, case: CaseSpec, records: list[dict[str,
             f"{case_id} final assertion count {final_assertions!r}, expected {expected_assertion_count}, observed {observed_assertions}",
         )
     final_status = final.get("status")
-    if final_status not in {"pass", "fail", "skip", "unsupported"}:
+    if not isinstance(final_status, str) or final_status not in {"pass", "fail", "skip", "unsupported"}:
         _add(ingestion, "malformed-output", f"{case_id} final status is invalid")
     elif failing_subtests and final_status == "pass":
         _add(ingestion, "contradiction", f"{case_id} final pass contradicts failing subtests")

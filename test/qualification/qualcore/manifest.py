@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,9 +87,9 @@ def _parse_assertion(raw: Any, path: Path, case_id: str, subtest_id: str) -> Ass
     normalization = tuple(normalization_raw)
     if not assertion_id or not isinstance(assertion_id, str):
         raise ManifestError(f"{path}: case {case_id} has an empty assertion id")
-    if value_type not in {"errno", "bytes", "permission"}:
+    if not isinstance(value_type, str) or value_type not in {"errno", "bytes", "permission"}:
         raise ManifestError(f"{path}: case {case_id} assertion {assertion_id} has unsupported type {value_type!r}")
-    if mode not in {"exact", "normalized", "invariant"}:
+    if not isinstance(mode, str) or mode not in {"exact", "normalized", "invariant"}:
         raise ManifestError(f"{path}: case {case_id} assertion {assertion_id} has unsupported mode {mode!r}")
     if not all(isinstance(rule, str) for rule in normalization):
         raise ManifestError(f"{path}: case {case_id} assertion {assertion_id} normalization must be strings")
@@ -150,7 +151,7 @@ def parse_case(raw: dict[str, Any], path: Path) -> CaseSpec:
     if not isinstance(applicability["required_config"], dict):
         raise ManifestError(f"{path}: case {case_id} applicability required_config must be an object")
     comparison = _require_object(raw["comparison"], path, f"case {case_id} comparison")
-    if comparison.get("mode") not in {"exact", "normalized", "allowed-outcome", "invariant"}:
+    if not isinstance(comparison.get("mode"), str) or comparison.get("mode") not in {"exact", "normalized", "allowed-outcome", "invariant"}:
         raise ManifestError(f"{path}: case {case_id} comparison mode is invalid")
     subtests_raw = raw["expected_subtests"]
     if not isinstance(subtests_raw, list) or not subtests_raw:
@@ -160,8 +161,8 @@ def parse_case(raw: dict[str, Any], path: Path) -> CaseSpec:
     if len(subtest_ids) != len(set(subtest_ids)):
         raise ManifestError(f"{path}: case {case_id} has duplicate expected subtests")
     deadline = raw["deadline_seconds"]
-    if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or deadline <= 0:
-        raise ManifestError(f"{path}: case {case_id} deadline must be positive")
+    if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or deadline <= 0:
+        raise ManifestError(f"{path}: case {case_id} deadline must be a finite positive number")
     budget = raw["budget_bytes"]
     if isinstance(budget, bool) or not isinstance(budget, int) or budget <= 0:
         raise ManifestError(f"{path}: case {case_id} byte budget must be positive")

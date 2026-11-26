@@ -4,20 +4,24 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
+from . import supervisor as supervisor_module
 from .accounting import CaseOutcome, RoleResult, reconcile
 from .compare import compare_value, verify_comparison_claim
 from .errors import EvidenceError, ManifestError
 from .evidence import EvidenceBundle
 from .gtest import parse_gtest_report
-from .manifest import Selection, load_case_index, load_profile
+from .manifest import Selection, load_case_index, load_case_manifest, load_profile
 from .results import ResultContext, ingest_result_stream, make_result_line
-from .supervisor import Supervisor, is_full_disk_error
+from .supervisor import _EXEC_RELEASE_BYTE, _EXEC_WRAPPER, Supervisor, is_full_disk_error
 from .util import sha256_bytes
 
 
@@ -100,6 +104,45 @@ def _first_matching(categories: list[str], category: str) -> str:
 
 def _render_os_errors(errors: list[OSError]) -> str:
     return "; ".join(f"errno={error.errno} {error.strerror or error}" for error in errors)
+
+
+def _wrapper_probe(release_payload: bytes | None) -> tuple[int, bytes]:
+    release_read, release_write = os.pipe()
+    error_read, error_write = os.pipe()
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _EXEC_WRAPPER,
+            str(release_read),
+            str(error_write),
+            sys.executable,
+            "-c",
+            "print('target-execed')",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        pass_fds=(release_read, error_write),
+    )
+    os.close(release_read)
+    os.close(error_write)
+    try:
+        if release_payload is not None:
+            os.write(release_write, release_payload)
+    finally:
+        try:
+            os.close(release_write)
+        except OSError:
+            pass
+    try:
+        stdout, _ = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        os.close(error_read)
+        raise
+    os.close(error_read)
+    return process.returncode, stdout
 
 
 def selftest_main() -> int:
@@ -395,6 +438,48 @@ def selftest_main() -> int:
 
     evaluate("unhashable-case-id", unhashable_case_id)
 
+    def final_status_wrong_type() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            records[-1]["status"] = []
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("malformed-output", mutate)
+
+    evaluate("final-status-wrong-type", final_status_wrong_type)
+
+    def assertion_without_value() -> tuple[bool, str]:
+        def mutate(records: list[dict], text: str) -> str:
+            for record in records:
+                if record["kind"] == "subtest":
+                    for assertion in record["assertions"]:
+                        assertion.pop("value", None)
+            return _stream(run_id, nonce, records)
+
+        return ingestion_control("malformed-output", mutate)
+
+    evaluate("assertion-without-value", assertion_without_value)
+
+    def nonfinite_deadline() -> tuple[bool, str]:
+        contract_text = (repo / "test" / "qualification" / "contracts" / "core" / "echo.json").read_text(encoding="utf-8")
+        details: list[str] = []
+        rejected_all = True
+        for literal in ("NaN", "Infinity"):
+            mutated = contract_text.replace('"deadline_seconds": 2', f'"deadline_seconds": {literal}')
+            if literal not in mutated:
+                return False, "contract fixture did not carry a numeric deadline to mutate"
+            path = bundle.work_dir / f"nonfinite-deadline-{literal.lower()}.json"
+            path.write_text(mutated, encoding="utf-8")
+            try:
+                load_case_manifest(path)
+            except (ManifestError, ValueError) as error:
+                details.append(f"{literal} rejected")
+            else:
+                rejected_all = False
+                details.append(f"{literal} accepted")
+        return rejected_all, "; ".join(details)
+
+    evaluate("manifest-nonfinite-deadline", nonfinite_deadline)
+
     evaluate(
         "wrong-errno",
         lambda: (
@@ -423,6 +508,44 @@ def selftest_main() -> int:
             "claimed match is contradicted by recomputation",
         ),
     )
+
+    def errno_hermetic_linux() -> tuple[bool, str]:
+        positive = (
+            compare_value("errno", "EAGAIN", 11).matched
+            and compare_value("errno", "EDEADLK", 35).matched
+            and compare_value("errno", "EOPNOTSUPP", 95).matched
+        )
+        negative = (
+            compare_value("errno", "EAGAIN", 35).matched
+            or compare_value("errno", "EDEADLK", 11).matched
+            or compare_value("errno", "EOPNOTSUPP", 102).matched
+        )
+        detail = (
+            f"EAGAIN=11 {compare_value('errno', 'EAGAIN', 11).matched} "
+            f"EDEADLK=35 {compare_value('errno', 'EDEADLK', 35).matched} "
+            f"EOPNOTSUPP=95 {compare_value('errno', 'EOPNOTSUPP', 95).matched} "
+            f"host-valued mismatches rejected: {not negative}"
+        )
+        return positive and not negative, detail
+
+    evaluate("errno-hermetic-linux", errno_hermetic_linux)
+
+    def errno_unknown_name_no_match() -> tuple[bool, str]:
+        invariant = compare_value("errno", {"one_of": ["ENOT_A_REAL_ERRNO"]}, None, "invariant")
+        exact = compare_value("errno", "ENOT_A_REAL_ERRNO", "ENOT_A_REAL_ERRNO")
+        detail = f"invariant matched={invariant.matched} exact matched={exact.matched}"
+        return not invariant.matched and not exact.matched, detail
+
+    evaluate("errno-unknown-name-no-match", errno_unknown_name_no_match)
+
+    def errno_boolean_no_match() -> tuple[bool, str]:
+        true_matches = compare_value("errno", 1, True).matched or compare_value("errno", True, 1).matched
+        false_matches = compare_value("errno", 0, False).matched or compare_value("errno", False, 0).matched
+        invariant = compare_value("errno", {"one_of": [True]}, 1, "invariant").matched
+        detail = f"true matched={true_matches} false matched={false_matches} invariant bool matched={invariant}"
+        return not true_matches and not false_matches and not invariant, detail
+
+    evaluate("errno-boolean-no-match", errno_boolean_no_match)
 
     def accounting_missing_outcome() -> tuple[bool, str]:
         result = reconcile(selection.case_ids, [])
@@ -501,6 +624,24 @@ def selftest_main() -> int:
             (RoleResult("reference", "not-required"), RoleResult("comparator", "fail"), RoleResult("validator", "pass")),
         ),
     )
+
+    all_pass_roles = (
+        RoleResult("candidate", "pass"),
+        RoleResult("reference", "pass"),
+        RoleResult("comparator", "pass"),
+        RoleResult("validator", "pass"),
+    )
+    for disposition, control_name in (
+        ("NOT_RUN", "accounting-not-run-all-pass"),
+        ("XFAIL", "accounting-xfail-all-pass"),
+        ("XPASS", "accounting-xpass-all-pass"),
+        ("SKIP_PREREQUISITE", "accounting-skip-prerequisite-all-pass"),
+        ("UNSUPPORTED", "accounting-unsupported-all-pass"),
+    ):
+        evaluate(
+            control_name,
+            lambda disposition=disposition: accounting_contradiction(disposition, all_pass_roles),
+        )
 
     supervisor = Supervisor()
     python = sys.executable
@@ -645,12 +786,64 @@ def selftest_main() -> int:
 
     evaluate("fast-double-fork-setsid-unproven", regrouped_grandchild)
 
+    positive_rc, positive_stdout = _wrapper_probe(_EXEC_RELEASE_BYTE)
+    if positive_rc == 0 and b"target-execed" in positive_stdout:
+        checks.append("exec gate authorizes the target only with the release byte")
+    else:
+        internal_failures.append(f"exec gate positive probe failed: rc={positive_rc} stdout={positive_stdout[:80]!r}")
+
+    def exec_gate_eof() -> tuple[bool, str]:
+        returncode, stdout = _wrapper_probe(None)
+        detected = b"target-execed" not in stdout and returncode != 0
+        return detected, f"rc={returncode} execed={b'target-execed' in stdout}"
+
+    evaluate("exec-gate-eof", exec_gate_eof)
+
+    def exec_gate_wrong_byte() -> tuple[bool, str]:
+        wrong_byte = bytes([_EXEC_RELEASE_BYTE[0] ^ 0xFF])
+        returncode, stdout = _wrapper_probe(wrong_byte)
+        detected = b"target-execed" not in stdout and returncode != 0
+        return detected, f"rc={returncode} execed={b'target-execed' in stdout}"
+
+    evaluate("exec-gate-wrong-byte", exec_gate_wrong_byte)
+
+    def setup_exception_kills_child() -> tuple[bool, str]:
+        token = "lc02-setup-exception-" + uuid.uuid4().hex
+        code = f"import time; print('{token}', flush=True); time.sleep(30)"
+        propagated = ""
+        try:
+            with mock.patch.object(supervisor_module, "ProcessTreeTracker", side_effect=RuntimeError("injected setup failure")):
+                supervisor.run([python, "-c", code], timeout=5, output_budget=4096)
+        except RuntimeError as error:
+            propagated = str(error)
+        if not propagated:
+            return False, "injected post-spawn setup exception did not propagate"
+        survivors: list[int] = []
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            pgrep = subprocess.run(["pgrep", "-f", token], capture_output=True, text=True)
+            survivors = [int(item) for item in pgrep.stdout.split()]
+            if not survivors:
+                break
+            time.sleep(0.05)
+        for pid in survivors:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        detected = not survivors
+        return detected, f"propagated={propagated!r} survivors={survivors}"
+
+    evaluate("setup-exception-kills-child", setup_exception_kills_child)
+
     def interrupted_cleanup() -> tuple[bool, str]:
         def cleanup() -> None:
             raise RuntimeError("injected cleanup interruption")
 
         result = supervisor.run([python, "-c", "print('cleanup control')"], timeout=3, output_budget=4096, cleanup=cleanup)
-        return bool(result.cleanup_errors), "; ".join(result.cleanup_errors) or "no cleanup error"
+        detected = bool(result.cleanup_errors) and result.outcome == "harness-error"
+        detail = "; ".join(result.cleanup_errors) + f" outcome={result.outcome}" if result.cleanup_errors else f"no cleanup error outcome={result.outcome}"
+        return detected, detail
 
     evaluate("interrupted-cleanup", interrupted_cleanup)
 
@@ -671,7 +864,9 @@ def selftest_main() -> int:
             output_budget=4096,
             log_opener=lambda: FullDisk(),
         )
-        return is_full_disk_error(result.log_errors), _render_os_errors(result.log_errors) or "no log error"
+        detected = is_full_disk_error(result.log_errors) and result.outcome == "harness-error"
+        detail = (_render_os_errors(result.log_errors) or "no log error") + f" outcome={result.outcome}"
+        return detected, detail
 
     evaluate("full-output-disk", full_output_disk)
 
@@ -683,7 +878,9 @@ def selftest_main() -> int:
             output_budget=4096,
             log_path=missing_parent,
         )
-        return bool(result.log_errors) and not is_full_disk_error(result.log_errors), _render_os_errors(result.log_errors) or "no log error"
+        detected = bool(result.log_errors) and not is_full_disk_error(result.log_errors) and result.outcome == "harness-error"
+        detail = (_render_os_errors(result.log_errors) or "no log error") + f" outcome={result.outcome}"
+        return detected, detail
 
     evaluate("logging-failure", logging_failure)
 
