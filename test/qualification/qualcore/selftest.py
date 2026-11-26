@@ -109,21 +109,29 @@ def _render_os_errors(errors: list[OSError]) -> str:
 def _wrapper_probe(release_payload: bytes | None) -> tuple[int, bytes]:
     release_read, release_write = os.pipe()
     error_read, error_write = os.pipe()
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            _EXEC_WRAPPER,
-            str(release_read),
-            str(error_write),
-            sys.executable,
-            "-c",
-            "print('target-execed')",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        pass_fds=(release_read, error_write),
-    )
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _EXEC_WRAPPER,
+                str(release_read),
+                str(error_write),
+                sys.executable,
+                "-c",
+                "print('target-execed')",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            pass_fds=(release_read, error_write),
+        )
+    except BaseException:
+        for fd in (release_read, release_write, error_read, error_write):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        raise
     os.close(release_read)
     os.close(error_write)
     try:
@@ -143,6 +151,27 @@ def _wrapper_probe(release_payload: bytes | None) -> tuple[int, bytes]:
         raise
     os.close(error_read)
     return process.returncode, stdout
+
+
+def _scan_token_pids(token: str) -> list[int]:
+    completed = subprocess.run(
+        ["ps", "-eo", "pid=", "-o", "args="],
+        capture_output=True,
+        text=True,
+        timeout=2,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"survivor scan exited {completed.returncode}")
+    pids: list[int] = []
+    for line in completed.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2 or token not in fields[1]:
+            continue
+        pid = int(fields[0])
+        if pid != os.getpid():
+            pids.append(pid)
+    return pids
 
 
 def selftest_main() -> int:
@@ -821,8 +850,7 @@ def selftest_main() -> int:
         survivors: list[int] = []
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
-            pgrep = subprocess.run(["pgrep", "-f", token], capture_output=True, text=True)
-            survivors = [int(item) for item in pgrep.stdout.split()]
+            survivors = _scan_token_pids(token)
             if not survivors:
                 break
             time.sleep(0.05)
