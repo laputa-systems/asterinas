@@ -10,11 +10,12 @@ from qualcore.selftest import selftest_main
 def run_selftest() -> int:
     terminating_signals: list[int] = []
 
-    def sigterm_handler(signum: int, frame: FrameType | None) -> None:
+    def termination_handler(signum: int, frame: FrameType | None) -> None:
         terminating_signals.append(signum)
         raise KeyboardInterrupt
 
-    previous_sigterm = signal.signal(signal.SIGTERM, sigterm_handler)
+    graceful_signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
+    previous_handlers = {signum: signal.signal(signum, termination_handler) for signum in graceful_signals}
     try:
         return selftest_main()
     except KeyboardInterrupt:
@@ -24,7 +25,8 @@ def run_selftest() -> int:
         os.kill(os.getpid(), signum)
         return 128 + signum
     finally:
-        signal.signal(signal.SIGTERM, previous_sigterm)
+        for handled_signum, previous_handler in previous_handlers.items():
+            signal.signal(handled_signum, previous_handler)
 
 
 def main(argv: list[str]) -> int:

@@ -55,20 +55,27 @@ class EvidenceBundle:
         if root.exists():
             raise EvidenceError(f"run directory already exists: {root}")
         root.mkdir(mode=0o700, parents=True)
-        os.chmod(root, 0o700)
-        for child in ("artifacts", "inputs", "work"):
-            (root / child).mkdir(mode=0o700)
-        bundle = cls(root, chosen_run_id)
-        bundle._write_json(
-            root / "run.json",
-            {
-                "run_id": chosen_run_id,
-                "created_at": time.time(),
-                "private": True,
-            },
-        )
-        bundle._save_registry()
-        return bundle
+        try:
+            os.chmod(root, 0o700)
+            for child in ("artifacts", "inputs", "work"):
+                (root / child).mkdir(mode=0o700)
+            bundle = cls(root, chosen_run_id)
+            bundle._write_json(
+                root / "run.json",
+                {
+                    "run_id": chosen_run_id,
+                    "created_at": time.time(),
+                    "private": True,
+                },
+            )
+            bundle._save_registry()
+            return bundle
+        except BaseException as error:
+            try:
+                shutil.rmtree(root)
+            except OSError as cleanup_error:
+                error.add_note(f"partial run directory cleanup failed: {cleanup_error}")
+            raise
 
     @property
     def artifacts_dir(self) -> Path:
