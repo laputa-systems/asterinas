@@ -525,6 +525,8 @@ mod test {
 
     #[ktest]
     fn realtime_clocks_store_fractional_seconds() {
+        aster_time::init_wall_clock(TEST_START_OFFSET);
+
         let instant = Instant::new(5, 400_000_000);
         let expected = TEST_START_OFFSET + Duration::new(instant.secs(), instant.nanos());
 
