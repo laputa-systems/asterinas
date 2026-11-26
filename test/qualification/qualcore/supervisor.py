@@ -1,4 +1,5 @@
 import errno
+import math
 import os
 import select
 import signal
@@ -207,12 +208,12 @@ class Supervisor:
         silence_timeout: float | None = None,
         process_tree_interval: float = 0.05,
     ) -> SupervisedResult:
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a finite positive number")
         if output_budget <= 0:
             raise ValueError("output_budget must be positive")
-        if silence_timeout is not None and silence_timeout <= 0:
-            raise ValueError("silence_timeout must be positive")
+        if silence_timeout is not None and (not math.isfinite(silence_timeout) or silence_timeout <= 0):
+            raise ValueError("silence_timeout must be a finite positive number")
         if process_tree_interval <= 0:
             raise ValueError("process_tree_interval must be positive")
         started = time.monotonic()
@@ -544,9 +545,9 @@ class Supervisor:
             teardown_state = "fork-tainted-unproven"
         else:
             teardown_state = "verified-empty"
-        if outcome == "exit" and teardown_state != "verified-empty":
-            outcome = "harness-error"
-        if outcome == "exit" and (sink.errors or cleanup_errors or hook_errors):
+        if teardown_state != "verified-empty" or sink.errors or cleanup_errors or hook_errors:
+            if outcome != "harness-error":
+                teardown_details.append(f"runtime outcome before harness-error escalation: {outcome}")
             outcome = "harness-error"
 
         stdout_reader, stderr_reader = readers

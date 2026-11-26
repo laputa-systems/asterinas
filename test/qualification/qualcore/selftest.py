@@ -745,6 +745,38 @@ def selftest_main() -> int:
 
     evaluate("host-timeout", host_timeout)
 
+    def timeout_cleanup_failure_escalates() -> tuple[bool, str]:
+        def cleanup() -> None:
+            raise RuntimeError("injected timeout cleanup failure")
+
+        result = supervisor.run([python, "-c", "import time; time.sleep(5)"], timeout=0.2, output_budget=4096, cleanup=cleanup)
+        detail = f"outcome={result.outcome} details={result.teardown_details}"
+        return bool(result.cleanup_errors) and result.outcome == "harness-error", detail
+
+    evaluate("timeout-cleanup-failure-escalates", timeout_cleanup_failure_escalates)
+
+    def fork_panic_escalates() -> tuple[bool, str]:
+        child = "import time; time.sleep(1)"
+        code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}]); print('kernel panic: forked control', flush=True)"
+        result = supervisor.run([python, "-c", code], timeout=5, output_budget=4096)
+        detail = f"outcome={result.outcome} teardown={result.teardown_state} details={result.teardown_details}"
+        return result.outcome == "harness-error" and result.teardown_state == "fork-tainted-unproven", detail
+
+    evaluate("fork-panic-escalates", fork_panic_escalates)
+
+    def supervisor_nonfinite_timeouts() -> tuple[bool, str]:
+        rejected = []
+        for kwargs in ({"timeout": float("nan")}, {"timeout": float("inf")}, {"timeout": 1, "silence_timeout": float("nan")}):
+            try:
+                supervisor.run([python, "-c", "pass"], output_budget=1024, **kwargs)
+            except ValueError:
+                rejected.append(True)
+            else:
+                rejected.append(False)
+        return all(rejected), f"rejections={rejected}"
+
+    evaluate("supervisor-nonfinite-timeouts", supervisor_nonfinite_timeouts)
+
     def orphaned_child() -> tuple[bool, str]:
         child = "import time; time.sleep(30)"
         code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}]); print('orphan parent exiting', flush=True)"
