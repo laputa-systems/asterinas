@@ -8,7 +8,7 @@ use ostd::{
     arch::cpu::context::FpuContext, irq::DisabledLocalIrqGuard, sync::RwArc, task::CurrentTask,
 };
 
-use super::{RobustListHead, cpu_sync::CpuSync};
+use super::cpu_sync::CpuSync;
 use crate::{
     fs::{file::file_table::FileTable, thread_info::ThreadFsInfo},
     prelude::*,
@@ -31,9 +31,13 @@ pub(crate) struct ThreadLocal {
     vmar: RefCell<Option<VmarHandle>>,
     page_fault_disabled: Cell<bool>,
 
-    // Robust futexes.
+    // Robust futexes: the userspace address of the robust list head.
+    //
+    // Like Linux, we store the head *pointer* and re-read the head from userspace when a thread
+    // exits. Userspace mutates the head (e.g., when robust mutexes are locked or unlocked) after
+    // `set_robust_list`, so keeping a copy of the head itself would miss those updates.
     // https://man7.org/linux/man-pages/man2/get_robust_list.2.html
-    robust_list: RefCell<Option<RobustListHead>>,
+    robust_list: RefCell<Option<Vaddr>>,
 
     // Files.
     /// File table.
@@ -66,6 +70,7 @@ impl ThreadLocal {
     pub(super) fn new(
         set_child_tid: Vaddr,
         clear_child_tid: Vaddr,
+        robust_list_head: Option<Vaddr>,
         vmar: VmarHandle,
         file_table: RwArc<FileTable>,
         fs: Arc<ThreadFsInfo>,
@@ -78,7 +83,7 @@ impl ThreadLocal {
             clear_child_tid: Cell::new(clear_child_tid),
             vmar: RefCell::new(Some(vmar)),
             page_fault_disabled: Cell::new(false),
-            robust_list: RefCell::new(None),
+            robust_list: RefCell::new(robust_list_head),
             file_table: RefCell::new(Some(file_table)),
             fs: RefCell::new(Some(fs)),
             supp_user_context,
@@ -142,7 +147,7 @@ impl ThreadLocal {
         self.page_fault_disabled.get()
     }
 
-    pub(crate) fn robust_list(&self) -> &RefCell<Option<RobustListHead>> {
+    pub(crate) fn robust_list(&self) -> &RefCell<Option<Vaddr>> {
         &self.robust_list
     }
 

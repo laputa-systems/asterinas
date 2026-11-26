@@ -42,6 +42,7 @@ pub(crate) struct PosixThreadBuilder {
     // Optional part
     set_child_tid: Vaddr,
     clear_child_tid: Vaddr,
+    robust_list_head: Option<Vaddr>,
     file_table: Option<RwArc<FileTable>>,
     fs: Option<Arc<ThreadFsInfo>>,
     sig_mask: AtomicSigMask,
@@ -74,6 +75,7 @@ impl PosixThreadBuilder {
             cpu_affinity,
             set_child_tid: 0,
             clear_child_tid: 0,
+            robust_list_head: None,
             file_table: None,
             fs: None,
             sig_mask: AtomicSigMask::new_empty(),
@@ -100,6 +102,15 @@ impl PosixThreadBuilder {
 
     pub(crate) fn clear_child_tid(mut self, clear_child_tid: Vaddr) -> Self {
         self.clear_child_tid = clear_child_tid;
+        self
+    }
+
+    /// Inherits the robust list head for fork-like clones.
+    ///
+    /// Like Linux, a forked child shares the parent's robust list head pointer, while a new
+    /// thread (`CLONE_THREAD`) starts with no robust list until it calls `set_robust_list`.
+    pub(crate) fn robust_list_head(mut self, robust_list_head: Option<Vaddr>) -> Self {
+        self.robust_list_head = robust_list_head;
         self
     }
 
@@ -178,6 +189,7 @@ impl PosixThreadBuilder {
             thread_name,
             set_child_tid,
             clear_child_tid,
+            robust_list_head,
             file_table,
             fs,
             sig_mask,
@@ -243,6 +255,7 @@ impl PosixThreadBuilder {
             let thread_local = ThreadLocal::new(
                 set_child_tid,
                 clear_child_tid,
+                robust_list_head,
                 vmar,
                 file_table,
                 fs,

@@ -55,6 +55,11 @@ impl PageFaultInfo {
         }
     }
 
+    /// Returns the virtual address where the page fault occurred.
+    pub(crate) fn address(&self) -> Vaddr {
+        self.address
+    }
+
     /// Returns whether this page fault is forced.
     pub(in vmar) fn is_forced(&self) -> bool {
         self.is_forced

@@ -7,8 +7,8 @@ use ostd::mm::VmIo;
 use crate::{
     prelude::*,
     process::posix_thread::futex::{
-        FutexFlags, FutexOp, FutexVisibility, futex_op_and_flags_from_u32, futex_requeue,
-        futex_wait, futex_wait_bitset, futex_wake, futex_wake_bitset, futex_wake_op,
+        FutexFlags, FutexOp, FutexVisibility, futex_cmp_requeue, futex_op_and_flags_from_u32,
+        futex_requeue, futex_wait, futex_wait_bitset, futex_wake, futex_wake_bitset, futex_wake_op,
     },
     syscall::SyscallReturn,
     time::{
@@ -34,6 +34,18 @@ pub(super) fn sys_futex(
         futex_op, futex_flags, futex_addr, futex_val
     );
 
+    // `FUTEX_CLOCK_REALTIME` is only valid with `FUTEX_WAIT_BITSET`. Linux rejects it with
+    // `ENOSYS` for every other operation.
+    // Reference: <https://elixir.bootlin.com/linux/v6.18/source/kernel/futex/syscalls.c#L171-L174>
+    if futex_flags.contains(FutexFlags::FUTEX_CLOCK_REALTIME)
+        && futex_op != FutexOp::FUTEX_WAIT_BITSET
+    {
+        return Err(errno!(
+            ENOSYS,
+            "FUTEX_CLOCK_REALTIME can only be used with FUTEX_WAIT_BITSET"
+        ));
+    }
+
     let get_futex_timeout = |timeout_addr: Vaddr| -> Result<Option<ManagedTimeout<'static>>> {
         if timeout_addr == 0 {
             return Ok(None);
@@ -45,11 +57,6 @@ pub(super) fn sys_futex(
         };
 
         let is_real_time = futex_flags.contains(FutexFlags::FUTEX_CLOCK_REALTIME);
-        if is_real_time && futex_op == FutexOp::FUTEX_WAIT {
-            // Reference:
-            // <https://github.com/torvalds/linux/commit/4fbf5d6837bf81fd7a27d771358f4ee6c4f243f8>
-            return Err(errno!(ENOSYS, "FUTEX_WAIT cannot use CLOCK_REALTIME"));
-        }
 
         let timeout = {
             // For `FUTEX_WAIT`, `timeout` is interpreted as a relative value. This differs from
@@ -115,6 +122,25 @@ pub(super) fn sys_futex(
                 max_nwakes,
                 max_nrequeues,
                 futex_new_addr as _,
+                ctx,
+                visibility,
+            )
+        }
+        FutexOp::FUTEX_CMP_REQUEUE => {
+            let (Ok(max_nwakes), Ok(max_nrequeues)) = (
+                usize::try_from(futex_val as i32),
+                usize::try_from(utime_addr as i32),
+            ) else {
+                return Err(errno!(EINVAL, "the count of waiters is negative"));
+            };
+            // `bitset` carries the expected value of the futex word for this op.
+            // Unlike `FUTEX_WAKE`, `FUTEX_CMP_REQUEUE` wakes no waiters if `max_nwakes` is 0.
+            futex_cmp_requeue(
+                futex_addr as _,
+                max_nwakes,
+                max_nrequeues,
+                futex_new_addr as _,
+                bitset,
                 ctx,
                 visibility,
             )

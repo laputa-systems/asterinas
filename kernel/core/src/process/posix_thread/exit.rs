@@ -6,7 +6,7 @@ use super::{
     AsPosixThread, ThreadLocal,
     futex::{FutexVisibility, futex_wake},
     ptrace::PtraceEvent,
-    robust_list::wake_robust_futex,
+    robust_list::{RobustListHead, wake_robust_futex},
 };
 
 use crate::{
@@ -215,9 +215,27 @@ fn wake_clear_ctid(thread_local: &ThreadLocal) {
 ///
 /// This corresponds to Linux's `exit_robust_list`. Errors are silently ignored.
 fn wake_robust_list(thread_local: &ThreadLocal, tid: Tid) {
-    let list_head = match thread_local.robust_list().borrow_mut().take() {
-        Some(robust_list_head) => robust_list_head,
+    let head_ptr = match thread_local.robust_list().borrow_mut().take() {
+        Some(head_ptr) => head_ptr,
         None => return,
+    };
+    if head_ptr == 0 {
+        return;
+    }
+
+    // Re-read the head from userspace: userspace mutates it after `set_robust_list` whenever
+    // robust mutexes are locked or unlocked, so a copy taken at `set_robust_list` time would be
+    // stale.
+    let user_space = CurrentUserSpace::new(thread_local);
+    let list_head = match user_space.read_val::<RobustListHead>(head_ptr) {
+        Ok(list_head) => list_head,
+        Err(err) => {
+            debug!(
+                "exit: cannot read the robust list head at {:#x}: {:?}",
+                head_ptr, err
+            );
+            return;
+        }
     };
 
     debug!("exit: wake up the robust list: {:?}", list_head);

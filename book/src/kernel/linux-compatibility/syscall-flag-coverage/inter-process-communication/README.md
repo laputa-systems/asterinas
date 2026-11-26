@@ -17,7 +17,6 @@ Supported functionality in SCML:
 
 Unsupported operations:
 * `FUTEX_FD`
-* `FUTEX_CMP_REQUEUE`
 * `FUTEX_LOCK_PI`
 * `FUTEX_UNLOCK_PI`
 * `FUTEX_TRYLOCK_PI`

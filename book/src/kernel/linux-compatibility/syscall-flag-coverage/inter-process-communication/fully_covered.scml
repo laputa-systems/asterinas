@@ -1,2 +1,5 @@
 // Set list of robust futexes
 set_robust_list(head, len);
+
+// Get list of robust futexes
+get_robust_list(pid, head, len);

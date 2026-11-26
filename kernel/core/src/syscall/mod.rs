@@ -87,6 +87,7 @@ mod getppid;
 mod getrandom;
 mod getresgid;
 mod getresuid;
+mod get_robust_list;
 mod getrusage;
 mod getsid;
 mod getsockname;

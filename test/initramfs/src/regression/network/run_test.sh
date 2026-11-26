@@ -45,6 +45,7 @@ sleep 0.2
 ./unix_datagram_err
 ./unix_seqpacket_err
 ./unix_stream_err
+./unix_dontwait
 
 ./netlink_padding
 ./netlink_route

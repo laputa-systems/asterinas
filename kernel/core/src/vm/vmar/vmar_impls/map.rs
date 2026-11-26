@@ -340,7 +340,11 @@ impl<'a, 'b> VmarMapOptions<'a, 'b> {
                     && may_perms.contains(VmPerms::MAY_WRITE)
                 {
                     memfd_inode.check_writable(perms, &mut may_perms)?;
-                    true
+                    // `check_writable` strips `MAY_WRITE` when the file is sealed against
+                    // writing. A mapping that can never become writable must not count as a
+                    // writable mapping; otherwise even read-only mappings would be denied
+                    // after `F_SEAL_WRITE`.
+                    may_perms.contains(VmPerms::MAY_WRITE)
                 } else {
                     false
                 };

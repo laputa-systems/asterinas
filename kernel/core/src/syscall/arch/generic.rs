@@ -58,6 +58,7 @@ macro_rules! import_generic_syscall_entries {
             getrandom::sys_getrandom,
             getresgid::sys_getresgid,
             getresuid::sys_getresuid,
+            get_robust_list::sys_get_robust_list,
             getrusage::sys_getrusage,
             getsid::sys_getsid,
             getsockname::sys_getsockname,
@@ -299,6 +300,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_UNSHARE = 97                 => sys_unshare(args[..1]);
             SYS_FUTEX = 98                   => sys_futex(args[..6]);
             SYS_SET_ROBUST_LIST = 99         => sys_set_robust_list(args[..2]);
+            SYS_GET_ROBUST_LIST = 100        => sys_get_robust_list(args[..3]);
             SYS_NANOSLEEP = 101              => sys_nanosleep(args[..2]);
             SYS_GETITIMER = 102              => sys_getitimer(args[..2]);
             SYS_SETITIMER = 103              => sys_setitimer(args[..3]);

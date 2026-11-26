@@ -22,7 +22,7 @@ bitflags! {
         const MSG_ZEROCOPY  = 0x4000000;
         const MSG_FASTOPEN  = 0x20000000;
 
-        const SUPPORTED     = 0x0;
+        const SUPPORTED     = SendFlags::MSG_DONTWAIT.bits();
     }
 }
 
@@ -49,7 +49,8 @@ bitflags! {
         const MSG_CMSG_CLOEXEC = 0x40000000;
 
         const SUPPORTED        = RecvFlags::MSG_PEEK.bits() | RecvFlags::MSG_TRUNC.bits()
-            | RecvFlags::MSG_ERRQUEUE.bits() | RecvFlags::MSG_CMSG_CLOEXEC.bits();
+            | RecvFlags::MSG_ERRQUEUE.bits() | RecvFlags::MSG_CMSG_CLOEXEC.bits()
+            | RecvFlags::MSG_DONTWAIT.bits();
     }
 }
 
