@@ -1,0 +1,750 @@
+{
+  "cases": [
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext2",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc07-ext2-pilot-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": 18,
+              "id": "bytes_written",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "create-write"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-fsync"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ZXh0Mi1jcmVhdGUtd3JpdGUK",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "reopen-read"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 18,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-size"
+        }
+      ],
+      "id": "ext2.create-read-write",
+      "item": "LC-07",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "mount_point": "/mnt/qualification",
+        "workspace_path": "/mnt/qualification/create-read-write"
+      },
+      "procedure": "Create an ext2 file, write fixed bytes, fsync it, close and reopen it, then verify the readback bytes and size.",
+      "replay": "python3 test/qualification/run.py run --profile pilot-ext2 --baseline",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext2-pilot-r1",
+        "upstream": "asterinas-qualification-ext2-pilot"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    },
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext2",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc07-ext2-pilot-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": 4,
+              "id": "bytes_written",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "sparse-write"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 8196,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "sparse-size"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "AAAAAAAAAAAAAAAAAAAAAA==",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "hole-zeroing"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "truncate-shrink"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "truncate-extend"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "AAAAAAAAAAAAAAAAAAAAAA==",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "extend-zeroing"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 12288,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "final-size"
+        }
+      ],
+      "id": "ext2.sparse-truncate",
+      "item": "LC-07",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "mount_point": "/mnt/qualification",
+        "workspace_path": "/mnt/qualification/sparse-truncate"
+      },
+      "procedure": "Create a sparse ext2 file, verify hole zeroing, shrink it through truncate, extend it again, and verify the re-extended range reads as zero.",
+      "replay": "python3 test/qualification/run.py run --profile pilot-ext2 --baseline",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext2-pilot-r1",
+        "upstream": "asterinas-qualification-ext2-pilot"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    },
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext2",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc07-ext2-pilot-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "hardlink-create"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 2,
+              "id": "links",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "hardlink-count"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "symlink-create"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "renamed",
+              "id": "target",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "symlink-target"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "rename"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "bGluay10YXJnZXQK",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "hardlink-read"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "bGluay10YXJnZXQK",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "symlink-read"
+        }
+      ],
+      "id": "ext2.links-rename",
+      "item": "LC-07",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "mount_point": "/mnt/qualification",
+        "workspace_path": "/mnt/qualification/links-rename"
+      },
+      "procedure": "Create a file, hard link it, create a relative symlink, rename the original, and verify link count, target text, and readback through both links.",
+      "replay": "python3 test/qualification/run.py run --profile pilot-ext2 --baseline",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext2-pilot-r1",
+        "upstream": "asterinas-qualification-ext2-pilot"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    },
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext2",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc07-ext2-pilot-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "deny",
+              "id": "decision",
+              "mode": "exact",
+              "type": "permission"
+            }
+          ],
+          "id": "private-read-decision"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "EACCES",
+              "id": "errno",
+              "mode": "exact",
+              "type": "errno"
+            }
+          ],
+          "id": "private-read-errno"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "deny",
+              "id": "decision",
+              "mode": "exact",
+              "type": "permission"
+            }
+          ],
+          "id": "readonly-write-decision"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "EACCES",
+              "id": "errno",
+              "mode": "exact",
+              "type": "errno"
+            }
+          ],
+          "id": "readonly-write-errno"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "allow",
+              "id": "decision",
+              "mode": "exact",
+              "type": "permission"
+            }
+          ],
+          "id": "public-read-decision"
+        }
+      ],
+      "id": "ext2.permissions",
+      "item": "LC-07",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "mount_point": "/mnt/qualification",
+        "workspace_path": "/mnt/qualification/permissions"
+      },
+      "procedure": "Drop to an unprivileged user in a child process and verify ext2 read and write permission denials plus a public-read allowance.",
+      "replay": "python3 test/qualification/run.py run --profile pilot-ext2 --baseline",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext2-pilot-r1",
+        "upstream": "asterinas-qualification-ext2-pilot"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    },
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext2",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc07-ext2-pilot-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-fsync"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "directory-fsync"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "clean-umount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "remount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ZHVyYWJpbGl0eQo=",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "persistent-data"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 11,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "persistent-size"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "final-umount"
+        }
+      ],
+      "id": "ext2.sync-remount",
+      "item": "LC-07",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "mount_point": "/mnt/qualification",
+        "workspace_path": "/mnt/qualification/sync-remount"
+      },
+      "procedure": "Write a file, fsync the file and containing directory, cleanly unmount, remount the same ext2 disk, verify persistent bytes and size, and cleanly unmount again.",
+      "replay": "python3 test/qualification/run.py run --profile pilot-ext2 --baseline",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext2-pilot-r1",
+        "upstream": "asterinas-qualification-ext2-pilot"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    },
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext2",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc07-ext2-pilot-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": -1,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "data-write-result"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ENOSPC",
+              "id": "errno",
+              "mode": "exact",
+              "type": "errno"
+            }
+          ],
+          "id": "data-write-errno"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "filled-file-fsync"
+        },
+        {
+          "assertions": [
+            {
+              "expected": -1,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "metadata-create-result"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ENOSPC",
+              "id": "errno",
+              "mode": "exact",
+              "type": "errno"
+            }
+          ],
+          "id": "metadata-create-errno"
+        }
+      ],
+      "id": "ext2.enospc-fill",
+      "item": "LC-07",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext2",
+        "mount_point": "/mnt/qualification",
+        "workspace_path": "/mnt/qualification/enospc-fill"
+      },
+      "procedure": "Fill the scratch ext2 disk with file data, verify a subsequent data write and directory creation fail with ENOSPC, and fsync the filled file.",
+      "replay": "python3 test/qualification/run.py run --profile pilot-ext2 --baseline",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext2-pilot-r1",
+        "upstream": "asterinas-qualification-ext2-pilot"
+      },
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ]
+    }
+  ],
+  "schema": 1
+}

@@ -18,12 +18,19 @@
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
 #define SELFCHECK_CASE_ID "core.selfcheck"
 #define ADAPTER_CASE_ID "core.adapter"
+#define EXT2_CREATE_CASE_ID "ext2.create-read-write"
+#define EXT2_SPARSE_CASE_ID "ext2.sparse-truncate"
+#define EXT2_LINKS_CASE_ID "ext2.links-rename"
+#define EXT2_PERMISSIONS_CASE_ID "ext2.permissions"
+#define EXT2_REMOUNT_CASE_ID "ext2.sync-remount"
+#define EXT2_ENOSPC_CASE_ID "ext2.enospc-fill"
 #define INPUT_PATH "/qual/input.txt"
 #define MISSING_PATH "/qual/no-such-file"
 #define SERIAL_PATH "/dev/ttyS1"
@@ -90,9 +97,9 @@ static void emit_start(const char *run_id, const char *nonce, const char *manife
     emit_record(line);
 }
 
-static void emit_bytes_named(const char *run_id, const char *nonce, const char *manifest_hash,
-                             const char *payload_hash, const char *subtest, const char *assertion_id,
-                             const char *value, bool passed) {
+static void emit_string_named(const char *run_id, const char *nonce, const char *manifest_hash,
+                              const char *payload_hash, const char *subtest, const char *assertion_id,
+                              const char *value, bool passed) {
     char fields[1024];
     char line[1800];
     common_fields(fields, sizeof(fields), run_id, nonce, manifest_hash, payload_hash);
@@ -100,6 +107,24 @@ static void emit_bytes_named(const char *run_id, const char *nonce, const char *
              "QUAL %s %s {%s,\"kind\":\"subtest\",\"subtest\":\"%s\",\"status\":\"%s\",\"assertions\":[{\"id\":\"%s\",\"value\":\"%s\"}]}\n",
              run_id, nonce, fields, subtest, passed ? "pass" : "fail", assertion_id, value);
     emit_record(line);
+}
+
+static void emit_bytes_named(const char *run_id, const char *nonce, const char *manifest_hash,
+                             const char *payload_hash, const char *subtest, const char *assertion_id,
+                             const char *value, bool passed) {
+    emit_string_named(run_id, nonce, manifest_hash, payload_hash, subtest, assertion_id, value, passed);
+}
+
+static void emit_text_named(const char *run_id, const char *nonce, const char *manifest_hash,
+                            const char *payload_hash, const char *subtest, const char *assertion_id,
+                            const char *value, bool passed) {
+    emit_string_named(run_id, nonce, manifest_hash, payload_hash, subtest, assertion_id, value, passed);
+}
+
+static void emit_permission_named(const char *run_id, const char *nonce, const char *manifest_hash,
+                                  const char *payload_hash, const char *subtest, const char *assertion_id,
+                                  const char *value, bool passed) {
+    emit_string_named(run_id, nonce, manifest_hash, payload_hash, subtest, assertion_id, value, passed);
 }
 
 static void emit_integer_named(const char *run_id, const char *nonce, const char *manifest_hash,
@@ -112,6 +137,12 @@ static void emit_integer_named(const char *run_id, const char *nonce, const char
              "QUAL %s %s {%s,\"kind\":\"subtest\",\"subtest\":\"%s\",\"status\":\"%s\",\"assertions\":[{\"id\":\"%s\",\"value\":%ld}]}\n",
              run_id, nonce, fields, subtest, passed ? "pass" : "fail", assertion_id, value);
     emit_record(line);
+}
+
+static void emit_errno_named(const char *run_id, const char *nonce, const char *manifest_hash,
+                             const char *payload_hash, const char *subtest, const char *assertion_id,
+                             long value, bool passed) {
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, subtest, assertion_id, value, passed);
 }
 
 static void emit_errno_subtest(const char *run_id, const char *nonce, const char *manifest_hash,
@@ -340,6 +371,15 @@ static void mount_sysfs(void) {
     }
 }
 
+
+static const char *block_sysfs_root(void) {
+    struct stat status;
+    if (stat("/sys/block", &status) == 0) {
+        return "/sys/block";
+    }
+    return "/sys/class/block";
+}
+
 static bool read_serial_candidate(const char *path, const char *expected, char *serial, size_t serial_size) {
     char value[128];
     if (!read_first_line(path, value, sizeof(value))) {
@@ -352,9 +392,9 @@ static bool read_serial_candidate(const char *path, const char *expected, char *
 }
 
 static bool find_adapter_disk(char *device_name, size_t device_name_size, char *serial, size_t serial_size) {
-    DIR *directory = opendir("/sys/block");
+    DIR *directory = opendir(block_sysfs_root());
     if (directory == NULL) {
-        diagnostic("open /sys/block failed: %s", strerror(errno));
+        diagnostic("open block sysfs failed: %s", strerror(errno));
         return false;
     }
     bool found = false;
@@ -365,10 +405,10 @@ static bool find_adapter_disk(char *device_name, size_t device_name_size, char *
             continue;
         }
         char path[256];
-        snprintf(path, sizeof(path), "/sys/block/%s/serial", entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s/serial", block_sysfs_root(), entry->d_name);
         bool matches = read_serial_candidate(path, ADAPTER_SERIAL, serial, serial_size);
         if (!matches) {
-            snprintf(path, sizeof(path), "/sys/block/%s/device/serial", entry->d_name);
+            snprintf(path, sizeof(path), "%s/%s/device/serial", block_sysfs_root(), entry->d_name);
             matches = read_serial_candidate(path, ADAPTER_SERIAL, serial, serial_size);
         }
         if (matches) {
@@ -386,7 +426,7 @@ static bool ensure_device_node(const char *device_name, char *device_path, size_
     char major_minor[64];
     unsigned int major_number = 0;
     unsigned int minor_number = 0;
-    snprintf(sysdev, sizeof(sysdev), "/sys/block/%s/dev", device_name);
+    snprintf(sysdev, sizeof(sysdev), "%s/%s/dev", block_sysfs_root(), device_name);
     if (!read_first_line(sysdev, major_minor, sizeof(major_minor)) || sscanf(major_minor, "%u:%u", &major_number, &minor_number) != 2) {
         diagnostic("could not resolve device number for %s", device_name);
         return false;
@@ -424,6 +464,476 @@ static void drop_sys_admin_capability(void) {
     }
 }
 
+
+
+static bool find_single_block_disk_without_serial(char *device_name, size_t device_name_size) {
+    DIR *directory = opendir(block_sysfs_root());
+    if (directory == NULL) {
+        return false;
+    }
+    bool found = false;
+    bool multiple = false;
+    bool serial_seen = false;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        char path[256];
+        char value[128];
+        snprintf(path, sizeof(path), "%s/%s/serial", block_sysfs_root(), entry->d_name);
+        serial_seen = serial_seen || read_first_line(path, value, sizeof(value));
+        snprintf(path, sizeof(path), "%s/%s/device/serial", block_sysfs_root(), entry->d_name);
+        serial_seen = serial_seen || read_first_line(path, value, sizeof(value));
+        if (found) {
+            multiple = true;
+            break;
+        }
+        copy_value(entry->d_name, strlen(entry->d_name), device_name, device_name_size);
+        found = true;
+    }
+    closedir(directory);
+    return found && !multiple && !serial_seen;
+}
+
+static bool mount_adapter_volume(char *device_path, size_t device_path_size) {
+    char device_name[64] = "";
+    char serial[128] = "";
+    if (!find_adapter_disk(device_name, sizeof(device_name), serial, sizeof(serial))) {
+        if (!find_single_block_disk_without_serial(device_name, sizeof(device_name))) {
+            diagnostic("adapter disk not found");
+            return false;
+        }
+        diagnostic("using sole block disk without serial identity");
+    }
+    if (!ensure_device_node(device_name, device_path, device_path_size)) {
+        return false;
+    }
+    mkdir("/mnt", 0555);
+    mkdir(ADAPTER_MOUNT_POINT, 0555);
+    if (mount(device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) != 0) {
+        diagnostic("ext2 mount failed: %s", strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static void unmount_adapter_volume(void) {
+    sync();
+    if (umount(ADAPTER_MOUNT_POINT) != 0) {
+        diagnostic("ext2 umount failed: %s", strerror(errno));
+    }
+}
+
+static bool read_all(int fd, char *data, size_t length) {
+    while (length > 0) {
+        ssize_t amount = read(fd, data, length);
+        if (amount < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (amount == 0) {
+            return false;
+        }
+        data += amount;
+        length -= (size_t)amount;
+    }
+    return true;
+}
+
+static size_t read_file_base64(const char *path, char *encoded, size_t encoded_size) {
+    unsigned char data[256];
+    size_t amount = read_file_bytes(path, data, sizeof(data));
+    base64_encode(data, amount, encoded, encoded_size);
+    return amount;
+}
+
+static size_t read_at_base64(int fd, off_t offset, size_t length, char *encoded, size_t encoded_size) {
+    unsigned char data[64];
+    if (length > sizeof(data)) {
+        encoded[0] = '\0';
+        return 0;
+    }
+    ssize_t amount = pread(fd, data, length, offset);
+    if (amount < 0) {
+        amount = 0;
+    }
+    base64_encode(data, (size_t)amount, encoded, encoded_size);
+    return (size_t)amount;
+}
+
+static void make_case_directory(const char *path) {
+    if (mkdir(path, 0755) != 0) {
+        diagnostic("mkdir %s failed: %s", path, strerror(errno));
+    }
+}
+
+static void run_ext2_create_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/create-read-write";
+    const char *path = ADAPTER_MOUNT_POINT "/create-read-write/data.bin";
+    const char *expected_text = "ext2-create-write\n";
+    const size_t expected_length = strlen(expected_text);
+    char device_path[128] = "";
+    char roundtrip[256] = "";
+    long written = -1;
+    long fsync_result = -1;
+    long size = -1;
+    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+        make_case_directory(directory_path);
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (fd >= 0) {
+            written = write(fd, expected_text, expected_length);
+            fsync_result = fsync(fd);
+            close(fd);
+        } else {
+            diagnostic("create open failed: %s", strerror(errno));
+        }
+        read_file_base64(path, roundtrip, sizeof(roundtrip));
+        struct stat status;
+        if (stat(path, &status) == 0) {
+            size = (long)status.st_size;
+        }
+        unmount_adapter_volume();
+    }
+    bool write_passed = written == (long)expected_length;
+    bool fsync_passed = fsync_result == 0;
+    bool bytes_passed = strcmp(roundtrip, "ZXh0Mi1jcmVhdGUtd3JpdGUK") == 0;
+    bool size_passed = size == (long)expected_length;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "create-write", "bytes_written", written, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-fsync", "result", fsync_result, fsync_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "reopen-read", "bytes", roundtrip, bytes_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-size", "bytes", size, size_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash, write_passed && fsync_passed && bytes_passed && size_passed, 4, 4);
+}
+
+static void run_ext2_sparse_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/sparse-truncate";
+    const char *path = ADAPTER_MOUNT_POINT "/sparse-truncate/sparse.bin";
+    char device_path[128] = "";
+    char hole[64] = "";
+    char extended[64] = "";
+    long write_result = -1;
+    long initial_size = -1;
+    long shrink_result = -1;
+    long extend_result = -1;
+    long final_size = -1;
+    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+        make_case_directory(directory_path);
+        int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0644);
+        if (fd >= 0) {
+            write_result = pwrite(fd, "END!", 4, 8192);
+            struct stat status;
+            if (fstat(fd, &status) == 0) {
+                initial_size = (long)status.st_size;
+            }
+            read_at_base64(fd, 4096, 16, hole, sizeof(hole));
+            shrink_result = ftruncate(fd, 4096);
+            extend_result = ftruncate(fd, 12288);
+            read_at_base64(fd, 8192, 16, extended, sizeof(extended));
+            if (fstat(fd, &status) == 0) {
+                final_size = (long)status.st_size;
+            }
+            close(fd);
+        } else {
+            diagnostic("sparse open failed: %s", strerror(errno));
+        }
+        unmount_adapter_volume();
+    }
+    bool write_passed = write_result == 4;
+    bool initial_size_passed = initial_size == 8196;
+    bool hole_passed = strcmp(hole, "AAAAAAAAAAAAAAAAAAAAAA==") == 0;
+    bool shrink_passed = shrink_result == 0;
+    bool extend_passed = extend_result == 0;
+    bool extended_passed = strcmp(extended, "AAAAAAAAAAAAAAAAAAAAAA==") == 0;
+    bool final_size_passed = final_size == 12288;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "sparse-write", "bytes_written", write_result, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "sparse-size", "bytes", initial_size, initial_size_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "hole-zeroing", "bytes", hole, hole_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "truncate-shrink", "result", shrink_result, shrink_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "truncate-extend", "result", extend_result, extend_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "extend-zeroing", "bytes", extended, extended_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-size", "bytes", final_size, final_size_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               write_passed && initial_size_passed && hole_passed && shrink_passed && extend_passed && extended_passed && final_size_passed,
+               7, 7);
+}
+
+static void run_ext2_links_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/links-rename";
+    const char *original = ADAPTER_MOUNT_POINT "/links-rename/original";
+    const char *hardlink = ADAPTER_MOUNT_POINT "/links-rename/hardlink";
+    const char *symlink_path = ADAPTER_MOUNT_POINT "/links-rename/alias";
+    const char *renamed = ADAPTER_MOUNT_POINT "/links-rename/renamed";
+    const char *content = "link-target\n";
+    char device_path[128] = "";
+    char hardlink_bytes[256] = "";
+    char symlink_bytes[256] = "";
+    char symlink_target[128] = "";
+    long hardlink_result = -1;
+    long link_count = -1;
+    long symlink_result = -1;
+    long rename_result = -1;
+    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+        make_case_directory(directory_path);
+        write_file_bytes(original, content, strlen(content));
+        hardlink_result = link(original, hardlink);
+        struct stat status;
+        if (stat(hardlink, &status) == 0) {
+            link_count = (long)status.st_nlink;
+        }
+        symlink_result = symlink("renamed", symlink_path);
+        ssize_t target_length = readlink(symlink_path, symlink_target, sizeof(symlink_target) - 1);
+        if (target_length >= 0) {
+            symlink_target[target_length] = '\0';
+        }
+        rename_result = rename(original, renamed);
+        read_file_base64(hardlink, hardlink_bytes, sizeof(hardlink_bytes));
+        read_file_base64(symlink_path, symlink_bytes, sizeof(symlink_bytes));
+        unmount_adapter_volume();
+    }
+    bool hardlink_create_passed = hardlink_result == 0;
+    bool count_passed = link_count == 2;
+    bool symlink_create_passed = symlink_result == 0;
+    bool target_passed = strcmp(symlink_target, "renamed") == 0;
+    bool rename_passed = rename_result == 0;
+    bool hardlink_read_passed = strcmp(hardlink_bytes, "bGluay10YXJnZXQK") == 0;
+    bool symlink_read_passed = strcmp(symlink_bytes, "bGluay10YXJnZXQK") == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "hardlink-create", "result", hardlink_result, hardlink_create_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "hardlink-count", "links", link_count, count_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "symlink-create", "result", symlink_result, symlink_create_passed);
+    emit_text_named(run_id, nonce, manifest_hash, payload_hash, "symlink-target", "target", symlink_target, target_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "rename", "result", rename_result, rename_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "hardlink-read", "bytes", hardlink_bytes, hardlink_read_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "symlink-read", "bytes", symlink_bytes, symlink_read_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               hardlink_create_passed && count_passed && symlink_create_passed && target_passed && rename_passed &&
+                   hardlink_read_passed && symlink_read_passed,
+               7, 7);
+}
+
+struct permission_observation {
+    int setup_failed;
+    int private_allowed;
+    int private_errno;
+    int readonly_allowed;
+    int readonly_errno;
+    int public_allowed;
+};
+
+static void observe_open_permission(const char *path, int flags, int *allowed, int *error_number) {
+    errno = 0;
+    int fd = open(path, flags);
+    if (fd >= 0) {
+        *allowed = 1;
+        *error_number = 0;
+        close(fd);
+    } else {
+        *allowed = 0;
+        *error_number = errno;
+    }
+}
+
+static bool collect_permission_observation(struct permission_observation *observation) {
+    int pipes[2];
+    if (pipe(pipes) != 0) {
+        diagnostic("permission pipe failed: %s", strerror(errno));
+        return false;
+    }
+    pid_t child = fork();
+    if (child == 0) {
+        close(pipes[0]);
+        struct permission_observation child_observation = {0};
+        if (setgid(65534) != 0 || setuid(65534) != 0) {
+            child_observation.setup_failed = 1;
+        } else {
+            observe_open_permission(ADAPTER_MOUNT_POINT "/permissions/private.txt", O_RDONLY,
+                                    &child_observation.private_allowed, &child_observation.private_errno);
+            observe_open_permission(ADAPTER_MOUNT_POINT "/permissions/readonly.txt", O_WRONLY,
+                                    &child_observation.readonly_allowed, &child_observation.readonly_errno);
+            int public_errno = 0;
+            observe_open_permission(ADAPTER_MOUNT_POINT "/permissions/public.txt", O_RDONLY,
+                                    &child_observation.public_allowed, &public_errno);
+        }
+        write_all(pipes[1], (const char *)&child_observation, sizeof(child_observation));
+        _exit(0);
+    }
+    close(pipes[1]);
+    bool complete = false;
+    bool exited = false;
+    if (child > 0) {
+        complete = read_all(pipes[0], (char *)observation, sizeof(*observation));
+        int status = 0;
+        exited = waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+    close(pipes[0]);
+    if (child < 0) {
+        diagnostic("permission fork failed: %s", strerror(errno));
+    }
+    return complete && exited;
+}
+
+static void run_ext2_permissions_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/permissions";
+    const char *private_path = ADAPTER_MOUNT_POINT "/permissions/private.txt";
+    const char *readonly_path = ADAPTER_MOUNT_POINT "/permissions/readonly.txt";
+    const char *public_path = ADAPTER_MOUNT_POINT "/permissions/public.txt";
+    char device_path[128] = "";
+    struct permission_observation observation = {
+        .setup_failed = 1,
+        .private_allowed = 1,
+        .private_errno = 0,
+        .readonly_allowed = 1,
+        .readonly_errno = 0,
+        .public_allowed = 0,
+    };
+    bool child_ok = false;
+    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+        make_case_directory(directory_path);
+        write_file_bytes(private_path, "private\n", 8);
+        chmod(private_path, 0600);
+        write_file_bytes(readonly_path, "readonly\n", 9);
+        chmod(readonly_path, 0444);
+        write_file_bytes(public_path, "public\n", 7);
+        child_ok = collect_permission_observation(&observation);
+        unmount_adapter_volume();
+    }
+    bool usable = child_ok && observation.setup_failed == 0;
+    const char *private_decision = observation.private_allowed ? "allow" : "deny";
+    const char *readonly_decision = observation.readonly_allowed ? "allow" : "deny";
+    const char *public_decision = observation.public_allowed ? "allow" : "deny";
+    bool private_decision_passed = usable && !observation.private_allowed;
+    bool private_errno_passed = usable && observation.private_errno == EACCES;
+    bool readonly_decision_passed = usable && !observation.readonly_allowed;
+    bool readonly_errno_passed = usable && observation.readonly_errno == EACCES;
+    bool public_decision_passed = usable && observation.public_allowed;
+    emit_permission_named(run_id, nonce, manifest_hash, payload_hash, "private-read-decision", "decision", private_decision, private_decision_passed);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "private-read-errno", "errno", observation.private_errno, private_errno_passed);
+    emit_permission_named(run_id, nonce, manifest_hash, payload_hash, "readonly-write-decision", "decision", readonly_decision, readonly_decision_passed);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "readonly-write-errno", "errno", observation.readonly_errno, readonly_errno_passed);
+    emit_permission_named(run_id, nonce, manifest_hash, payload_hash, "public-read-decision", "decision", public_decision, public_decision_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               private_decision_passed && private_errno_passed && readonly_decision_passed && readonly_errno_passed && public_decision_passed,
+               5, 5);
+}
+
+static void run_ext2_remount_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/sync-remount";
+    const char *path = ADAPTER_MOUNT_POINT "/sync-remount/durable.txt";
+    const char *content = "durability\n";
+    char device_path[128] = "";
+    char roundtrip[256] = "";
+    long file_fsync = -1;
+    long directory_fsync = -1;
+    long first_umount = -1;
+    long remount_result = -1;
+    long final_umount = -1;
+    long size = -1;
+    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+        make_case_directory(directory_path);
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        if (fd >= 0) {
+            write_all(fd, content, strlen(content));
+            file_fsync = fsync(fd);
+            close(fd);
+        }
+        int directory = open(directory_path, O_RDONLY | O_DIRECTORY);
+        if (directory >= 0) {
+            directory_fsync = fsync(directory);
+            close(directory);
+        }
+        sync();
+        first_umount = umount(ADAPTER_MOUNT_POINT);
+        if (first_umount == 0) {
+            if (mount(device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) == 0) {
+                remount_result = 0;
+                read_file_base64(path, roundtrip, sizeof(roundtrip));
+                struct stat status;
+                if (stat(path, &status) == 0) {
+                    size = (long)status.st_size;
+                }
+                sync();
+                final_umount = umount(ADAPTER_MOUNT_POINT);
+            } else {
+                diagnostic("ext2 remount failed: %s", strerror(errno));
+            }
+        } else {
+            diagnostic("ext2 first umount failed: %s", strerror(errno));
+            unmount_adapter_volume();
+        }
+    }
+    bool file_fsync_passed = file_fsync == 0;
+    bool directory_fsync_passed = directory_fsync == 0;
+    bool first_umount_passed = first_umount == 0;
+    bool remount_passed = remount_result == 0;
+    bool bytes_passed = strcmp(roundtrip, "ZHVyYWJpbGl0eQo=") == 0;
+    bool size_passed = size == 11;
+    bool final_umount_passed = final_umount == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-fsync", "result", file_fsync, file_fsync_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "directory-fsync", "result", directory_fsync, directory_fsync_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "clean-umount", "result", first_umount, first_umount_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "remount", "result", remount_result, remount_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "persistent-data", "bytes", roundtrip, bytes_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "persistent-size", "bytes", size, size_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-umount", "result", final_umount, final_umount_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               file_fsync_passed && directory_fsync_passed && first_umount_passed && remount_passed && bytes_passed &&
+                   size_passed && final_umount_passed,
+               7, 7);
+}
+
+static void run_ext2_enospc_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/enospc-fill";
+    const char *path = ADAPTER_MOUNT_POINT "/enospc-fill/fill.bin";
+    const char *full_directory = ADAPTER_MOUNT_POINT "/enospc-fill/full-directory";
+    static unsigned char chunk[16384];
+    char device_path[128] = "";
+    long data_write_result = 0;
+    long data_write_errno = 0;
+    long metadata_create_result = 0;
+    long metadata_create_errno = 0;
+    long fsync_result = -1;
+    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+        make_case_directory(directory_path);
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        if (fd >= 0) {
+            memset(chunk, 'q', sizeof(chunk));
+            for (unsigned int iterations = 0; iterations < 4096; iterations += 1) {
+                ssize_t written = write(fd, chunk, sizeof(chunk));
+                if (written <= 0) {
+                    break;
+                }
+            }
+            errno = 0;
+            ssize_t final_write = write(fd, "x", 1);
+            data_write_result = final_write;
+            data_write_errno = final_write < 0 ? errno : 0;
+            fsync_result = fsync(fd);
+            close(fd);
+        } else {
+            diagnostic("enospc open failed: %s", strerror(errno));
+        }
+        errno = 0;
+        metadata_create_result = mkdir(full_directory, 0755);
+        metadata_create_errno = metadata_create_result < 0 ? errno : 0;
+        unmount_adapter_volume();
+    }
+    bool data_result_passed = data_write_result == -1;
+    bool data_errno_passed = data_write_errno == ENOSPC;
+    bool fsync_passed = fsync_result == 0;
+    bool metadata_result_passed = metadata_create_result == -1;
+    bool metadata_errno_passed = metadata_create_errno == ENOSPC;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "data-write-result", "result", data_write_result, data_result_passed);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "data-write-errno", "errno", data_write_errno, data_errno_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "filled-file-fsync", "result", fsync_result, fsync_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "metadata-create-result", "result", metadata_create_result, metadata_result_passed);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "metadata-create-errno", "errno", metadata_create_errno, metadata_errno_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               data_result_passed && data_errno_passed && fsync_passed && metadata_result_passed && metadata_errno_passed,
+               5, 5);
+}
+
 static void run_adapter_probe(const char *run_id, const char *nonce, const char *manifest_hash,
                               const char *payload_hash) {
     char device_name[64] = "";
@@ -436,7 +946,7 @@ static void run_adapter_probe(const char *run_id, const char *nonce, const char 
     bool found = find_adapter_disk(device_name, sizeof(device_name), serial, sizeof(serial));
     if (found) {
         char cache_path[256];
-        snprintf(cache_path, sizeof(cache_path), "/sys/block/%s/queue/write_cache", device_name);
+        snprintf(cache_path, sizeof(cache_path), "%s/%s/queue/write_cache", block_sysfs_root(), device_name);
         read_first_line(cache_path, write_cache, sizeof(write_cache));
     }
 
@@ -572,6 +1082,18 @@ int main(void) {
     }
     if (strcmp(active_case_id, ADAPTER_CASE_ID) == 0) {
         run_adapter_probe(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
+        run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT2_SPARSE_CASE_ID) == 0) {
+        run_ext2_sparse_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT2_LINKS_CASE_ID) == 0) {
+        run_ext2_links_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT2_PERMISSIONS_CASE_ID) == 0) {
+        run_ext2_permissions_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT2_REMOUNT_CASE_ID) == 0) {
+        run_ext2_remount_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT2_ENOSPC_CASE_ID) == 0) {
+        run_ext2_enospc_case(run_id, nonce, manifest_hash, payload_hash);
     } else {
         run_selfcheck_probe(run_id, nonce, manifest_hash, payload_hash);
     }

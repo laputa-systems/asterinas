@@ -82,6 +82,7 @@ def copy_run_inputs(repo: Path, bundle: EvidenceBundle, include_adapter: bool = 
     sources = {
         "linux-bzImage": repo / "test/qualification/linux/bzImage",
         "linux-config": repo / "test/qualification/linux/config",
+        "asterinas-kernel": repo / CACHE_DIR / "asterinas-kernel",
         "initramfs.cpio": repo / CACHE_DIR / "initramfs.cpio",
         "probe": repo / CACHE_DIR / "probe",
         "probe-input.txt": repo / "test/qualification/probe/input.txt",
@@ -207,10 +208,13 @@ def execute_backend(
     control: str = "none",
     deadline: float | None = None,
     silence_timeout: float | None = None,
+    case: CaseSpec | None = None,
+    backend: str = "linux",
 ) -> BackendEvidence:
     stream_run_id = f"{bundle.run_id}-{label}"
     nonce = secrets.token_hex(16)
-    case = selection.cases[0]
+    case = selection.cases[0] if case is None else case
+    expected_cases = {case.case_id: case}
     lock_document = json.loads((repo / LOCK_PATH).read_text(encoding="utf-8"))
     adapter_enabled = bool(case.payload.get("adapter"))
     adapter_image = None
@@ -223,7 +227,7 @@ def execute_backend(
         adapter_image = inputs[image_name]
     execution = run_qemu(
         qemu_path=Path(lock_document["qemu"]["path"]),
-        kernel=inputs["linux-bzImage"],
+        kernel=inputs["asterinas-kernel" if backend == "asterinas" else "linux-bzImage"],
         initramfs=inputs["initramfs.cpio"],
         work_dir=bundle.work_dir,
         label=label,
@@ -240,6 +244,7 @@ def execute_backend(
         adapter_serial="qual-lc06-wrong" if control == "wrong-disk" else str(case.payload.get("disk_serial", "qual-lc06-adapter")),
         isolated_network=adapter_enabled,
         inject_read_errors=control == "failed-mount",
+        kernel_kind=backend,
     )
     bundle.register_file(f"{label}/console.log", execution.console_log)
     qual_exists = execution.qual_log.is_file()
@@ -252,7 +257,7 @@ def execute_backend(
         f"{label}/qemu-command.json",
         (json.dumps({"argv": execution.command}, indent=2) + "\n").encode("utf-8"),
     )
-    storage_failures = required_config_failures(case, inputs["linux-config"].read_text(encoding="utf-8"))
+    storage_failures = required_config_failures(case, inputs["linux-config"].read_text(encoding="utf-8")) if backend == "linux" else []
     if adapter_enabled:
         if execution.adapter_disk is None:
             storage_failures.append("adapter disk was not attached")
@@ -267,7 +272,7 @@ def execute_backend(
         nonce=nonce,
         manifest_hash=selection.manifest_hash,
         payload_hash=selection.payload_hash,
-        cases=selection.case_map,
+        cases=expected_cases,
         max_age_seconds=300,
         now=time.time(),
     )
@@ -275,12 +280,11 @@ def execute_backend(
     diagnostics = tuple(ingestion.rendered())
     if not qual_exists:
         diagnostics = (*diagnostics, "missing-artifact: qemu did not create the dedicated serial log")
-    observed = {case_id: _observed_values(ingestion, case_id) for case_id in selection.case_ids}
+    observed = {case.case_id: _observed_values(ingestion, case.case_id)}
     final_status = None
-    if selection.case_ids:
-        final = ingestion.finals.get(selection.case_ids[0])
-        if final is not None and isinstance(final.get("status"), str):
-            final_status = final["status"]
+    final = ingestion.finals.get(case.case_id)
+    if final is not None and isinstance(final.get("status"), str):
+        final_status = final["status"]
     return BackendEvidence(
         label=label,
         stream_run_id=stream_run_id,
@@ -314,6 +318,9 @@ def evaluate_case(case: CaseSpec, reference: BackendEvidence, candidate: Backend
     candidate_status, candidate_detail, candidate_terminal = _backend_role(candidate)
     reference_role = RoleResult("reference", reference_status, reference_detail)
     candidate_role = RoleResult("candidate", candidate_status, candidate_detail)
+    if candidate.storage_diagnostics and candidate_terminal is None:
+        candidate_role = RoleResult("candidate", "harness-error", "; ".join(candidate.storage_diagnostics[:3]))
+        candidate_terminal = "HARNESS_ERROR"
 
     reference_observed = reference.observed.get(case.case_id, {})
     candidate_observed = candidate.observed.get(case.case_id, {})
@@ -324,7 +331,6 @@ def evaluate_case(case: CaseSpec, reference: BackendEvidence, candidate: Backend
     else:
         validator_failures = ["reference stream did not complete cleanly"]
     validator_failures.extend(reference.storage_diagnostics)
-    validator_failures.extend(candidate.storage_diagnostics)
     comparable = reference_role.status == "pass" and candidate_role.status in {"pass", "fail"}
     if comparable:
         comparator_failures = compare_against_reference(case, reference_observed, candidate_observed)
@@ -373,9 +379,13 @@ def _backend_json(evidence: BackendEvidence) -> dict[str, Any]:
     }
 
 
-def run_selfcheck(repo: Path, profile_name: str, candidate: str) -> int:
-    if candidate != "linux":
-        print(f"HARNESS_ERROR unsupported candidate {candidate!r}; LC-05 implements only linux", file=sys.stderr)
+def _case_label(prefix: str, case_id: str) -> str:
+    return f"{prefix}-" + "".join(character if character.isalnum() else "-" for character in case_id)
+
+
+def run_selfcheck(repo: Path, profile_name: str, candidate: str, baseline: bool = False) -> int:
+    if candidate not in {"linux", "asterinas"}:
+        print(f"HARNESS_ERROR unsupported candidate {candidate!r}; supported candidates are linux and asterinas", file=sys.stderr)
         return 2
     bundle: EvidenceBundle | None = None
     try:
@@ -384,11 +394,30 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str) -> int:
         bundle = EvidenceBundle.create(repo / "target/qualification")
         inputs = copy_run_inputs(repo, bundle, any(bool(case.payload.get("adapter")) for case in selection.cases))
         input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection)
+        reference_evidence: dict[str, BackendEvidence] = {}
+        candidate_evidence: dict[str, BackendEvidence] = {}
         with VmExclusion(repo / "target/qualification/vm.lock"):
-            reference = execute_backend(repo, bundle, inputs, selection, "reference")
-            candidate_evidence = execute_backend(repo, bundle, inputs, selection, "candidate")
+            for case in selection.cases:
+                reference_evidence[case.case_id] = execute_backend(
+                    repo,
+                    bundle,
+                    inputs,
+                    selection,
+                    _case_label("reference", case.case_id),
+                    case=case,
+                    backend="linux",
+                )
+                candidate_evidence[case.case_id] = execute_backend(
+                    repo,
+                    bundle,
+                    inputs,
+                    selection,
+                    _case_label("candidate", case.case_id),
+                    case=case,
+                    backend=candidate,
+                )
         outcomes = tuple(
-            evaluate_case(case, reference, candidate_evidence)
+            evaluate_case(case, reference_evidence[case.case_id], candidate_evidence[case.case_id])
             for case in selection.cases
         )
         accounting = reconcile(selection.case_ids, outcomes)
@@ -396,6 +425,7 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str) -> int:
             "run_id": bundle.run_id,
             "profile": profile_name,
             "candidate": candidate,
+            "baseline": baseline,
             "lock_hash": verification.lock_hash,
             "manifest_hash": selection.manifest_hash,
             "payload_hash": selection.payload_hash,
@@ -404,8 +434,8 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str) -> int:
             "effective_lock_sha256": effective_lock_hash,
             "replay": replay_index(selection),
             "backends": {
-                "reference": _backend_json(reference),
-                "candidate": _backend_json(candidate_evidence),
+                "reference": {case_id: _backend_json(evidence) for case_id, evidence in sorted(reference_evidence.items())},
+                "candidate": {case_id: _backend_json(evidence) for case_id, evidence in sorted(candidate_evidence.items())},
             },
             "outcomes": {
                 outcome.case_id: {
@@ -428,7 +458,12 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str) -> int:
             print(f"accounting diagnostic: {item.render()}")
         for error in teardown_errors:
             print(f"teardown error: {error}")
-        ok = accounting.counts.get("PASS", 0) == len(selection.case_ids) and not accounting.diagnostics and not teardown_errors
+        harness_errors = accounting.counts.get("HARNESS_ERROR", 0)
+        reference_failures = accounting.counts.get("REFERENCE_FAILURE", 0)
+        if baseline:
+            ok = sum(accounting.counts.values()) == len(selection.case_ids) and harness_errors == 0 and reference_failures == 0 and not accounting.diagnostics and not teardown_errors
+        else:
+            ok = accounting.counts.get("PASS", 0) == len(selection.case_ids) and not accounting.diagnostics and not teardown_errors
         return 0 if ok else 1
     except Exception as error:
         if bundle is not None and not bundle.report_path.exists():

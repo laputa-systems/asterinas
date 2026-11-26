@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  python3 test/qualification/run.py lock --verify\n"
             "  python3 test/qualification/run.py run --profile selfcheck --candidate linux\n"
             "  python3 test/qualification/run.py run --profile selfcheck --controls\n"
+            "  python3 test/qualification/run.py run --profile pilot-ext2 --baseline\n"
             "Ctrl-C, SIGTERM, SIGHUP, or SIGQUIT stops the current supervised operation, keeps partial evidence, "
             "and terminates this process by that signal."
         ),
@@ -90,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="run a qualification profile")
     run.add_argument("--profile", required=True, help="profile name")
     run.add_argument("--candidate", default=None, help="candidate backend")
+    run.add_argument("--baseline", action="store_true", help="capture the paired failing baseline with the Asterinas candidate")
     run.add_argument("--controls", action="store_true", help="run integration negative controls")
     return parser
 
@@ -112,9 +114,10 @@ def main(argv: list[str]) -> int:
     if arguments.command == "run":
         if arguments.controls:
             return run_with_interrupt_policy(lambda: run_controls(repo, arguments.profile))
-        if arguments.candidate is None:
-            parser.error("run requires --candidate unless --controls is selected")
-        return run_with_interrupt_policy(lambda: run_selfcheck(repo, arguments.profile, arguments.candidate))
+        candidate = "asterinas" if arguments.baseline else arguments.candidate
+        if candidate is None:
+            parser.error("run requires --candidate unless --controls or --baseline is selected")
+        return run_with_interrupt_policy(lambda: run_selfcheck(repo, arguments.profile, candidate, arguments.baseline))
     parser.error("unknown command")
     return 2
 

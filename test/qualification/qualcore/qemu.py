@@ -12,6 +12,7 @@ from .supervisor import SupervisedResult, Supervisor
 
 QEMU_ACCEL_ARGS = ("-accel", "tcg", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "1024", "-no-reboot")
 BASE_CMDLINE = "console=ttyS0 panic=-1"
+ASTERINAS_CMDLINE = "console=ttyS0 earlycon loglevel=error panic=-1"
 
 
 class QemuError(Exception):
@@ -68,9 +69,11 @@ def qemu_command(
     case_id: str = "core.selfcheck",
     adapter_disk: AdapterDisk | None = None,
     isolated_network: bool = False,
+    kernel_kind: str = "linux",
 ) -> tuple[str, ...]:
+    base_cmdline = ASTERINAS_CMDLINE if kernel_kind == "asterinas" else BASE_CMDLINE
     cmdline = (
-        f"{BASE_CMDLINE} qual.run_id={run_id} qual.nonce={nonce} "
+        f"{base_cmdline} qual.run_id={run_id} qual.nonce={nonce} "
         f"qual.manifest_hash={manifest_hash} qual.payload_hash={payload_hash} "
         f"qual.control={control} qual.case_id={case_id}"
     )
@@ -101,7 +104,7 @@ def qemu_command(
             "-blockdev",
             f"node-name=adapter-disk,driver=blkdebug,image=adapter-logged,config={config}",
             "-device",
-            f"virtio-blk-pci,drive=adapter-disk,serial={adapter_disk.serial},write-cache=on",
+            f"virtio-blk-pci,drive=adapter-disk,serial={adapter_disk.serial},write-cache=on,disable-legacy=on,disable-modern=off,queue-size=64,num-queues=1,request-merging=off,backend_defaults=off,discard=off,write-zeroes=off,event_idx=off,indirect_desc=off,queue_reset=off",
         )
     return tuple(
         str(item)
@@ -178,6 +181,7 @@ def run_qemu(
     adapter_serial: str = "qual-lc06-adapter",
     isolated_network: bool = False,
     inject_read_errors: bool = False,
+    kernel_kind: str = "linux",
 ) -> QemuExecution:
     vm_dir = work_dir / label
     vm_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -208,6 +212,7 @@ def run_qemu(
         case_id,
         adapter_disk,
         isolated_network,
+        kernel_kind,
     )
     started = time.monotonic()
     result = Supervisor().run(

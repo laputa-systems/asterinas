@@ -1,13 +1,13 @@
 {
   "adapter": {
     "disk_path": "target/qualification/inputs/cache/adapter-disk.ext2",
-    "disk_sha256": "ddef0a56c485ae91da4f112e95f8018c6c74bf5409c0fddb2dbdc7dae146b704",
+    "disk_sha256": "f7c62dc21564107fee97abbe9e3ed60be2b8e6dbe62632e0d93ca776daed70b9",
     "disk_size_bytes": 16777216,
     "e2fsprogs_nix_path": "test/qualification/adapter/e2fsprogs.nix",
     "e2fsprogs_nix_sha256": "ec2c1266278327351814db9545079b5e14c2f3577493ddde9b17aa0a1f5814e1",
     "serial": "qual-lc06-adapter",
     "wrong_disk_path": "target/qualification/inputs/cache/adapter-wrong-disk.ext2",
-    "wrong_disk_sha256": "038631dd0703f46197f8dfb843ba9d92f10e538d5f2e9304c44f7c1a48531984",
+    "wrong_disk_sha256": "179f888865e60d90c121b628fb34073174172fec6b4c0b82e0721b32942b7dcf",
     "wrong_filesystem_path": "target/qualification/inputs/cache/adapter-wrong-filesystem.img",
     "wrong_filesystem_sha256": "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
   },
@@ -16,10 +16,13 @@
     "cargo_lock_sha256": "36ddf8606e231e17091d69d52447f3e67b5c08fc15063eb4641b0b09bed9e3a9",
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
+    "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
+    "kernel_sha256": "c7b21824677b3cae08449cccd406135266d8da14213542236f04f3b4821ad9dd",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
-    "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7"
+    "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
+    "source_tree_sha256": "9b6fefc138e0a1b257e23e749205984fca2c29db8a639f1569c559f714b18104"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -35,16 +38,16 @@
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "7be24a8f5ee4f2aa00a714734d63c707537c639be79e6eb56a9cd42e9d831f1e",
+      "test/qualification/qualcore/lock.py": "2f94f09e5d497a386ac9655a367bdd7673264ce8cf2cb92dde37189211ea7ca9",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
-      "test/qualification/qualcore/qemu.py": "57c6f4e349bf33bf9aba960ebb492d50d7514a9c4a6d5c9157cf9a82b0822d4d",
+      "test/qualification/qualcore/qemu.py": "024b98fabc41a74e153f72a6049b8c7c3f43cca1187377b0b6a2f866120926ce",
       "test/qualification/qualcore/results.py": "09d0eed452b7a47d16f8f598b366d10383c423ec7a9b59f0b34d4cc0a68b5b1a",
-      "test/qualification/qualcore/runner.py": "886085cbbcf8a881da1ffa3ba7ad0ee68a6a460d084ce7fbd59877a93e5348a6",
+      "test/qualification/qualcore/runner.py": "a8b60e6b4eafd211c8a82952740ffa532800eeac925c87d4997c3ff4463accb1",
       "test/qualification/qualcore/selftest.py": "0705e06e06de7fec73e8547fb5712a9e4c283aa5582b7a848b78abc3799a8a5f",
       "test/qualification/qualcore/supervisor.py": "067c3d694359385ef35b79c60f57b2b7d9bbaf3b22080db6f9023182d582e0d5",
       "test/qualification/qualcore/util.py": "3698485c7a3a80f40c39024aefafe6c0bb46e708c4834180c8a163a5a847dd04",
-      "test/qualification/run.py": "45447c3583f3afdac9ee2eb9f796ad9dfdee1f32fea03a13a711c71ae63b8dec"
+      "test/qualification/run.py": "a964c34866c9353c279c1b05e8ccd2ece45f6fe2ff262c9cab4eb3f6edb32677"
     }
   },
   "linux": {
@@ -59,18 +62,18 @@
     "nix_sha256": "894aa638531466b12a45f67c40fabc79aa850152c90b285d7e709a7b7854092b",
     "version": "6.18.65"
   },
-  "lock_revision": "lc06-r1",
+  "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "e56f49dab2ecb830d21c6be081af2aaec5be13d56edf4180aa98837c9a34d6da",
+    "binary_sha256": "af5076c850ca82cd27701d38828dd5081dac8e22c286f9084231c33c5f239972",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "c51fac865e0885312a4480765cb883152608e26ffdc611d92059d879a405f670",
+    "initramfs_sha256": "0baef6f227b4b3e53e18f0f061eb15288af994569b4b64d1cccbb048b5a18ed5",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
-    "nix_sha256": "6101ebb596db24514d9df778f1211175bdcfd0ecfa66fa43fece3df3fd89a3c7",
+    "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "0e7699c60e0d112fd31d1b084d76ea084c6c376c3fc6cd1560a51fe71846729e"
+    "source_sha256": "eb82a9099f3f8699c1a778f7daaad70fe82b20327a9bcc7d639cf7db1c1b7b28"
   },
   "python": {
     "minimum_version": "3.11"
@@ -127,6 +130,82 @@
       "manifest_hash": "8529ad6255879c361500d639e7bedc267a7269b1bf396497d94eca14b7062d2f",
       "normalization_rules": [],
       "payload_hash": "a01a47e21f1b301059808cb9b5864d2de9f9ed1439a97432526b9a2721982a1a"
+    },
+    "pilot-ext2": {
+      "case_ids": [
+        "ext2.create-read-write",
+        "ext2.sparse-truncate",
+        "ext2.links-rename",
+        "ext2.permissions",
+        "ext2.sync-remount",
+        "ext2.enospc-fill"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc07-ext2-pilot-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext2.create-read-write",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        },
+        {
+          "artifacts": [],
+          "contract_revision": "lc07-ext2-pilot-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext2.sparse-truncate",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        },
+        {
+          "artifacts": [],
+          "contract_revision": "lc07-ext2-pilot-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext2.links-rename",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        },
+        {
+          "artifacts": [],
+          "contract_revision": "lc07-ext2-pilot-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext2.permissions",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        },
+        {
+          "artifacts": [],
+          "contract_revision": "lc07-ext2-pilot-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext2.sync-remount",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        },
+        {
+          "artifacts": [],
+          "contract_revision": "lc07-ext2-pilot-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext2.enospc-fill",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "602b5921b61764fba8f76a7ffae6df54333532233d43b5f7d20318f986cd037c",
+      "normalization_rules": [],
+      "payload_hash": "6010c9eae35ea6bc15836af6445f5c148059bf6fb017c128d70423d8521e86ce"
     },
     "selfcheck": {
       "case_ids": [

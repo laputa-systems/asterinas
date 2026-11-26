@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "pilot-ext2",
+  "inherits": [],
+  "cases": [
+    "ext2.create-read-write",
+    "ext2.sparse-truncate",
+    "ext2.links-rename",
+    "ext2.permissions",
+    "ext2.sync-remount",
+    "ext2.enospc-fill"
+  ],
+  "excludes": []
+}

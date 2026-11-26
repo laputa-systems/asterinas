@@ -81,6 +81,24 @@ def build_probe(repo: Path) -> None:
     _docker_build(repo, script, "qualification probe build")
 
 
+def build_asterinas(repo: Path) -> None:
+    script = (
+        "set -eu; "
+        "mkdir -p target/qualification/inputs/cache; "
+        "osdk_root=target/qualification/inputs/cache/osdk-root; "
+        "osdk=target/qualification/inputs/cache/cargo-osdk; "
+        "OSDK_LOCAL_DEV=1 cargo install cargo-osdk --path osdk --root \"$osdk_root\" --force >/dev/null; "
+        "cp \"$osdk_root/bin/cargo-osdk\" \"$osdk\"; "
+        "cd kernel; "
+        "OSDK_TARGET_ARCH=x86_64 /root/asterinas/$osdk osdk build --boot-method=vmm-direct --strip-elf --features=pvh_boot "
+        "--kcmd-args=loglevel=error --kcmd-args=earlycon --kcmd-args=console=ttyS0 >/dev/null; "
+        "cd ..; "
+        "cp target/osdk/asterinas/asterinas-osdk-bin.elf target/qualification/inputs/cache/asterinas-kernel.tmp; "
+        "mv target/qualification/inputs/cache/asterinas-kernel.tmp target/qualification/inputs/cache/asterinas-kernel"
+    )
+    _docker_build(repo, script, "Asterinas qualification kernel build")
+
+
 def build_initramfs(repo: Path) -> None:
     write_selfcheck_initramfs(
         repo / CACHE_DIR / "probe",
@@ -99,13 +117,13 @@ def build_adapter_fixtures(repo: Path) -> None:
         "mkdir -p \"$staging/good\" \"$staging/wrong\"; "
         "printf 'lc06-adapter\\n' > \"$staging/good/marker.txt\"; "
         "printf 'lc06-adapter\\n' > \"$staging/wrong/marker.txt\"; "
-        "truncate -s 16M target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
-        "\"$result/bin/mkfs.ext2\" -q -F -d \"$staging/good\" -U 6c636f36-6164-4070-7465-723031323334 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
+        "rm -f target/qualification/inputs/cache/adapter-disk.ext2.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
+        "\"$result/bin/mkfs.ext2\" -q -F -b 4096 -I 128 -d \"$staging/good\" -U 6c636f36-6164-4070-7465-723031323334 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
         "mv target/qualification/inputs/cache/adapter-disk.ext2.tmp target/qualification/inputs/cache/adapter-disk.ext2; "
-        "truncate -s 16M target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
-        "\"$result/bin/mkfs.ext2\" -q -F -d \"$staging/wrong\" -U 77726f6e-6764-4973-6b31-323334353637 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
+        "rm -f target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
+        "\"$result/bin/mkfs.ext2\" -q -F -b 4096 -I 128 -d \"$staging/wrong\" -U 77726f6e-6764-4973-6b31-323334353637 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
         "mv target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp target/qualification/inputs/cache/adapter-wrong-disk.ext2; "
-        "truncate -s 16M target/qualification/inputs/cache/adapter-wrong-filesystem.img"
+        "rm -f target/qualification/inputs/cache/adapter-wrong-filesystem.img; truncate -s 16M target/qualification/inputs/cache/adapter-wrong-filesystem.img"
     )
     _docker_build(repo, script, "adapter disk fixture build")
 
@@ -238,6 +256,22 @@ def _qemu_lock() -> dict[str, str]:
     }
 
 
+def asterinas_source_tree_hash(repo: Path) -> str:
+    entries: list[dict[str, Any]] = []
+    for root in ("kernel", "ostd", "osdk"):
+        for path in sorted((repo / root).rglob("*")):
+            relative_path = path.relative_to(repo)
+            if not path.is_file() or "target" in relative_path.parts or any(part.startswith(".") for part in relative_path.parts[1:]):
+                continue
+            relative = str(relative_path)
+            entries.append({"path": relative, "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
+    for relative in ("Cargo.toml", "Makefile", "OSDK.toml"):
+        path = repo / relative
+        if path.is_file():
+            entries.append({"path": relative, "sha256": _sha256_file(path), "mode": path.stat().st_mode & 0o777})
+    return sha256_canonical(entries)
+
+
 def _linux_rebuild_required(repo: Path, linux_path: Path, dev_digest: str) -> bool:
     if not linux_path.is_file():
         return True
@@ -304,15 +338,17 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     build_initramfs(repo)
     initramfs_path = repo / CACHE_DIR / "initramfs.cpio"
     build_adapter_fixtures(repo)
+    build_asterinas(repo)
     adapter_disk = repo / CACHE_DIR / "adapter-disk.ext2"
     adapter_wrong_disk = repo / CACHE_DIR / "adapter-wrong-disk.ext2"
     adapter_wrong_filesystem = repo / CACHE_DIR / "adapter-wrong-filesystem.img"
     selection = _load_selection(repo, "selfcheck")
     control_selection = _load_selection(repo, "lc02-selftest")
     adapter_selection = _load_selection(repo, "adapter")
+    pilot_selection = _load_selection(repo, "pilot-ext2")
     return {
         "schema": 1,
-        "lock_revision": "lc06-r1",
+        "lock_revision": "lc07-r1",
         "repository": repository_policy(),
         "harness": harness_lock(repo),
         "dev_container": {
@@ -368,11 +404,15 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "flake_lock_sha256": _sha256_file(repo / "flake.lock"),
             "nixpkgs_path": "distro/nixpkgs.nix",
             "nixpkgs_sha256": _sha256_file(repo / "distro/nixpkgs.nix"),
+            "kernel_path": str(CACHE_DIR / "asterinas-kernel"),
+            "kernel_sha256": _sha256_file(repo / CACHE_DIR / "asterinas-kernel"),
+            "source_tree_sha256": asterinas_source_tree_hash(repo),
         },
         "selections": {
             "selfcheck": _selection_lock(selection),
             "lc02-selftest": _selection_lock(control_selection),
             "adapter": _selection_lock(adapter_selection),
+            "pilot-ext2": _selection_lock(pilot_selection),
         },
     }
 
@@ -497,6 +537,9 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("asterinas_build", "flake_lock_sha256"),
         ("asterinas_build", "nixpkgs_path"),
         ("asterinas_build", "nixpkgs_sha256"),
+        ("asterinas_build", "kernel_path"),
+        ("asterinas_build", "kernel_sha256"),
+        ("asterinas_build", "source_tree_sha256"),
         ("selections", "selfcheck", "manifest_hash"),
         ("selections", "selfcheck", "payload_hash"),
         ("selections", "selfcheck", "case_ids"),
@@ -515,6 +558,12 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("selections", "adapter", "cases"),
         ("selections", "adapter", "excluded"),
         ("selections", "adapter", "normalization_rules"),
+        ("selections", "pilot-ext2", "manifest_hash"),
+        ("selections", "pilot-ext2", "payload_hash"),
+        ("selections", "pilot-ext2", "case_ids"),
+        ("selections", "pilot-ext2", "cases"),
+        ("selections", "pilot-ext2", "excluded"),
+        ("selections", "pilot-ext2", "normalization_rules"),
     )
     missing: list[str] = []
     for path in required:
@@ -635,7 +684,18 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
     else:
         checked.append("adapter serial")
 
-    for profile_name in ("selfcheck", "lc02-selftest", "adapter"):
+    actual_source_tree = asterinas_source_tree_hash(repo)
+    if actual_source_tree != asterinas_build["source_tree_sha256"]:
+        failures.append(f"Asterinas source tree drift: got {actual_source_tree} expected {asterinas_build['source_tree_sha256']}")
+    else:
+        checked.append("Asterinas source tree")
+
+    asterinas_kernel = repo / asterinas_build["kernel_path"]
+    if not asterinas_kernel.exists() and build_missing and not failures:
+        build_asterinas(repo)
+    _check_file_hash(repo, asterinas_build["kernel_path"], asterinas_build["kernel_sha256"], "Asterinas kernel", failures, checked)
+
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)
