@@ -4,12 +4,12 @@ This is the single plan for this repository: all current and future work, and th
 
 ## Status
 
-- **State:** active. LC-01 and LC-03 are accepted; LC-02 and LC-04 are in lanes pending independent review.
+- **State:** active. LC-01, LC-02, LC-03, and LC-04 are accepted; LC-05 is next.
 - **Campaign:** [Linux compatibility and reliability](#linux-compatibility-and-reliability) (`LC`).
-- **Last accepted revision:** `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
+- **Last accepted revision:** `a3734f2cd` for LC-02 and LC-04; `2580c8dae` for LC-03; `e58cc4bdb` for LC-01. The regression initramfs build, host unit tests, lint, and PVH build are green. The full regression boot reaches userspace and runs the suite; its remaining recorded red case is corrupted generated NVMe input, not a kernel panic (see [Baseline](#baseline)).
 - **Red or parked:** `setup_mount_nvme_ext2` is red because `test/initramfs/build/nvme0n1.img` has a bad ext2 superblock. Preserve the image as evidence until a later storage lane root-causes or deliberately regenerates it. `make ktest` was red at `798fb7b12` only for `realtime_clocks_store_fractional_seconds`; `914a9c245` fixes that test and its focused ktest is green.
-- **Next slice:** LC-02 and LC-04 integration, then LC-05.
-- **First command:** `python3 test/qualification/run.py selftest`
+- **Next slice:** LC-05.
+- **First command:** `python3 test/qualification/run.py selftest && python3 test/qualification/run.py inventory --check`
 
 ## Charter
 
@@ -220,6 +220,7 @@ Profiles, each a manifest in `test/qualification/profiles/` that names the profi
 - **D4 Crate adoption:** within O4, timebox evaluation to one hour per candidate. Tie-break: in-tree.
 - **D5 Intentional divergence from Linux:** allowed only with a narrow test, retained transcripts, and a contract entry. Security-sensitive divergence needs an independent `review` lane.
 - **D6 Missing ABI additions** (`recvmmsg`, `mincore`, `mlock`, `membarrier`, atomic KMS, virtio-gpu 2D): implement only when a named case or workload in the item needs them, with exact semantics, never as a successful no-op.
+- **D7 Host process teardown:** on macOS the standard-library supervisor is fail-closed and leaf-only. Qualification adapters must run controlled VM processes that do not fork; teardown is `verified-empty` only for those leaf targets. Any observed fork, watcher failure, or scan failure makes the run `HARNESS_ERROR` rather than claiming recursive removal. Strict recursive containment for forking host processes needs a Linux cgroup backend and is not claimed on macOS.
 
 ### Baseline
 
