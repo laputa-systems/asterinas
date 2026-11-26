@@ -770,22 +770,13 @@ def _extract_ltp(repo_root, conf):
     return entries
 
 
-def _next_ltp_case(lines, start):
-    for line in lines[start:]:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        inline = INLINE_REASON_RE.match(stripped)
-        return inline.group(1) if inline else stripped
-    return None
-
-
 def _extract_ltp_blocked(repo_root, path):
     entries = []
     lines = path.read_text(encoding="utf-8").splitlines()
     rel = path.relative_to(repo_root).as_posix()
     section_reason = None
-    case_reason = None
+    pending_case_reason = None
+    pending_case_line = None
     idx = 0
     while idx < len(lines):
         stripped = lines[idx].strip()
@@ -802,18 +793,20 @@ def _extract_ltp_blocked(repo_root, path):
             if not block:
                 continue
             reason = " ".join(block)
-            following_case = _next_ltp_case(lines, idx)
-            if following_case and re.match(rf"^{re.escape(following_case)}\b", block[0]):
-                case_reason = reason
-            else:
+            if block[0].lower().startswith("the following tests"):
                 section_reason = reason
-                case_reason = None
+                pending_case_reason = None
+                pending_case_line = None
+            else:
+                pending_case_reason = reason
+                pending_case_line = idx
             continue
         inline = INLINE_REASON_RE.match(stripped)
         if inline:
             case, inline_reason = inline.group(1), inline.group(2).strip()
         else:
             case, inline_reason = stripped, None
+        case_reason = pending_case_reason if pending_case_line == idx else None
         reasons = [item for item in (section_reason, case_reason, inline_reason) if item]
         entries.append(
             {
@@ -825,7 +818,8 @@ def _extract_ltp_blocked(repo_root, path):
                 "source": f"{rel}:{idx + 1}",
             }
         )
-        case_reason = None
+        pending_case_reason = None
+        pending_case_line = None
         idx += 1
     return entries
 

@@ -792,6 +792,15 @@ class InventoryTest(unittest.TestCase):
             "The following tests will produce warnings. All warnings are of the same kind: warning detail linkat01 randomly fails on Ubuntu ARM GitHub runners.",
         )
 
+    def test_ltp_ordinary_comment_scopes_only_to_next_case(self):
+        blocked = self.repo / "test/initramfs/src/conformance/ltp/testcases/blocked/aarch64.txt"
+        blocked.write_text("# Flaky on this lane.\nclone10\nmmap06\n")
+        self.generate()
+        inv = self.read_inventory()
+        rows = [e for e in inv["conformance_blocklists"] if e["suite"] == "blocked/aarch64.txt"]
+        self.assertEqual(rows[0]["reason"], "Flaky on this lane.")
+        self.assertIsNone(rows[1]["reason"])
+
     def test_omitted_ltp_blocked_input_detected(self):
         self.generate()
         first = (self.outdir / "inventory.json").read_text()
