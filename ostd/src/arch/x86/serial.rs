@@ -15,6 +15,9 @@ use crate::{
 /// The primary serial port, which serves as an early console.
 pub static SERIAL_PORT: Once<SpinLock<Ns16550aUart<SerialAccess>, LocalIrqDisabled>> = Once::new();
 
+/// The secondary serial port, which is never used as an early console.
+pub static COM2_SERIAL_PORT: Once<SpinLock<Ns16550aUart<SerialAccess>, LocalIrqDisabled>> = Once::new();
+
 /// Access to serial registers via I/O ports in x86.
 #[derive(Debug)]
 pub struct SerialAccess {
@@ -102,22 +105,15 @@ impl Ns16550aAccess for SerialAccess {
     }
 }
 
-/// Initializes the serial port.
+/// Initializes one UART whose I/O port range is statically reserved.
 ///
 /// # Safety
 ///
-/// This function should be called only once.
-pub(crate) unsafe fn init(early_cmdline: &EarlyCmdline) {
-    if !early_cmdline.has_early_console {
-        return;
-    }
-
-    // SAFETY:
-    // 1. The legacy COM1 serial port at 0x3F8 can be disabled via the command line.
-    //    (FIXME: This needs to be confirmed by checking the ACPI table or using more specific
-    //    kernel parameters to obtain early information for building the early console.)
-    // 2. `reserve_io_port_range` guarantees exclusive ownership of the I/O registers.
-    let mut access = unsafe { SerialAccess::new(0x3F8) };
+/// The caller must ensure that `port` is the base of the statically reserved range owned by
+/// `target` and that this function is called at most once for that range.
+unsafe fn init_uart(port: u16, target: &'static Once<SpinLock<Ns16550aUart<SerialAccess>, LocalIrqDisabled>>) {
+    // SAFETY: `reserve_io_port_range` guarantees exclusive ownership of the I/O registers.
+    let mut access = unsafe { SerialAccess::new(port) };
     if !access.probe() {
         // The `IoPort`s in the access are backed by statically reserved ranges,
         // but dropping the access would recycle these ranges through the port
@@ -129,6 +125,19 @@ pub(crate) unsafe fn init(early_cmdline: &EarlyCmdline) {
     let mut serial = Ns16550aUart::new(access);
     serial.init();
 
-    SERIAL_PORT.call_once(|| SpinLock::new(serial));
+    target.call_once(|| SpinLock::new(serial));
+}
+
+/// Initializes the serial ports.
+///
+/// # Safety
+///
+/// This function should be called only once.
+pub(crate) unsafe fn init(early_cmdline: &EarlyCmdline) {
+    if early_cmdline.has_early_console {
+        unsafe { init_uart(0x3F8, &SERIAL_PORT) };
+    }
+    unsafe { init_uart(0x2F8, &COM2_SERIAL_PORT) };
 }
 reserve_io_port_range!(0x3F8..0x400);
+reserve_io_port_range!(0x2F8..0x300);

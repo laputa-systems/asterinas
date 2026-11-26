@@ -30,26 +30,47 @@ pub trait AnyConsoleDevice: Send + Sync + Any + Debug {
 }
 
 pub const UART_CONSOLE_NAME: &str = "Uart-Console";
+pub const UART2_CONSOLE_NAME: &str = "Uart-Console-2";
+
+#[derive(Debug)]
+pub struct ConsoleDevice {
+    device: Arc<dyn AnyConsoleDevice>,
+    log_output: bool,
+}
+
+impl ConsoleDevice {
+    pub fn device(&self) -> &Arc<dyn AnyConsoleDevice> {
+        &self.device
+    }
+
+    pub fn log_output(&self) -> bool {
+        self.log_output
+    }
+}
 
 pub fn register_device(name: String, device: Arc<dyn AnyConsoleDevice>) {
+    register_device_with_log_output(name, device, true);
+}
+
+pub fn register_device_with_log_output(name: String, device: Arc<dyn AnyConsoleDevice>, log_output: bool) {
     COMPONENT
         .get()
         .unwrap()
         .console_device_table
         .lock()
-        .insert(name, device);
+        .insert(name, ConsoleDevice { device, log_output });
 }
 
 pub fn all_devices() -> Vec<(String, Arc<dyn AnyConsoleDevice>)> {
     let console_devices = COMPONENT.get().unwrap().console_device_table.lock();
     console_devices
         .iter()
-        .map(|(name, device)| (name.clone(), device.clone()))
+        .map(|(name, device)| (name.clone(), device.device().clone()))
         .collect()
 }
 
-pub fn all_devices_lock<'a>()
--> SpinLockGuard<'a, BTreeMap<String, Arc<dyn AnyConsoleDevice>>, LocalIrqDisabled> {
+pub fn all_device_entries_lock<'a>()
+-> SpinLockGuard<'a, BTreeMap<String, ConsoleDevice>, LocalIrqDisabled> {
     COMPONENT.get().unwrap().console_device_table.lock()
 }
 
@@ -64,7 +85,7 @@ fn component_init() -> Result<(), ComponentInitError> {
 
 #[derive(Debug)]
 struct Component {
-    console_device_table: SpinLock<BTreeMap<String, Arc<dyn AnyConsoleDevice>>, LocalIrqDisabled>,
+    console_device_table: SpinLock<BTreeMap<String, ConsoleDevice>, LocalIrqDisabled>,
 }
 
 impl Component {

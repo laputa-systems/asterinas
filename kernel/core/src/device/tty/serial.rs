@@ -65,32 +65,42 @@ pub(super) fn serial0_device() -> Option<&'static Arc<Tty<SerialDriver>>> {
     SERIAL0.get()
 }
 
+fn register_serial_tty(minor: u32, console: Arc<dyn AnyConsoleDevice>) -> Result<Arc<Tty<SerialDriver>>> {
+    let driver = SerialDriver {
+        console: console.clone(),
+    };
+    let tty = Tty::new(minor, driver);
+    char::register(tty.clone())?;
+
+    let input_tty = tty.clone();
+    console.register_callback(Box::leak(Box::new(
+        move |mut reader: VmReader<Infallible>| {
+            let mut chs = vec![0u8; reader.remain()];
+            reader.read(&mut VmWriter::from(chs.as_mut_slice()));
+            let _ = input_tty.push_input(chs.as_slice());
+        },
+    )));
+    Ok(tty)
+}
+
 pub(super) fn init_in_first_process() -> Result<()> {
     let devices = aster_console::all_devices();
 
-    // Initialize the `ttyS0` device if the serial console is available.
-
-    let serial_console = devices
-        .iter()
-        .find(|(name, _)| name.as_str() == aster_console::UART_CONSOLE_NAME)
-        .map(|(_, device)| device.clone());
-
-    if let Some(serial_console) = serial_console {
-        let driver = SerialDriver {
-            console: serial_console.clone(),
+    for (console_name, minor) in [
+        (aster_console::UART_CONSOLE_NAME, SerialDriver::MINOR_ID_BASE),
+        (aster_console::UART2_CONSOLE_NAME, SerialDriver::MINOR_ID_BASE + 1),
+    ] {
+        let Some((_, console)) = devices
+            .iter()
+            .find(|(name, _)| name.as_str() == console_name)
+            .map(|(_, device)| (console_name, device.clone()))
+        else {
+            continue;
         };
-        let serial0 = Tty::new(SerialDriver::MINOR_ID_BASE, driver);
-
-        SERIAL0.call_once(|| serial0.clone());
-        char::register(serial0.clone())?;
-
-        serial_console.register_callback(Box::leak(Box::new(
-            move |mut reader: VmReader<Infallible>| {
-                let mut chs = vec![0u8; reader.remain()];
-                reader.read(&mut VmWriter::from(chs.as_mut_slice()));
-                let _ = serial0.push_input(chs.as_slice());
-            },
-        )));
+        let tty = register_serial_tty(minor, console)?;
+        if minor == SerialDriver::MINOR_ID_BASE {
+            SERIAL0.call_once(|| tty);
+        }
     }
 
     Ok(())

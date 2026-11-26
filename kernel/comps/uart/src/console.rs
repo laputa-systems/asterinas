@@ -33,7 +33,7 @@ impl<U: Uart> UartConsole<U> {
     }
 
     /// Returns a reference to the UART instance.
-    #[cfg_attr(not(target_arch = "riscv64"), expect(dead_code))]
+    #[cfg_attr(any(target_arch = "aarch64", target_arch = "loongarch64"), expect(dead_code))]
     pub(super) fn uart(&self) -> &U {
         &self.uart
     }

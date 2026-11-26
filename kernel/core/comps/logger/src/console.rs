@@ -5,10 +5,9 @@
 //! FIXME: It will print to all `virtio-console` devices, which is not a good choice.
 //!
 
-use alloc::{collections::btree_map::BTreeMap, fmt, string::String, sync::Arc};
+use alloc::{collections::btree_map::BTreeMap, fmt, string::String};
 use core::fmt::Write;
 
-use aster_console::AnyConsoleDevice;
 use ostd::sync::{LocalIrqDisabled, SpinLockGuard};
 
 /// Prints the formatted arguments to the standard output.
@@ -18,19 +17,20 @@ pub fn _print(args: fmt::Arguments) {
     // in the heap. (The heap allocator will log a message when memory is low.)
     //
     // Also, holding the lock will prevent the logs from interleaving.
-    let devices = aster_console::all_devices_lock();
+    let devices = aster_console::all_device_entries_lock();
 
-    struct Printer<'a>(
-        SpinLockGuard<'a, BTreeMap<String, Arc<dyn AnyConsoleDevice>>, LocalIrqDisabled>,
-    );
+    struct Printer<'a>(SpinLockGuard<'a, BTreeMap<String, aster_console::ConsoleDevice>, LocalIrqDisabled>);
     impl Write for Printer<'_> {
         fn write_str(&mut self, s: &str) -> fmt::Result {
-            if self.0.is_empty() {
-                ostd::early_print!("{}", s);
-            } else {
-                for console in self.0.values() {
-                    console.send(s.as_bytes());
+            let mut wrote = false;
+            for console in self.0.values() {
+                if console.log_output() {
+                    console.device().send(s.as_bytes());
+                    wrote = true;
                 }
+            }
+            if !wrote {
+                ostd::early_print!("{}", s);
             }
             Ok(())
         }
