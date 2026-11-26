@@ -11,5 +11,15 @@
       "match": "Record the writeback error",
       "reason": "writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)"
     }
+  ],
+  "aliases": [
+    ["sendfile", "sendfile64"],
+    ["getpriority", "get_priority"],
+    ["setpriority", "set_priority"],
+    ["sigpending", "rt_sigpending"],
+    ["sigsuspend", "rt_sigsuspend"],
+    ["fstat", "newfstat"],
+    ["uname", "newuname"],
+    ["newfstatat", "fstatat"]
   ]
 }

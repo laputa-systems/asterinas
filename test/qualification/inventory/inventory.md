@@ -3,19 +3,23 @@
 Regenerate with `python3 test/qualification/inventory/inventory.py generate`.
 Verify with `python3 test/qualification/inventory/inventory.py check`.
 
-## Syscall dispatch entries
+Statuses are shallow handler-resolution evidence, not Linux-compatibility claims; see `metadata.status_semantics` in inventory.json.
 
+## Syscall dispatch
+
+- dispatch rows: 470
 - dispatched syscalls: 260
-- implemented: 257
-- partial: 2
+- implemented: 254
+- partial: 5
 - stub: 1
 - unresolvable: 0
+- divergent-handler syscalls: 0
 
 ### SCML coverage
 
-- fully covered: 158
-- constrained: 82
-- undocumented: 20
+- fully covered: 165
+- constrained: 83
+- undocumented: 12
 
 ### Stub syscalls
 
@@ -23,12 +27,20 @@ Verify with `python3 test/qualification/inventory/inventory.py check`.
 
 ### Partial syscalls
 
+- `clone` — kernel/core/src/syscall/clone.rs:16
+- `clone3` — kernel/core/src/syscall/clone.rs:32
 - `memfd_create` — kernel/core/src/syscall/memfd_create.rs:15
+- `personality` — kernel/core/src/syscall/personality.rs:6
 - `sendmmsg` — kernel/core/src/syscall/sendmmsg.rs:13
+
+## SCML rules
+
+- invocation rows: 319
+- undispatched rule names: 0
 
 ## Unsupported-success paths
 
-- recorded sites: 83
+- recorded sites: 84
 
 - `kernel/comps/i8042/src/controller.rs:267` (comment): before the acknowledgment is ignored.
 - `kernel/core/comps/cmdline/src/dispatch.rs:158` (comment): Unrecognized module arguments are ignored.
@@ -109,6 +121,7 @@ Verify with `python3 test/qualification/inventory/inventory.py check`.
 - `kernel/core/src/syscall/fadvise64.rs:52` (warn): warn!("POSIX_FADV_DONTNEED is ignored");
 - `kernel/core/src/syscall/fadvise64.rs:55` (warn): warn!("POSIX_FADV_NOREUSE is ignored");
 - `kernel/core/src/syscall/memfd_create.rs:42` (warn): warn!("`MFD_HUGETLB` not supported");
+- `kernel/core/src/syscall/personality.rs:16` (warn): warn!("`personality(ADDR_NO_RANDOMIZE)` is accepted, but still does not disable ASLR");
 - `kernel/core/src/syscall/rt_sigtimedwait.rs:110` (comment): If the signal is ignored and not blocked, it will be dropped and
 - `kernel/core/src/syscall/rt_sigtimedwait.rs:121` (comment): If the signal is ignored and not blocked, the signal will be directly dropped.
 - `kernel/core/src/syscall/sendmmsg.rs:28` (warn): warn!("sendmmsg flags {:?} are not supported", flags);
@@ -118,9 +131,9 @@ Verify with `python3 test/qualification/inventory/inventory.py check`.
 
 - gvisor: 832 blocked cases (788 without a recorded reason)
 - kselftest: 91 blocked cases (91 without a recorded reason)
-- ltp: 939 blocked cases (939 without a recorded reason)
+- ltp: 1061 blocked cases (1058 without a recorded reason)
 - pjdfstest: 10 blocked cases (8 without a recorded reason)
-- xfstests: 136 blocked cases (134 without a recorded reason)
+- xfstests: 136 blocked cases (133 without a recorded reason)
 
 ## `__asterinas__` branches
 
