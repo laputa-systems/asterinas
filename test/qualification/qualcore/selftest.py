@@ -660,16 +660,35 @@ def selftest_main() -> int:
         RoleResult("comparator", "pass"),
         RoleResult("validator", "pass"),
     )
+    xpass_result = reconcile(
+        selection.case_ids,
+        [CaseOutcome(selection.case_ids[0], "XPASS", all_pass_roles)],
+    )
+    if not xpass_result.has("contradiction"):
+        checks.append("XPASS accounting accepts executed pass evidence")
+    else:
+        internal_failures.append("XPASS with executed pass evidence was contradicted")
+
     for disposition, control_name in (
         ("NOT_RUN", "accounting-not-run-all-pass"),
         ("XFAIL", "accounting-xfail-all-pass"),
-        ("XPASS", "accounting-xpass-all-pass"),
         ("SKIP_PREREQUISITE", "accounting-skip-prerequisite-all-pass"),
         ("UNSUPPORTED", "accounting-unsupported-all-pass"),
     ):
         evaluate(
             control_name,
             lambda disposition=disposition: accounting_contradiction(disposition, all_pass_roles),
+        )
+
+    for disposition, control_name in (
+        ("NOT_RUN", "accounting-not-run-candidate-pass"),
+        ("XFAIL", "accounting-xfail-candidate-pass"),
+        ("SKIP_PREREQUISITE", "accounting-skip-candidate-pass"),
+        ("UNSUPPORTED", "accounting-unsupported-candidate-pass"),
+    ):
+        evaluate(
+            control_name,
+            lambda disposition=disposition: accounting_contradiction(disposition, (RoleResult("candidate", "pass"),)),
         )
 
     supervisor = Supervisor()

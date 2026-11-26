@@ -118,12 +118,12 @@ def reconcile(selected_case_ids: Iterable[str], outcomes: Iterable[CaseOutcome])
                 diagnostics.append(Diagnostic("incomplete-accounting", f"{outcome.case_id} REFERENCE_FAILURE has no reference result"))
             elif reference.status == "pass":
                 diagnostics.append(Diagnostic("contradiction", f"{outcome.case_id} REFERENCE_FAILURE contradicts reference pass"))
-        if outcome.disposition in {"XFAIL", "XPASS", "SKIP_PREREQUISITE", "UNSUPPORTED", "NOT_RUN"}:
-            if candidate is not None and candidate.status == "pass" and comparator is not None and comparator.status == "pass":
+        if outcome.disposition in {"XFAIL", "SKIP_PREREQUISITE", "UNSUPPORTED", "NOT_RUN"}:
+            if candidate is not None and candidate.status == "pass":
                 diagnostics.append(
                     Diagnostic(
                         "contradiction",
-                        f"{outcome.case_id} {outcome.disposition} masquerades as a fully executed candidate and comparator pass",
+                        f"{outcome.case_id} {outcome.disposition} contradicts the candidate pass",
                     )
                 )
         runtime_status = RUNTIME_EVIDENCE_STATUSES.get(outcome.disposition)
