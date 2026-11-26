@@ -48,6 +48,10 @@ def _add(ingestion: Ingestion, category: str, message: str) -> None:
     ingestion.diagnostics.append(Diagnostic(category, message))
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"nonstandard JSON constant {value}")
+
+
 def _json_error_category(fragment: str, error: json.JSONDecodeError) -> str:
     opens = fragment.count("{") + fragment.count("[")
     closes = fragment.count("}") + fragment.count("]")
@@ -77,9 +81,12 @@ def ingest_result_stream(text: str, context: ResultContext) -> Ingestion:
             continue
         fragment = parts[3]
         try:
-            record = json.loads(fragment)
+            record = json.loads(fragment, parse_constant=_reject_json_constant)
         except json.JSONDecodeError as error:
             _add(ingestion, _json_error_category(fragment, error), f"line {line_number}: {error.msg}")
+            continue
+        except ValueError as error:
+            _add(ingestion, "malformed-output", f"line {line_number}: {error}")
             continue
         if not isinstance(record, dict):
             _add(ingestion, "malformed-output", f"line {line_number} payload is not an object")
