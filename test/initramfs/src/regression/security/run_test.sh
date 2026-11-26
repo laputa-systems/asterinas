@@ -24,3 +24,8 @@ set -e
 ./namespace/setns
 ./namespace/unshare
 ./namespace/unshare_privilege
+
+./seccomp/install
+./seccomp/filter
+./seccomp/trap
+./seccomp/tsync

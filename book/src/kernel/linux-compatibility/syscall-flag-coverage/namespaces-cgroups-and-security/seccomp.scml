@@ -1,0 +1,13 @@
+// Enter strict mode. Flags must be zero and the argument must be NULL.
+seccomp(op = SECCOMP_SET_MODE_STRICT, flags, args = NULL);
+
+// Install a filter. Unsupported flags are rejected with EINVAL.
+seccomp(
+    op = SECCOMP_SET_MODE_FILTER,
+    flags = SECCOMP_FILTER_FLAG_TSYNC | SECCOMP_FILTER_FLAG_LOG |
+            SECCOMP_FILTER_FLAG_SPEC_ALLOW | SECCOMP_FILTER_FLAG_TSYNC_ESRCH,
+    filter
+);
+
+// Query availability of a filter action. Flags must be zero.
+seccomp(op = SECCOMP_GET_ACTION_AVAIL, flags, action);

@@ -24,6 +24,7 @@ use crate::{
         posix_thread::ptrace::TraceeStatus,
         signal::{PauseReason, PollHandle, sig_mask::SigMask},
     },
+    security::seccomp::{SeccompState, ThreadSeccompState},
     thread::{Thread, Tid},
     time::{Timer, TimerManager, clocks::ProfClock, timer::TimerFn},
 };
@@ -41,7 +42,7 @@ mod thread_local;
 
 pub(crate) use builder::PosixThreadBuilder;
 pub(super) use exit::sigkill_other_threads;
-pub(crate) use exit::{do_exit, do_exit_group};
+pub(crate) use exit::{do_exit, do_exit_group, do_seccomp_exit_group, do_seccomp_exit_thread};
 pub(crate) use personality::Personality;
 pub use posix_thread_ext::AsPosixThread;
 pub(crate) use robust_list::RobustListHead;
@@ -97,6 +98,9 @@ pub struct PosixThread {
     /// The default timer slack value for this thread.
     default_timer_slack_ns: AtomicU64,
 
+    /// The effective per-thread syscall filtering policy.
+    seccomp: Mutex<ThreadSeccompState>,
+
     // Ptrace
     /// Status of being traced.
     tracee_status: Once<TraceeStatus>,
@@ -111,6 +115,31 @@ pub struct PosixThread {
 }
 
 impl PosixThread {
+    pub(crate) fn seccomp_snapshot(&self) -> SeccompState {
+        self.seccomp.lock().snapshot()
+    }
+
+    /// Returns the mode and filter count from the same seccomp policy.
+    pub(crate) fn seccomp_status(&self) -> (u32, usize) {
+        self.seccomp.lock().status()
+    }
+
+    pub(crate) fn set_seccomp(&self, state: SeccompState) {
+        *self.seccomp.lock() = ThreadSeccompState::new(state);
+    }
+
+    /// Inherits a thread's seccomp policy and its monotonic privilege restriction.
+    ///
+    /// The destination must be an unpublished child or a validated TSYNC
+    /// target; TSYNC callers must hold the process task-set lock to exclude
+    /// concurrent synchronization.
+    pub(crate) fn inherit_seccomp(&self, source: &Self) {
+        if source.credentials.no_new_privs() {
+            self.credentials.set_no_new_privs();
+        }
+        self.set_seccomp(source.seccomp_snapshot());
+    }
+
     pub(crate) fn process(&self) -> Arc<Process> {
         self.process.upgrade().unwrap()
     }

@@ -8,6 +8,7 @@ use super::{
     ptrace::PtraceEvent,
     robust_list::wake_robust_futex,
 };
+
 use crate::{
     context::current_userspace,
     prelude::*,
@@ -15,7 +16,11 @@ use crate::{
         TermStatus,
         exit::{drop_after, exit_process},
         pid_table,
-        signal::{constants::SIGKILL, signals::kernel::KernelSignal},
+        signal::{
+            constants::SIGKILL,
+            sig_num::SigNum,
+            signals::kernel::KernelSignal,
+        },
         task_set::TaskSet,
     },
     thread::{AsThread, Tid},
@@ -37,6 +42,39 @@ pub(crate) fn do_exit(term_status: TermStatus, ctx: &Context, user_ctx: &mut Use
 /// If the current thread is not a POSIX thread, this method will panic.
 pub(crate) fn do_exit_group(term_status: TermStatus, ctx: &Context, user_ctx: &mut UserContext) {
     exit_internal(term_status, true, ctx, user_ctx);
+}
+
+/// Terminates the process with a fatal signal using group-exit arbitration.
+///
+/// Used for fatal seccomp decisions (`SECCOMP_RET_KILL_PROCESS` and
+/// strict-mode violations, which use `SIGSYS` and `SIGKILL` respectively).
+pub(crate) fn do_seccomp_exit_group(
+    signal: SigNum,
+    ctx: &Context,
+    user_ctx: &mut UserContext,
+) {
+    do_seccomp_exit(signal, true, ctx, user_ctx);
+}
+
+/// Terminates the current thread after a fatal seccomp decision.
+///
+/// Used for `SECCOMP_RET_KILL_THREAD` and for `SECCOMP_RET_TRAP` when SIGSYS
+/// can not be delivered to the thread.
+pub(crate) fn do_seccomp_exit_thread(
+    signal: SigNum,
+    ctx: &Context,
+    user_ctx: &mut UserContext,
+) {
+    do_seccomp_exit(signal, false, ctx, user_ctx);
+}
+
+fn do_seccomp_exit(
+    signal: SigNum,
+    is_exiting_group: bool,
+    ctx: &Context,
+    user_ctx: &mut UserContext,
+) {
+    exit_internal(TermStatus::Killed(signal), is_exiting_group, ctx, user_ctx);
 }
 
 /// Exits the current POSIX thread or process.

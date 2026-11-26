@@ -15,7 +15,15 @@ pub(crate) use clock_gettime::ClockId;
 use ostd::arch::cpu::context::UserContext;
 pub(crate) use timer_create::create_timer_for_clock;
 
-use crate::{cpu::LinuxAbi, prelude::*};
+use crate::{
+    cpu::LinuxAbi,
+    prelude::*,
+    process::{
+        posix_thread,
+        signal::constants::{SIGKILL, SIGSYS},
+    },
+    security::seccomp::{SeccompData, SeccompDecision},
+};
 
 #[cfg_attr(target_arch = "x86_64", path = "arch/x86.rs")]
 #[cfg_attr(target_arch = "riscv64", path = "arch/riscv.rs")]
@@ -150,6 +158,7 @@ mod sched_setattr;
 mod sched_setparam;
 mod sched_setscheduler;
 mod sched_yield;
+mod seccomp;
 mod select;
 mod semctl;
 mod semget;
@@ -388,6 +397,16 @@ impl SyscallArgument {
     }
 }
 
+/// Checks the native ABI's fixed strict-mode syscall set.
+///
+/// Reference: <https://github.com/torvalds/linux/blob/v6.18/kernel/seccomp.c>.
+pub(crate) fn strict_seccomp_allows(number: i32) -> bool {
+    matches!(
+        number as u64,
+        arch::SYS_READ | arch::SYS_WRITE | arch::SYS_EXIT | arch::SYS_RT_SIGRETURN
+    )
+}
+
 pub(crate) fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
     #[cfg(target_arch = "x86_64")]
     let Some(syscall_number) = ctx.thread_local.orig_syscall_ret() else {
@@ -395,6 +414,44 @@ pub(crate) fn handle_syscall(ctx: &Context, user_ctx: &mut UserContext) {
     };
     #[cfg(not(target_arch = "x86_64"))]
     let syscall_number = user_ctx.syscall_num();
+
+    // Evaluate the seccomp policy before dispatch. The snapshot must not be
+    // retained across dispatch, which can block or terminate this thread.
+    let evaluation = {
+        let policy = ctx.posix_thread.seccomp_snapshot();
+        let data = SeccompData::from_context(user_ctx, syscall_number as i32);
+        let evaluation = policy.evaluate(&data);
+        evaluation.log(ctx, &data);
+        evaluation
+    };
+    match evaluation.decision() {
+        SeccompDecision::Allow => dispatch_syscall(ctx, user_ctx, syscall_number),
+        SeccompDecision::Errno(errno) => {
+            user_ctx.set_syscall_ret((-(*errno as isize)) as usize);
+        }
+        SeccompDecision::Trap(reason) => {
+            crate::security::seccomp::trap(ctx, user_ctx, syscall_number as i32, *reason);
+        }
+        SeccompDecision::Trace(_) => {
+            // The seccomp ptrace event is not implemented; without a tracer
+            // the syscall is rejected, like Linux's ENOSYS path.
+            user_ctx.set_syscall_ret((-(Errno::ENOSYS as isize)) as usize);
+        }
+        SeccompDecision::KillThread => {
+            posix_thread::do_seccomp_exit_thread(SIGSYS, ctx, user_ctx);
+        }
+        SeccompDecision::StrictViolation => {
+            // Linux kills the whole process with SIGKILL on a strict-mode
+            // violation.
+            posix_thread::do_seccomp_exit_group(SIGKILL, ctx, user_ctx);
+        }
+        SeccompDecision::KillProcess => {
+            posix_thread::do_seccomp_exit_group(SIGSYS, ctx, user_ctx);
+        }
+    }
+}
+
+fn dispatch_syscall(ctx: &Context, user_ctx: &mut UserContext, syscall_number: usize) {
     let syscall_frame = SyscallArgument::new_from_context(user_ctx, syscall_number);
     let syscall_return = arch::syscall_dispatch(
         syscall_frame.syscall_number,

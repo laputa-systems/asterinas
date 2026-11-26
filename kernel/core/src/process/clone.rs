@@ -473,6 +473,13 @@ fn clone_child_task(
         thread_builder.build()
     };
 
+    // Inherit the seccomp policy before publication, so a concurrent TSYNC
+    // cannot observe a partially initialized thread (Linux copy_seccomp()).
+    child_task
+        .as_posix_thread()
+        .unwrap()
+        .inherit_seccomp(posix_thread);
+
     process
         .tasks()
         .lock()
@@ -624,6 +631,16 @@ fn clone_child_process(
     };
 
     clone_pidfd(ctx, &child, clone_flags, clone_args.pidfd)?;
+
+    // Inherit the seccomp policy before the child can run (Linux copy_seccomp()).
+    // Credentials (including no-new-privs) are already shared via `new_from`.
+    child
+        .tasks()
+        .lock()
+        .main()
+        .as_posix_thread()
+        .unwrap()
+        .inherit_seccomp(posix_thread);
 
     if let Some(sig) = clone_args.exit_signal {
         child.set_exit_signal(sig);

@@ -240,6 +240,13 @@ impl ProcFileOps for StatusFileOps {
             u8::from(credentials.no_new_privs())
         )?;
 
+        // Use the target thread, including for reads by another process.
+        // Read mode and count together so concurrent TSYNC cannot split them.
+        // Reference: <https://github.com/torvalds/linux/blob/v6.18/fs/proc/array.c>.
+        let (seccomp_mode, filter_count) = posix_thread.seccomp_status();
+        writeln!(printer, "Seccomp:\t{}", seccomp_mode)?;
+        writeln!(printer, "Seccomp_filters:\t{}", filter_count)?;
+
         let affinity = thread.atomic_cpu_affinity().load(Ordering::Relaxed);
         let mut mask = vec![0u32; num_cpus().div_ceil(u32::BITS as usize)];
         for cpu in affinity.iter() {
