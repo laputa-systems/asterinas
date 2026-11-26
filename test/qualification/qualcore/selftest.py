@@ -27,10 +27,23 @@ from .adapter import (
 from .compare import compare_value, verify_comparison_claim
 from .errors import EvidenceError, ManifestError
 from .evidence import EvidenceBundle
+from . import lock as lock_module
 from .gtest import parse_gtest_report
-from .lock import asterinas_source_tree_hash
+from .lock import _probe_rebuild_required, asterinas_source_tree_hash
 from .manifest import Selection, load_case_index, load_case_manifest, load_profile
 from .results import ResultContext, ingest_result_stream, make_result_line
+from .runner import (
+    BackendEvidence,
+    RunFailure,
+    RunSnapshot,
+    RunState,
+    _observed_values,
+    assert_selection_snapshot,
+    evaluate_case,
+    finalize_run,
+    verify_backend_identity,
+    verify_copied_input_hashes,
+)
 from .supervisor import _EXEC_RELEASE_BYTE, _EXEC_WRAPPER, Supervisor, is_full_disk_error
 from .util import sha256_bytes
 
@@ -1075,6 +1088,32 @@ def selftest_main() -> int:
 
     evaluate("source-hash-vendored-and-cargo-sensitivity", source_hash_input_sensitivity)
 
+    def probe_cache_container_identity() -> tuple[bool, str]:
+        path = bundle.work_dir / "probe-cache-binary"
+        path.write_bytes(b"cached probe")
+        previous = {
+            "probe": {
+                "source_sha256": lock_module._sha256_file(repo / "test/qualification/probe/probe.c"),
+                "nix_sha256": lock_module._sha256_file(repo / "test/qualification/probe/default.nix"),
+                "binary_sha256": lock_module._sha256_file(path),
+            },
+            "asterinas_build": {
+                "flake_lock_sha256": lock_module._sha256_file(repo / "flake.lock"),
+                "nixpkgs_sha256": lock_module._sha256_file(repo / "distro/nixpkgs.nix"),
+                "rust_toolchain_sha256": lock_module._sha256_file(repo / "rust-toolchain.toml"),
+            },
+            "dev_container": {"digest": "old-container"},
+        }
+        with mock.patch.object(lock_module, "read_json_file", return_value=previous):
+            stale = _probe_rebuild_required(repo, path, "new-container")
+        matching = copy.deepcopy(previous)
+        matching["dev_container"]["digest"] = "new-container"
+        with mock.patch.object(lock_module, "read_json_file", return_value=matching):
+            fresh = _probe_rebuild_required(repo, path, "new-container")
+        return stale and not fresh, f"stale container rebuild={stale} matching container rebuild={fresh}"
+
+    evaluate("probe-cache-container-identity", probe_cache_container_identity)
+
     valid_log = bundle.work_dir / "blklog-valid.log"
     _blklog_fixture(valid_log, [(0, 1, 0), (8, 1, LOG_FLUSH_FLAG)])
     valid_failures = validate_blklogwrites(valid_log)
@@ -1102,6 +1141,213 @@ def selftest_main() -> int:
     evaluate("blklog-impossible-size", blklog_control("impossible-size", [(0, 1 << 62, 0)]))
     evaluate("blklog-unsupported-flags", blklog_control("unsupported-flags", [(0, 1, 1 << 20)]))
     evaluate("blklog-no-data-writes", blklog_control("no-data-writes", [(0, 0, LOG_FLUSH_FLAG)]))
+
+    def copied_input_control(name: str, original: bytes, replacement: bytes) -> tuple[bool, str]:
+        path = bundle.work_dir / f"copy-{name}"
+        path.write_bytes(original)
+        expected = {name: sha256_bytes(original)}
+        path.write_bytes(replacement)
+        failures = verify_copied_input_hashes({name: path}, expected)
+        return bool(failures) and "hash drift" in failures[0], "; ".join(failures) or "substituted bytes were accepted"
+
+    for control_name in ("asterinas-kernel", "probe", "initramfs.cpio", "inputs.lock.json"):
+        evaluate(
+            f"snapshot-changed-{control_name}",
+            lambda control_name=control_name: copied_input_control(control_name, b"verified bytes", b"substituted bytes"),
+        )
+
+    matching = bundle.work_dir / "copy-matching"
+    matching.write_bytes(b"verified bytes")
+    if not verify_copied_input_hashes({"probe": matching}, {"probe": sha256_bytes(b"verified bytes")}):
+        checks.append("copied input identity matches the verified snapshot")
+    else:
+        internal_failures.append("matching copied input was rejected")
+
+    def dummy_snapshot(**overrides) -> RunSnapshot:
+        values = {
+            "policy_hash": "0" * 64,
+            "qemu_path": Path(sys.executable),
+            "qemu_resolved_path": Path(sys.executable),
+            "qemu_version": "control-version",
+            "qemu_sha256": sha256_bytes(b"verified backend"),
+            "manifest_hash": selection.manifest_hash,
+            "payload_hash": selection.payload_hash,
+            "case_ids": tuple(selection.case_ids),
+            "expected_hashes": {},
+        }
+        values.update(overrides)
+        return RunSnapshot(**values)
+
+    def selection_drift_control(field: str, value) -> tuple[bool, str]:
+        try:
+            assert_selection_snapshot(selection, dummy_snapshot(**{field: value}))
+        except RunFailure as error:
+            return True, str(error)
+        return False, f"selection {field} drift was accepted"
+
+    evaluate("snapshot-changed-selection-manifest", lambda: selection_drift_control("manifest_hash", "0" * 64))
+    evaluate("snapshot-changed-selection-payload", lambda: selection_drift_control("payload_hash", "0" * 64))
+    evaluate("snapshot-changed-selection-cases", lambda: selection_drift_control("case_ids", ("core.unknown",)))
+
+    backend_path = bundle.work_dir / "backend-binary"
+    backend_path.write_bytes(b"verified backend")
+    backend_failures = verify_backend_identity(backend_path, sha256_bytes(b"other backend"), None)
+    evaluate(
+        "snapshot-changed-backend",
+        lambda: (bool(backend_failures) and "hash drift" in backend_failures[0], "; ".join(backend_failures) or "backend substitution was accepted"),
+    )
+
+    evidence_case = selection.cases[0]
+    valid_observed = _observed_values(
+        ingest_result_stream(_stream(run_id, nonce, valid_records), _context(selection, run_id, nonce)),
+        evidence_case.case_id,
+    )
+
+    def backend_fixture(**overrides) -> BackendEvidence:
+        values = {
+            "label": "control",
+            "stream_run_id": "control-run",
+            "nonce": "control-nonce",
+            "execution_outcome": "exit",
+            "exit_code": 0,
+            "teardown_state": "verified-empty",
+            "duration_seconds": 0.1,
+            "ingestion_diagnostics": (),
+            "observed": {evidence_case.case_id: valid_observed},
+            "final_status": "pass",
+            "stream_text": "",
+            "console_text": "",
+            "storage_diagnostics": (),
+        }
+        values.update(overrides)
+        return BackendEvidence(**values)
+
+    reference_fixture = backend_fixture()
+
+    def evidence_precedence(name: str, overrides: dict, expected: str) -> tuple[bool, str]:
+        outcome = evaluate_case(evidence_case, reference_fixture, backend_fixture(**overrides))
+        preserved = "runtime observation before evidence escalation" in outcome.reason
+        ok = outcome.disposition == expected and (not preserved or expected == "HARNESS_ERROR")
+        return ok, f"disposition={outcome.disposition} reason={outcome.reason[:140]}"
+
+    corrupt_log = ("blklogwrites log ended after 0 of 1 entries",)
+    evaluate(
+        "evidence-panic-plus-corrupt-block-log",
+        lambda: evidence_precedence(
+            "panic-corrupt-log",
+            {"execution_outcome": "panic", "exit_code": None, "storage_diagnostics": corrupt_log},
+            "HARNESS_ERROR",
+        ),
+    )
+    evaluate(
+        "evidence-timeout-plus-corrupt-block-log",
+        lambda: evidence_precedence(
+            "timeout-corrupt-log",
+            {"execution_outcome": "timeout", "exit_code": None, "storage_diagnostics": corrupt_log},
+            "HARNESS_ERROR",
+        ),
+    )
+    evaluate(
+        "evidence-failure-plus-failed-capture",
+        lambda: evidence_precedence(
+            "failure-failed-capture",
+            {"exit_code": 1, "ingestion_diagnostics": ("missing-artifact: dedicated serial log",)},
+            "HARNESS_ERROR",
+        ),
+    )
+    evaluate(
+        "evidence-failure-plus-incomplete-teardown",
+        lambda: evidence_precedence(
+            "failure-incomplete-teardown",
+            {"exit_code": 1, "teardown_state": "failed"},
+            "HARNESS_ERROR",
+        ),
+    )
+    evaluate(
+        "evidence-valid-panic-remains-panic",
+        lambda: evidence_precedence("valid-panic", {"execution_outcome": "panic", "exit_code": None}, "PANIC"),
+    )
+    passing_outcome = evaluate_case(evidence_case, reference_fixture, backend_fixture())
+    if passing_outcome.disposition == "PASS":
+        checks.append("valid evidence with a passing candidate remains PASS")
+    else:
+        internal_failures.append(f"valid passing pair rejected: {passing_outcome.disposition}")
+
+    multi_selection = load_profile(
+        "pilot-ext2",
+        repo / "test" / "qualification" / "profiles",
+        load_case_index(sorted((repo / "test" / "qualification" / "contracts").glob("*/*.json"))),
+    )
+
+    def finalization_control(name, message, completed: int, publication_failure: bool = False):
+        def function() -> tuple[bool, str]:
+            state = RunState()
+            state.selection = multi_selection
+            state.bundle = EvidenceBundle.create(qualification_root)
+            state.run_errors = [message]
+            for case_id in multi_selection.case_ids[:completed]:
+                state.outcomes[case_id] = CaseOutcome(
+                    case_id,
+                    "PASS",
+                    (
+                        RoleResult("candidate", "pass"),
+                        RoleResult("reference", "pass"),
+                        RoleResult("comparator", "pass"),
+                        RoleResult("validator", "pass"),
+                    ),
+                )
+            try:
+                if publication_failure:
+                    with mock.patch.object(state.bundle, "publish_report", side_effect=RuntimeError(message)) as publish:
+                        returncode = finalize_run(state, multi_selection.profile_name, "asterinas")
+                    report = publish.call_args.args[0]
+                    report_exists = True
+                else:
+                    returncode = finalize_run(state, multi_selection.profile_name, "asterinas")
+                    report_path = state.bundle.root / "report.json"
+                    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+                    report_exists = report_path.exists()
+                outcomes = report.get("outcomes", {})
+                total = sum(report.get("dispositions", {}).values())
+                partition_ok = (
+                    len(outcomes) == len(multi_selection.case_ids)
+                    and total == len(multi_selection.case_ids)
+                    and sum(1 for item in outcomes.values() if item["disposition"] == "PASS") == completed
+                    and sum(1 for item in outcomes.values() if item["disposition"] == "NOT_RUN") == len(multi_selection.case_ids) - completed
+                )
+                errors_distinct = report.get("run_errors") == [message] and report.get("dispositions", {}).get("HARNESS_ERROR", 0) == 0
+                cleanup_ok = not (state.bundle.root / "work").exists()
+                artifact_ok = (state.bundle.root / "artifacts" / "harness-error.txt").is_file()
+                publication_ok = True
+                if publication_failure:
+                    publication_ok = bool(report.get("outcomes")) and bool(report.get("run_errors"))
+                detected = (
+                    returncode == 1 and report_exists and partition_ok and errors_distinct
+                    and cleanup_ok and artifact_ok and publication_ok
+                )
+                detail = (
+                    f"rc={returncode} published={report_exists} partition={partition_ok} distinct={errors_distinct} "
+                    f"cleanup={cleanup_ok} artifact={artifact_ok} publication={publication_ok}"
+                )
+                return detected, detail
+            finally:
+                shutil.rmtree(state.bundle.root, ignore_errors=True)
+
+        return function
+
+    evaluate("finalization-failure-before-boot", finalization_control("before-boot", "injected failure before boot", 0))
+    evaluate(
+        "finalization-failure-between-paired-executions",
+        finalization_control("between-paired", "injected failure between paired executions", 1),
+    )
+    evaluate(
+        "finalization-failure-during-capture",
+        finalization_control("during-capture", "injected failure during artifact capture", 1),
+    )
+    evaluate(
+        "finalization-failure-during-publication",
+        finalization_control("during-publication", "injected publication failure", 1, publication_failure=True),
+    )
 
     bundle.register_artifact("stdout.log", b"lc02 selftest\n")
 
