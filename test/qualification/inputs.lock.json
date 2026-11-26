@@ -17,12 +17,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "c7b21824677b3cae08449cccd406135266d8da14213542236f04f3b4821ad9dd",
+    "kernel_sha256": "b46bbdf302b20aaf141a37538eb62f27ff9ac417ffddbf57d6e0b30a7012f080",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "9b6fefc138e0a1b257e23e749205984fca2c29db8a639f1569c559f714b18104"
+    "source_tree_sha256": "a135498d816d72d4b31b5dfc73d6df2a648c128d9f818d61917d6be2e68a498c"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -32,19 +32,19 @@
     "files": {
       "test/qualification/qualcore/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "test/qualification/qualcore/accounting.py": "9bbbcc5be3ab44407ff35927ca1467f4b2de9132cb6e3bded5ce081e0a1778b8",
-      "test/qualification/qualcore/adapter.py": "9cb84cc92e743a2f6e64c0a252db8dbd7052f9a319ab7655fb7f90d5fed3cc2b",
+      "test/qualification/qualcore/adapter.py": "8b12cf3e7662c4ed42eff25a792ea0a553abe9ffd9e7520d46d43402a81260da",
       "test/qualification/qualcore/compare.py": "792202f518c03349ea975cc59851b0aeb36d9efdc4196ca7308325d2de999a10",
       "test/qualification/qualcore/errors.py": "9fb4c7c408a263abf815ac5032ce5923e473e23c7874231fb355001cf7f7d6e4",
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "2f94f09e5d497a386ac9655a367bdd7673264ce8cf2cb92dde37189211ea7ca9",
+      "test/qualification/qualcore/lock.py": "30982026b3b22847c7b67c3071310d247a7bd542988fc1dfab05a7b2ee4a72b6",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
-      "test/qualification/qualcore/qemu.py": "024b98fabc41a74e153f72a6049b8c7c3f43cca1187377b0b6a2f866120926ce",
+      "test/qualification/qualcore/qemu.py": "f589a6a53f70ba89e3153e890302e643ca048f5d2cca9f3a0d6269b37f6b0317",
       "test/qualification/qualcore/results.py": "09d0eed452b7a47d16f8f598b366d10383c423ec7a9b59f0b34d4cc0a68b5b1a",
-      "test/qualification/qualcore/runner.py": "a8b60e6b4eafd211c8a82952740ffa532800eeac925c87d4997c3ff4463accb1",
-      "test/qualification/qualcore/selftest.py": "0705e06e06de7fec73e8547fb5712a9e4c283aa5582b7a848b78abc3799a8a5f",
+      "test/qualification/qualcore/runner.py": "2057799ae0d64b75d45206a79574fadb3b553b16961d87232b15428833a04784",
+      "test/qualification/qualcore/selftest.py": "a62d46671cfb0daa5b3da06c17d5cbcdeea15b6021483cf87e0d0eb879f28bb6",
       "test/qualification/qualcore/supervisor.py": "067c3d694359385ef35b79c60f57b2b7d9bbaf3b22080db6f9023182d582e0d5",
       "test/qualification/qualcore/util.py": "3698485c7a3a80f40c39024aefafe6c0bb46e708c4834180c8a163a5a847dd04",
       "test/qualification/run.py": "a964c34866c9353c279c1b05e8ccd2ece45f6fe2ff262c9cab4eb3f6edb32677"
@@ -65,15 +65,15 @@
   "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "af5076c850ca82cd27701d38828dd5081dac8e22c286f9084231c33c5f239972",
+    "binary_sha256": "8801bc3193f4a68778e62894f432d01abff1e70ee5d996b54effa8e4969b7017",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "0baef6f227b4b3e53e18f0f061eb15288af994569b4b64d1cccbb048b5a18ed5",
+    "initramfs_sha256": "4e3ed3cfa59d3da3228aa1df7940639bc9ca6fc3f01519ec4282e617bfdf568d",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "eb82a9099f3f8699c1a778f7daaad70fe82b20327a9bcc7d639cf7db1c1b7b28"
+    "source_sha256": "c2f07b6051db1706c90e0d94a853d40ac8893efdef3b1f798edafc732f49ac49"
   },
   "python": {
     "minimum_version": "3.11"
@@ -86,7 +86,8 @@
   },
   "repository": {
     "binding": "run-effective-lock",
-    "delta_semantics": "content digest of the working-tree delta against HEAD, excluding inputs.lock.json and target outputs"
+    "delta_semantics": "content digest of the working-tree delta against HEAD, excluding inputs.lock.json and target outputs",
+    "source_tree_semantics": "content digest over every repository file except generated output directories ['.git', '.work', 'target'] and self-referential files ['qemu-serial.log', 'qemu.log', 'test/qualification/inputs.lock.json']; includes vendored dependencies and nested Cargo configuration"
   },
   "schema": 1,
   "selections": {
@@ -143,7 +144,7 @@
       "cases": [
         {
           "artifacts": [],
-          "contract_revision": "lc07-ext2-pilot-r1",
+          "contract_revision": "lc07-ext2-pilot-r2",
           "deadline_seconds": 60.0,
           "id": "ext2.create-read-write",
           "validators": [
@@ -153,7 +154,7 @@
         },
         {
           "artifacts": [],
-          "contract_revision": "lc07-ext2-pilot-r1",
+          "contract_revision": "lc07-ext2-pilot-r2",
           "deadline_seconds": 60.0,
           "id": "ext2.sparse-truncate",
           "validators": [
@@ -163,7 +164,7 @@
         },
         {
           "artifacts": [],
-          "contract_revision": "lc07-ext2-pilot-r1",
+          "contract_revision": "lc07-ext2-pilot-r2",
           "deadline_seconds": 60.0,
           "id": "ext2.links-rename",
           "validators": [
@@ -173,7 +174,7 @@
         },
         {
           "artifacts": [],
-          "contract_revision": "lc07-ext2-pilot-r1",
+          "contract_revision": "lc07-ext2-pilot-r2",
           "deadline_seconds": 60.0,
           "id": "ext2.permissions",
           "validators": [
@@ -183,7 +184,7 @@
         },
         {
           "artifacts": [],
-          "contract_revision": "lc07-ext2-pilot-r1",
+          "contract_revision": "lc07-ext2-pilot-r2",
           "deadline_seconds": 60.0,
           "id": "ext2.sync-remount",
           "validators": [
@@ -193,7 +194,7 @@
         },
         {
           "artifacts": [],
-          "contract_revision": "lc07-ext2-pilot-r1",
+          "contract_revision": "lc07-ext2-pilot-r2",
           "deadline_seconds": 60.0,
           "id": "ext2.enospc-fill",
           "validators": [
@@ -203,7 +204,7 @@
         }
       ],
       "excluded": [],
-      "manifest_hash": "602b5921b61764fba8f76a7ffae6df54333532233d43b5f7d20318f986cd037c",
+      "manifest_hash": "c57c7c0326375402810695c7584c21b4a33c2e378b11f2328c41bfc7fa95a7b9",
       "normalization_rules": [],
       "payload_hash": "6010c9eae35ea6bc15836af6445f5c148059bf6fb017c128d70423d8521e86ce"
     },

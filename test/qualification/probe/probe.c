@@ -40,6 +40,9 @@
 #define ADAPTER_ROUNDTRIP_PATH "/mnt/qualification/probe-roundtrip.bin"
 #define ADAPTER_ROUNDTRIP_TEXT "qc06-write\n"
 #define ADAPTER_NETWORK_INTERFACE "eth0"
+#define ADAPTER_WRITE_CACHE "write back"
+#define SETUP_SUBTESTS 5
+#define SETUP_ASSERTIONS 5
 
 static int serial_fd = -1;
 static unsigned long sequence = 0;
@@ -466,56 +469,123 @@ static void drop_sys_admin_capability(void) {
 
 
 
-static bool find_single_block_disk_without_serial(char *device_name, size_t device_name_size) {
-    DIR *directory = opendir(block_sysfs_root());
-    if (directory == NULL) {
+struct storage_setup {
+    char device_name[64];
+    char serial[128];
+    char write_cache[128];
+    char filesystem[64];
+    char device_path[128];
+    int mount_errno;
+    int uid;
+    bool disk_found;
+    bool cache_ok;
+    bool privilege_ok;
+    bool mounted;
+};
+
+static bool have_sys_admin(void) {
+    struct __user_cap_header_struct header;
+    struct __user_cap_data_struct data[2];
+    memset(&header, 0, sizeof(header));
+    memset(data, 0, sizeof(data));
+    header.version = _LINUX_CAPABILITY_VERSION_3;
+    if (syscall(SYS_capget, &header, data) != 0) {
+        diagnostic("capget failed: %s", strerror(errno));
         return false;
     }
-    bool found = false;
-    bool multiple = false;
-    bool serial_seen = false;
-    struct dirent *entry;
-    while ((entry = readdir(directory)) != NULL) {
-        if (entry->d_name[0] == '.') {
-            continue;
-        }
-        char path[256];
-        char value[128];
-        snprintf(path, sizeof(path), "%s/%s/serial", block_sysfs_root(), entry->d_name);
-        serial_seen = serial_seen || read_first_line(path, value, sizeof(value));
-        snprintf(path, sizeof(path), "%s/%s/device/serial", block_sysfs_root(), entry->d_name);
-        serial_seen = serial_seen || read_first_line(path, value, sizeof(value));
-        if (found) {
-            multiple = true;
-            break;
-        }
-        copy_value(entry->d_name, strlen(entry->d_name), device_name, device_name_size);
-        found = true;
-    }
-    closedir(directory);
-    return found && !multiple && !serial_seen;
+    unsigned int index = CAP_SYS_ADMIN / 32;
+    unsigned int mask = 1U << (CAP_SYS_ADMIN % 32);
+    return (data[index].effective & mask) != 0;
 }
 
-static bool mount_adapter_volume(char *device_path, size_t device_path_size) {
-    char device_name[64] = "";
-    char serial[128] = "";
-    if (!find_adapter_disk(device_name, sizeof(device_name), serial, sizeof(serial))) {
-        if (!find_single_block_disk_without_serial(device_name, sizeof(device_name))) {
-            diagnostic("adapter disk not found");
-            return false;
-        }
-        diagnostic("using sole block disk without serial identity");
+static void read_mount_filesystem(char *output, size_t output_size) {
+    output[0] = '\0';
+    int fd = open("/proc/mounts", O_RDONLY);
+    if (fd < 0) {
+        diagnostic("open /proc/mounts failed: %s", strerror(errno));
+        return;
     }
-    if (!ensure_device_node(device_name, device_path, device_path_size)) {
-        return false;
+    char buffer[8192];
+    ssize_t amount = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    if (amount < 0) {
+        return;
+    }
+    buffer[amount] = '\0';
+    for (char *line = strtok(buffer, "\n"); line != NULL; line = strtok(NULL, "\n")) {
+        char source[256];
+        char mount_point[256];
+        char filesystem[64];
+        if (sscanf(line, "%255s %255s %63s", source, mount_point, filesystem) == 3 &&
+            strcmp(mount_point, ADAPTER_MOUNT_POINT) == 0) {
+            copy_value(filesystem, strlen(filesystem), output, output_size);
+            return;
+        }
+    }
+}
+
+static void setup_storage_volume(struct storage_setup *setup) {
+    memset(setup, 0, sizeof(*setup));
+    setup->mount_errno = ENODEV;
+    setup->uid = (int)getuid();
+    mount_sysfs();
+    setup->disk_found = find_adapter_disk(setup->device_name, sizeof(setup->device_name),
+                                          setup->serial, sizeof(setup->serial));
+    if (!setup->disk_found) {
+        diagnostic("scratch disk with the manifest serial was not found");
+        return;
+    }
+    char cache_path[256];
+    snprintf(cache_path, sizeof(cache_path), "%s/%s/queue/write_cache", block_sysfs_root(), setup->device_name);
+    read_first_line(cache_path, setup->write_cache, sizeof(setup->write_cache));
+    setup->cache_ok = strcmp(setup->write_cache, ADAPTER_WRITE_CACHE) == 0;
+    if (!setup->cache_ok) {
+        diagnostic("scratch disk write cache is %s, expected %s", setup->write_cache, ADAPTER_WRITE_CACHE);
+    }
+    setup->privilege_ok = setup->uid == 0 && have_sys_admin();
+    if (!setup->privilege_ok) {
+        diagnostic("required guest privilege is unavailable: uid=%d", setup->uid);
+    }
+    if (!ensure_device_node(setup->device_name, setup->device_path, sizeof(setup->device_path))) {
+        return;
     }
     mkdir("/mnt", 0555);
     mkdir(ADAPTER_MOUNT_POINT, 0555);
-    if (mount(device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) != 0) {
+    if (mount(setup->device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) != 0) {
+        setup->mount_errno = errno;
         diagnostic("ext2 mount failed: %s", strerror(errno));
-        return false;
+        return;
     }
-    return true;
+    setup->mounted = true;
+    read_mount_filesystem(setup->filesystem, sizeof(setup->filesystem));
+}
+
+static bool storage_setup_ok(const struct storage_setup *setup) {
+    return setup->disk_found && strcmp(setup->serial, ADAPTER_SERIAL) == 0 && setup->cache_ok &&
+           setup->privilege_ok && setup->mounted && strcmp(setup->filesystem, "ext2") == 0;
+}
+
+static void emit_setup_observations(const char *run_id, const char *nonce, const char *manifest_hash,
+                                    const char *payload_hash, const struct storage_setup *setup) {
+    bool serial_ok = strcmp(setup->serial, ADAPTER_SERIAL) == 0;
+    bool cache_ok = strcmp(setup->write_cache, ADAPTER_WRITE_CACHE) == 0;
+    bool filesystem_ok = strcmp(setup->filesystem, "ext2") == 0;
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "setup-disk-identity", "serial", setup->serial, serial_ok);
+    emit_text_named(run_id, nonce, manifest_hash, payload_hash, "setup-write-cache", "mode", setup->write_cache, cache_ok);
+    emit_text_named(run_id, nonce, manifest_hash, payload_hash, "setup-filesystem", "filesystem", setup->filesystem, filesystem_ok);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "setup-mount", "result", setup->mounted ? 0 : -1, setup->mounted);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "setup-privilege", "uid", setup->uid, setup->privilege_ok);
+}
+
+static bool begin_storage_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                               const char *payload_hash, struct storage_setup *setup) {
+    setup_storage_volume(setup);
+    emit_setup_observations(run_id, nonce, manifest_hash, payload_hash, setup);
+    bool ok = storage_setup_ok(setup);
+    if (!ok) {
+        diagnostic("storage setup failed; operation assertions are not exercised");
+    }
+    return ok;
 }
 
 static void unmount_adapter_volume(void) {
@@ -575,12 +645,12 @@ static void run_ext2_create_case(const char *run_id, const char *nonce, const ch
     const char *path = ADAPTER_MOUNT_POINT "/create-read-write/data.bin";
     const char *expected_text = "ext2-create-write\n";
     const size_t expected_length = strlen(expected_text);
-    char device_path[128] = "";
+    struct storage_setup setup;
     char roundtrip[256] = "";
     long written = -1;
     long fsync_result = -1;
     long size = -1;
-    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         make_case_directory(directory_path);
         int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
         if (fd >= 0) {
@@ -596,6 +666,9 @@ static void run_ext2_create_case(const char *run_id, const char *nonce, const ch
             size = (long)status.st_size;
         }
         unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
     }
     bool write_passed = written == (long)expected_length;
     bool fsync_passed = fsync_result == 0;
@@ -605,13 +678,14 @@ static void run_ext2_create_case(const char *run_id, const char *nonce, const ch
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-fsync", "result", fsync_result, fsync_passed);
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "reopen-read", "bytes", roundtrip, bytes_passed);
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-size", "bytes", size, size_passed);
-    emit_final(run_id, nonce, manifest_hash, payload_hash, write_passed && fsync_passed && bytes_passed && size_passed, 4, 4);
+    emit_final(run_id, nonce, manifest_hash, payload_hash, write_passed && fsync_passed && bytes_passed && size_passed,
+               SETUP_SUBTESTS + 4, SETUP_ASSERTIONS + 4);
 }
 
 static void run_ext2_sparse_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
     const char *directory_path = ADAPTER_MOUNT_POINT "/sparse-truncate";
     const char *path = ADAPTER_MOUNT_POINT "/sparse-truncate/sparse.bin";
-    char device_path[128] = "";
+    struct storage_setup setup;
     char hole[64] = "";
     char extended[64] = "";
     long write_result = -1;
@@ -619,7 +693,7 @@ static void run_ext2_sparse_case(const char *run_id, const char *nonce, const ch
     long shrink_result = -1;
     long extend_result = -1;
     long final_size = -1;
-    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         make_case_directory(directory_path);
         int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0644);
         if (fd >= 0) {
@@ -640,6 +714,9 @@ static void run_ext2_sparse_case(const char *run_id, const char *nonce, const ch
             diagnostic("sparse open failed: %s", strerror(errno));
         }
         unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
     }
     bool write_passed = write_result == 4;
     bool initial_size_passed = initial_size == 8196;
@@ -657,7 +734,7 @@ static void run_ext2_sparse_case(const char *run_id, const char *nonce, const ch
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-size", "bytes", final_size, final_size_passed);
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                write_passed && initial_size_passed && hole_passed && shrink_passed && extend_passed && extended_passed && final_size_passed,
-               7, 7);
+               SETUP_SUBTESTS + 7, SETUP_ASSERTIONS + 7);
 }
 
 static void run_ext2_links_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -667,7 +744,7 @@ static void run_ext2_links_case(const char *run_id, const char *nonce, const cha
     const char *symlink_path = ADAPTER_MOUNT_POINT "/links-rename/alias";
     const char *renamed = ADAPTER_MOUNT_POINT "/links-rename/renamed";
     const char *content = "link-target\n";
-    char device_path[128] = "";
+    struct storage_setup setup;
     char hardlink_bytes[256] = "";
     char symlink_bytes[256] = "";
     char symlink_target[128] = "";
@@ -675,7 +752,7 @@ static void run_ext2_links_case(const char *run_id, const char *nonce, const cha
     long link_count = -1;
     long symlink_result = -1;
     long rename_result = -1;
-    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         make_case_directory(directory_path);
         write_file_bytes(original, content, strlen(content));
         hardlink_result = link(original, hardlink);
@@ -692,6 +769,9 @@ static void run_ext2_links_case(const char *run_id, const char *nonce, const cha
         read_file_base64(hardlink, hardlink_bytes, sizeof(hardlink_bytes));
         read_file_base64(symlink_path, symlink_bytes, sizeof(symlink_bytes));
         unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
     }
     bool hardlink_create_passed = hardlink_result == 0;
     bool count_passed = link_count == 2;
@@ -710,7 +790,7 @@ static void run_ext2_links_case(const char *run_id, const char *nonce, const cha
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                hardlink_create_passed && count_passed && symlink_create_passed && target_passed && rename_passed &&
                    hardlink_read_passed && symlink_read_passed,
-               7, 7);
+               SETUP_SUBTESTS + 7, SETUP_ASSERTIONS + 7);
 }
 
 struct permission_observation {
@@ -779,7 +859,7 @@ static void run_ext2_permissions_case(const char *run_id, const char *nonce, con
     const char *private_path = ADAPTER_MOUNT_POINT "/permissions/private.txt";
     const char *readonly_path = ADAPTER_MOUNT_POINT "/permissions/readonly.txt";
     const char *public_path = ADAPTER_MOUNT_POINT "/permissions/public.txt";
-    char device_path[128] = "";
+    struct storage_setup setup;
     struct permission_observation observation = {
         .setup_failed = 1,
         .private_allowed = 1,
@@ -789,7 +869,7 @@ static void run_ext2_permissions_case(const char *run_id, const char *nonce, con
         .public_allowed = 0,
     };
     bool child_ok = false;
-    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         make_case_directory(directory_path);
         write_file_bytes(private_path, "private\n", 8);
         chmod(private_path, 0600);
@@ -798,6 +878,9 @@ static void run_ext2_permissions_case(const char *run_id, const char *nonce, con
         write_file_bytes(public_path, "public\n", 7);
         child_ok = collect_permission_observation(&observation);
         unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
     }
     bool usable = child_ok && observation.setup_failed == 0;
     const char *private_decision = observation.private_allowed ? "allow" : "deny";
@@ -815,14 +898,14 @@ static void run_ext2_permissions_case(const char *run_id, const char *nonce, con
     emit_permission_named(run_id, nonce, manifest_hash, payload_hash, "public-read-decision", "decision", public_decision, public_decision_passed);
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                private_decision_passed && private_errno_passed && readonly_decision_passed && readonly_errno_passed && public_decision_passed,
-               5, 5);
+               SETUP_SUBTESTS + 5, SETUP_ASSERTIONS + 5);
 }
 
 static void run_ext2_remount_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
     const char *directory_path = ADAPTER_MOUNT_POINT "/sync-remount";
     const char *path = ADAPTER_MOUNT_POINT "/sync-remount/durable.txt";
     const char *content = "durability\n";
-    char device_path[128] = "";
+    struct storage_setup setup;
     char roundtrip[256] = "";
     long file_fsync = -1;
     long directory_fsync = -1;
@@ -830,7 +913,7 @@ static void run_ext2_remount_case(const char *run_id, const char *nonce, const c
     long remount_result = -1;
     long final_umount = -1;
     long size = -1;
-    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         make_case_directory(directory_path);
         int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd >= 0) {
@@ -846,7 +929,7 @@ static void run_ext2_remount_case(const char *run_id, const char *nonce, const c
         sync();
         first_umount = umount(ADAPTER_MOUNT_POINT);
         if (first_umount == 0) {
-            if (mount(device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) == 0) {
+            if (mount(setup.device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) == 0) {
                 remount_result = 0;
                 read_file_base64(path, roundtrip, sizeof(roundtrip));
                 struct stat status;
@@ -862,6 +945,9 @@ static void run_ext2_remount_case(const char *run_id, const char *nonce, const c
             diagnostic("ext2 first umount failed: %s", strerror(errno));
             unmount_adapter_volume();
         }
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
     }
     bool file_fsync_passed = file_fsync == 0;
     bool directory_fsync_passed = directory_fsync == 0;
@@ -880,7 +966,7 @@ static void run_ext2_remount_case(const char *run_id, const char *nonce, const c
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                file_fsync_passed && directory_fsync_passed && first_umount_passed && remount_passed && bytes_passed &&
                    size_passed && final_umount_passed,
-               7, 7);
+               SETUP_SUBTESTS + 7, SETUP_ASSERTIONS + 7);
 }
 
 static void run_ext2_enospc_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -888,13 +974,13 @@ static void run_ext2_enospc_case(const char *run_id, const char *nonce, const ch
     const char *path = ADAPTER_MOUNT_POINT "/enospc-fill/fill.bin";
     const char *full_directory = ADAPTER_MOUNT_POINT "/enospc-fill/full-directory";
     static unsigned char chunk[16384];
-    char device_path[128] = "";
+    struct storage_setup setup;
     long data_write_result = 0;
     long data_write_errno = 0;
     long metadata_create_result = 0;
     long metadata_create_errno = 0;
     long fsync_result = -1;
-    if (mount_adapter_volume(device_path, sizeof(device_path))) {
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         make_case_directory(directory_path);
         int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd >= 0) {
@@ -918,6 +1004,9 @@ static void run_ext2_enospc_case(const char *run_id, const char *nonce, const ch
         metadata_create_result = mkdir(full_directory, 0755);
         metadata_create_errno = metadata_create_result < 0 ? errno : 0;
         unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
     }
     bool data_result_passed = data_write_result == -1;
     bool data_errno_passed = data_write_errno == ENOSPC;
@@ -931,39 +1020,18 @@ static void run_ext2_enospc_case(const char *run_id, const char *nonce, const ch
     emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "metadata-create-errno", "errno", metadata_create_errno, metadata_errno_passed);
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                data_result_passed && data_errno_passed && fsync_passed && metadata_result_passed && metadata_errno_passed,
-               5, 5);
+               SETUP_SUBTESTS + 5, SETUP_ASSERTIONS + 5);
 }
 
 static void run_adapter_probe(const char *run_id, const char *nonce, const char *manifest_hash,
                               const char *payload_hash) {
-    char device_name[64] = "";
-    char serial[128] = "";
-    char write_cache[128] = "";
-    char device_path[128] = "";
+    struct storage_setup setup;
     char marker_b64[256] = "";
     char roundtrip_b64[256] = "";
     const char *network_state = "missing";
-    bool found = find_adapter_disk(device_name, sizeof(device_name), serial, sizeof(serial));
-    if (found) {
-        char cache_path[256];
-        snprintf(cache_path, sizeof(cache_path), "%s/%s/queue/write_cache", block_sysfs_root(), device_name);
-        read_first_line(cache_path, write_cache, sizeof(write_cache));
-    }
+    setup_storage_volume(&setup);
 
-    bool mounted = false;
-    int mount_error = 0;
-    if (found && ensure_device_node(device_name, device_path, sizeof(device_path))) {
-        mkdir("/mnt", 0555);
-        mkdir(ADAPTER_MOUNT_POINT, 0555);
-        if (mount(device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) == 0) {
-            mounted = true;
-        } else {
-            mount_error = errno;
-            diagnostic("mount %s failed: %s", device_path, strerror(errno));
-        }
-    }
-
-    if (mounted) {
+    if (setup.mounted) {
         unsigned char marker[128];
         size_t marker_length = read_file_bytes(ADAPTER_MARKER_PATH, marker, sizeof(marker));
         base64_encode(marker, marker_length, marker_b64, sizeof(marker_b64));
@@ -976,25 +1044,25 @@ static void run_adapter_probe(const char *run_id, const char *nonce, const char 
         if (umount(ADAPTER_MOUNT_POINT) != 0) {
             diagnostic("umount failed: %s", strerror(errno));
         }
-    } else if (mount_error != 0) {
-        diagnostic("adapter mount errno=%d", mount_error);
+    } else if (setup.mount_errno != 0) {
+        diagnostic("adapter mount errno=%d", setup.mount_errno);
     }
 
     struct stat network_status;
     if (stat("/sys/class/net/" ADAPTER_NETWORK_INTERFACE, &network_status) == 0) {
         network_state = "present";
     }
-    long uid_value = (long)getuid();
+    long uid_value = (long)setup.uid;
 
-    bool serial_passed = strcmp(serial, ADAPTER_SERIAL) == 0;
-    bool cache_passed = strcmp(write_cache, "write back") == 0;
+    bool serial_passed = strcmp(setup.serial, ADAPTER_SERIAL) == 0;
+    bool cache_passed = strcmp(setup.write_cache, ADAPTER_WRITE_CACHE) == 0;
     bool marker_passed = strcmp(marker_b64, "bGMwNi1hZGFwdGVyCg==") == 0;
     bool roundtrip_passed = strcmp(roundtrip_b64, "cWMwNi13cml0ZQo=") == 0;
     bool network_passed = strcmp(network_state, "present") == 0;
     bool uid_passed = uid_value == 0;
 
-    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "serial-identity", "serial", serial, serial_passed);
-    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "write-cache", "mode", write_cache, cache_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "serial-identity", "serial", setup.serial, serial_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "write-cache", "mode", setup.write_cache, cache_passed);
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "mount-identity", "marker", marker_b64, marker_passed);
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "mount-writeback", "roundtrip", roundtrip_b64, roundtrip_passed);
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "network-interface", "interface", network_state, network_passed);

@@ -371,7 +371,14 @@ def execute_backend(
         silence_timeout=silence_timeout,
         case_id=case.case_id,
         adapter_image=adapter_image,
-        adapter_serial="qual-lc06-wrong" if control == "wrong-disk" else str(case.payload.get("disk_serial", "qual-lc06-adapter")),
+        adapter_serial=(
+            ""
+            if control == "missing-identity"
+            else "qual-lc06-wrong"
+            if control == "wrong-disk"
+            else str(case.payload.get("disk_serial", "qual-lc06-adapter"))
+        ),
+        adapter_write_through=control == "wrong-cache",
         isolated_network=adapter_enabled,
         inject_read_errors=control == "failed-mount",
         kernel_kind=backend,
@@ -443,9 +450,26 @@ def _backend_role(evidence: BackendEvidence) -> tuple[str, str, str | None]:
     return "fail", f"final status {evidence.final_status!r}", None
 
 
+REQUIRED_EVIDENCE_CATEGORIES = (
+    "missing-artifact",
+    "checksum-mismatch",
+    "wrong-run-id",
+    "wrong-nonce",
+    "wrong-manifest-hash",
+    "wrong-payload-hash",
+    "stale-log",
+    "malformed-output",
+    "truncated-output",
+)
+
+
 def evidence_compromise(evidence: BackendEvidence) -> list[str]:
     issues = [f"required storage evidence: {item}" for item in evidence.storage_diagnostics]
-    issues.extend(f"required result evidence: {item}" for item in evidence.ingestion_diagnostics)
+    issues.extend(
+        f"required result evidence: {item}"
+        for item in evidence.ingestion_diagnostics
+        if item.startswith(REQUIRED_EVIDENCE_CATEGORIES)
+    )
     if evidence.teardown_state != "verified-empty":
         issues.append(f"incomplete teardown: {evidence.teardown_state}")
     return issues
@@ -945,6 +969,17 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
                     "missing-device",
                     lambda evidence: _adapter_value(evidence, "serial-identity", "serial") == ""
                     and _adapter_value(evidence, "mount-identity", "marker") == "",
+                ),
+                (
+                    "live-device:missing-identity",
+                    "missing-identity",
+                    lambda evidence: _adapter_value(evidence, "serial-identity", "serial") == ""
+                    and _adapter_value(evidence, "mount-identity", "marker") == "",
+                ),
+                (
+                    "live-device:wrong-cache",
+                    "wrong-cache",
+                    lambda evidence: _adapter_value(evidence, "write-cache", "mode") not in {"", "write back"},
                 ),
                 (
                     "live-device:missing-privileges",

@@ -25,6 +25,7 @@ class AdapterDisk:
     write_log: Path
     blkdebug_config: Path
     serial: str
+    write_cache: bool = True
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,8 @@ def qemu_command(
         network_args = ("-nic", "none")
     disk_args: tuple[str, ...] = ()
     if adapter_disk is not None:
+        serial_argument = f",serial={adapter_disk.serial}" if adapter_disk.serial else ""
+        write_cache_argument = "on" if adapter_disk.write_cache else "off"
         image = adapter_disk.image.resolve()
         write_log = adapter_disk.write_log.resolve()
         config = adapter_disk.blkdebug_config.resolve()
@@ -104,7 +107,7 @@ def qemu_command(
             "-blockdev",
             f"node-name=adapter-disk,driver=blkdebug,image=adapter-logged,config={config}",
             "-device",
-            f"virtio-blk-pci,drive=adapter-disk,serial={adapter_disk.serial},write-cache=on,disable-legacy=on,disable-modern=off,queue-size=64,num-queues=1,request-merging=off,backend_defaults=off,discard=off,write-zeroes=off,event_idx=off,indirect_desc=off,queue_reset=off",
+            f"virtio-blk-pci,drive=adapter-disk{serial_argument},write-cache={write_cache_argument},disable-legacy=on,disable-modern=off,queue-size=64,num-queues=1,request-merging=off,backend_defaults=off,discard=off,write-zeroes=off,event_idx=off,indirect_desc=off,queue_reset=off",
         )
     return tuple(
         str(item)
@@ -179,6 +182,7 @@ def run_qemu(
     case_id: str = "core.selfcheck",
     adapter_image: Path | None = None,
     adapter_serial: str = "qual-lc06-adapter",
+    adapter_write_through: bool = False,
     isolated_network: bool = False,
     inject_read_errors: bool = False,
     kernel_kind: str = "linux",
@@ -198,7 +202,7 @@ def run_qemu(
             blkdebug_config.write_text('[inject-error]\nevent = "none"\niotype = "read"\nerrno = "5"\n', encoding="utf-8")
         else:
             blkdebug_config.write_text("", encoding="utf-8")
-        adapter_disk = AdapterDisk(disk_image, write_log, blkdebug_config, adapter_serial)
+        adapter_disk = AdapterDisk(disk_image, write_log, blkdebug_config, adapter_serial, not adapter_write_through)
     command = qemu_command(
         qemu_path,
         kernel,
