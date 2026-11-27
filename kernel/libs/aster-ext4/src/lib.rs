@@ -14,6 +14,7 @@ use core::fmt;
 pub mod jbd2;
 pub mod reader;
 pub mod recovery;
+pub mod transaction;
 
 use reader::{BlockReader, SliceReader};
 
