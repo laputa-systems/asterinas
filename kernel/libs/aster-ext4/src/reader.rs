@@ -2,8 +2,10 @@
 
 //! Bounded read-only inode and extent-tree access for clean ext4 images.
 //!
-//! The reader walks the extent tree, materializes holes as zeros and treats
-//! unwritten extents as zeros, then truncates to the inode's logical size.
+//! All reads go through the [`BlockReader`] trait so the same logic serves a
+//! whole-image byte slice in host tests and an on-demand block device in the
+//! kernel. The reader walks the extent tree, materializes holes as zeros and
+//! treats unwritten extents as zeros, then truncates to the inode's size.
 
 extern crate alloc;
 
@@ -18,15 +20,38 @@ pub const INODE_BLOCK_PTRS_OFFSET: usize = 0x28;
 pub const INODE_BLOCK_PTRS_LEN: usize = 60;
 pub const UNWRITTEN_EXTENT: u16 = 0x8000;
 pub const ROOT_INO: u32 = 2;
-const MAX_EXTENT_DEPTH: usize = 4;
 const MAX_EXTENT_ENTRIES: usize = 256;
+
+/// A bounded source of ext4 metadata and data bytes.
+///
+/// The kernel implements this over its block device; host tests use
+/// [`SliceReader`]. A failed read is reported as `None` so no caller can
+/// observe bytes outside the requested range.
+pub trait BlockReader {
+    fn read_at(&self, offset: u64, len: usize) -> Option<Vec<u8>>;
+}
+
+pub struct SliceReader<'a>(&'a [u8]);
+
+impl<'a> SliceReader<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self(data)
+    }
+}
+
+impl BlockReader for SliceReader<'_> {
+    fn read_at(&self, offset: u64, len: usize) -> Option<Vec<u8>> {
+        let start = usize::try_from(offset).ok()?;
+        let end = start.checked_add(len)?;
+        Some(self.0.get(start..end)?.to_vec())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReaderError {
     Truncated,
     BadExtentMagic,
     ExtentLimitExceeded,
-    DepthLimitExceeded,
     InodeOutOfRange,
     BadBlockSize,
 }
@@ -41,18 +66,30 @@ pub struct Geometry {
     pub group_desc_table: usize,
 }
 
-pub fn geometry(image: &[u8]) -> Result<Geometry, ReaderError> {
-    let sb = image
-        .get(SUPER_BLOCK_OFFSET..SUPER_BLOCK_OFFSET + 1024)
+fn le_u16(buf: &[u8], offset: usize) -> Option<u16> {
+    buf.get(offset..offset + 2)
+        .and_then(|slice| <[u8; 2]>::try_from(slice).ok())
+        .map(u16::from_le_bytes)
+}
+
+fn le_u32(buf: &[u8], offset: usize) -> Option<u32> {
+    buf.get(offset..offset + 4)
+        .and_then(|slice| <[u8; 4]>::try_from(slice).ok())
+        .map(u32::from_le_bytes)
+}
+
+pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> {
+    let sb = reader
+        .read_at(SUPER_BLOCK_OFFSET as u64, 1024)
         .ok_or(ReaderError::Truncated)?;
-    let log_block_size = le_u32(sb, 0x18).ok_or(ReaderError::Truncated)?;
+    let log_block_size = le_u32(&sb, 0x18).ok_or(ReaderError::Truncated)?;
     if log_block_size > 6 {
         return Err(ReaderError::BadBlockSize);
     }
     let block_size = 1024usize << log_block_size;
-    let inodes_per_group = le_u32(sb, 0x28).ok_or(ReaderError::Truncated)? as usize;
-    let inode_size = le_u16(sb, 0x58).ok_or(ReaderError::Truncated)? as usize;
-    let blocks_per_group = le_u32(sb, 0x20).ok_or(ReaderError::Truncated)? as usize;
+    let inodes_per_group = le_u32(&sb, 0x28).ok_or(ReaderError::Truncated)? as usize;
+    let inode_size = le_u16(&sb, 0x58).ok_or(ReaderError::Truncated)? as usize;
+    let blocks_per_group = le_u32(&sb, 0x20).ok_or(ReaderError::Truncated)? as usize;
     if block_size == 0 || inodes_per_group == 0 || inode_size < 128 || blocks_per_group == 0 {
         return Err(ReaderError::BadBlockSize);
     }
@@ -65,18 +102,6 @@ pub fn geometry(image: &[u8]) -> Result<Geometry, ReaderError> {
         group_desc_size: 64,
         group_desc_table,
     })
-}
-
-fn le_u16(buf: &[u8], offset: usize) -> Option<u16> {
-    buf.get(offset..offset + 2)
-        .and_then(|slice| <[u8; 2]>::try_from(slice).ok())
-        .map(u16::from_le_bytes)
-}
-
-fn le_u32(buf: &[u8], offset: usize) -> Option<u32> {
-    buf.get(offset..offset + 4)
-        .and_then(|slice| <[u8; 4]>::try_from(slice).ok())
-        .map(u32::from_le_bytes)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,7 +119,11 @@ pub fn inode_number_to_group(geom: &Geometry, ino: u32) -> (usize, usize) {
     (zero_based / geom.inodes_per_group, zero_based % geom.inodes_per_group)
 }
 
-pub fn read_inode(image: &[u8], geom: &Geometry, ino: u32) -> Result<Inode, ReaderError> {
+pub fn read_inode_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    ino: u32,
+) -> Result<Inode, ReaderError> {
     if ino == 0 {
         return Err(ReaderError::InodeOutOfRange);
     }
@@ -106,27 +135,29 @@ pub fn read_inode(image: &[u8], geom: &Geometry, ino: u32) -> Result<Inode, Read
         .group_desc_table
         .checked_add(desc_offset)
         .ok_or(ReaderError::Truncated)?;
-    let desc = image
-        .get(desc_start..desc_start + geom.group_desc_size)
+    let desc = reader
+        .read_at(desc_start as u64, geom.group_desc_size)
         .ok_or(ReaderError::Truncated)?;
-    let inode_table = le_u32(desc, 0x08).ok_or(ReaderError::Truncated)? as usize;
+    let inode_table = le_u32(&desc, 0x08).ok_or(ReaderError::Truncated)? as usize;
     let offset = inode_table
         .checked_mul(geom.block_size)
         .and_then(|base| base.checked_add(index.checked_mul(geom.inode_size)?))
         .ok_or(ReaderError::Truncated)?;
-    let raw = image
-        .get(offset..offset + geom.inode_size)
+    let raw = reader
+        .read_at(offset as u64, geom.inode_size)
         .ok_or(ReaderError::Truncated)?;
     let mut block_ptrs = [0u8; INODE_BLOCK_PTRS_LEN];
-    block_ptrs.copy_from_slice(&raw[INODE_BLOCK_PTRS_OFFSET..INODE_BLOCK_PTRS_OFFSET + INODE_BLOCK_PTRS_LEN]);
-    let size_lo = le_u32(raw, 0x04).ok_or(ReaderError::Truncated)? as u64;
-    let size_hi = le_u32(raw, 0x6C).ok_or(ReaderError::Truncated)? as u64;
+    block_ptrs.copy_from_slice(
+        &raw[INODE_BLOCK_PTRS_OFFSET..INODE_BLOCK_PTRS_OFFSET + INODE_BLOCK_PTRS_LEN],
+    );
+    let size_lo = le_u32(&raw, 0x04).ok_or(ReaderError::Truncated)? as u64;
+    let size_hi = le_u32(&raw, 0x6C).ok_or(ReaderError::Truncated)? as u64;
     Ok(Inode {
         number: ino,
-        mode: le_u16(raw, 0x00).ok_or(ReaderError::Truncated)?,
+        mode: le_u16(&raw, 0x00).ok_or(ReaderError::Truncated)?,
         size: size_lo | (size_hi << 32),
-        links: le_u16(raw, 0x1A).ok_or(ReaderError::Truncated)?,
-        flags: le_u32(raw, 0x20).ok_or(ReaderError::Truncated)?,
+        links: le_u16(&raw, 0x1A).ok_or(ReaderError::Truncated)?,
+        flags: le_u32(&raw, 0x20).ok_or(ReaderError::Truncated)?,
         block_ptrs,
     })
 }
@@ -179,7 +210,11 @@ fn parse_extent_body(body: &[u8], depth: u16) -> Result<(Vec<Extent>, Vec<(u64, 
     Ok((extents, indices))
 }
 
-pub fn extent_tree(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<Extent>, ReaderError> {
+pub fn extent_tree_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    inode: &Inode,
+) -> Result<Vec<Extent>, ReaderError> {
     let mut extents = Vec::new();
     let mut queue = Vec::new();
     let (root_extents, root_indices) = parse_extent_body(&inode.block_ptrs, 0)?;
@@ -192,12 +227,11 @@ pub fn extent_tree(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<E
         }
         let start = block
             .checked_mul(geom.block_size as u64)
-            .and_then(|value| usize::try_from(value).ok())
             .ok_or(ReaderError::Truncated)?;
-        let node = image
-            .get(start..start + geom.block_size)
+        let node = reader
+            .read_at(start, geom.block_size)
             .ok_or(ReaderError::Truncated)?;
-        let (found, deeper) = parse_extent_body(node, 0)?;
+        let (found, deeper) = parse_extent_body(&node, 0)?;
         extents.extend(found);
         queue.extend(deeper);
         if queue.len() > MAX_EXTENT_ENTRIES {
@@ -209,14 +243,18 @@ pub fn extent_tree(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<E
 }
 
 /// Reads file data, materializing holes and unwritten extents as zeros.
-pub fn read_file(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<u8>, ReaderError> {
+pub fn read_file_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    inode: &Inode,
+) -> Result<Vec<u8>, ReaderError> {
     if inode.flags & 0x1000_0000 != 0 {
         return Err(ReaderError::BadBlockSize);
     }
     let size = usize::try_from(inode.size).map_err(|_| ReaderError::Truncated)?;
     let mut data = vec![0u8; size];
     let block_size = geom.block_size;
-    for extent in extent_tree(image, geom, inode)? {
+    for extent in extent_tree_from(reader, geom, inode)? {
         if extent.unwritten {
             continue;
         }
@@ -224,9 +262,9 @@ pub fn read_file(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<u8>
             .map_err(|_| ReaderError::Truncated)?
             .checked_mul(block_size)
             .ok_or(ReaderError::Truncated)?;
-        let physical = usize::try_from(extent.physical_block)
-            .map_err(|_| ReaderError::Truncated)?
-            .checked_mul(block_size)
+        let physical = extent
+            .physical_block
+            .checked_mul(block_size as u64)
             .ok_or(ReaderError::Truncated)?;
         let len = extent.len as usize;
         for block in 0..len {
@@ -239,8 +277,12 @@ pub fn read_file(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<u8>
             if dst >= size {
                 break;
             }
-            let src = physical.checked_add(block_offset).ok_or(ReaderError::Truncated)?;
-            let chunk = image.get(src..src + block_size).ok_or(ReaderError::Truncated)?;
+            let src = physical
+                .checked_add(block_offset as u64)
+                .ok_or(ReaderError::Truncated)?;
+            let chunk = reader
+                .read_at(src, block_size)
+                .ok_or(ReaderError::Truncated)?;
             let out = &mut data[dst..size.min(dst + block_size)];
             out.copy_from_slice(&chunk[..out.len()]);
         }
@@ -256,8 +298,12 @@ pub struct DirEntry {
 }
 
 /// Parses linear directory entries from a directory's data blocks.
-pub fn read_dir(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<DirEntry>, ReaderError> {
-    let data = read_file(image, geom, inode)?;
+pub fn read_dir_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    inode: &Inode,
+) -> Result<Vec<DirEntry>, ReaderError> {
+    let data = read_file_from(reader, geom, inode)?;
     let mut entries = Vec::new();
     let mut cursor = 0usize;
     while cursor + 8 <= data.len() {
@@ -283,8 +329,13 @@ pub fn read_dir(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<DirE
     Ok(entries)
 }
 
-pub fn lookup(image: &[u8], geom: &Geometry, dir: &Inode, name: &[u8]) -> Option<u32> {
-    read_dir(image, geom, dir)
+pub fn lookup_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    dir: &Inode,
+    name: &[u8],
+) -> Option<u32> {
+    read_dir_from(reader, geom, dir)
         .ok()?
         .into_iter()
         .find(|entry| entry.name == name)
@@ -314,7 +365,7 @@ pub fn xattr_entries(block: &[u8]) -> Result<Vec<XattrEntry>, ReaderError> {
         return Err(ReaderError::Truncated);
     }
     let magic = le_u32(block, 0x00).ok_or(ReaderError::Truncated)?;
-    if magic != 0xEA020000 {
+    if magic != 0xEA02_0000 {
         return Err(ReaderError::BadExtentMagic);
     }
     let mut cursor = 32usize;
@@ -337,6 +388,31 @@ pub fn xattr_entries(block: &[u8]) -> Result<Vec<XattrEntry>, ReaderError> {
     Ok(entries)
 }
 
+// Slice convenience wrappers retained for host tests and simple callers.
+pub fn geometry(image: &[u8]) -> Result<Geometry, ReaderError> {
+    geometry_from(&SliceReader::new(image))
+}
+
+pub fn read_inode(image: &[u8], geom: &Geometry, ino: u32) -> Result<Inode, ReaderError> {
+    read_inode_from(&SliceReader::new(image), geom, ino)
+}
+
+pub fn extent_tree(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<Extent>, ReaderError> {
+    extent_tree_from(&SliceReader::new(image), geom, inode)
+}
+
+pub fn read_file(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<u8>, ReaderError> {
+    read_file_from(&SliceReader::new(image), geom, inode)
+}
+
+pub fn read_dir(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<DirEntry>, ReaderError> {
+    read_dir_from(&SliceReader::new(image), geom, inode)
+}
+
+pub fn lookup(image: &[u8], geom: &Geometry, dir: &Inode, name: &[u8]) -> Option<u32> {
+    lookup_from(&SliceReader::new(image), geom, dir, name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +426,24 @@ mod tests {
         path.push("target/qualification/inputs/ext4");
         path.push(format!("{name}.ext4"));
         fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn device_reader_matches_slice_reader() {
+        let image = fixture("basic");
+        let slice_geom = geometry(&image).unwrap();
+        let device_geom = geometry_from(&SliceReader::new(&image)).unwrap();
+        assert_eq!(slice_geom, device_geom);
+
+        let root = read_inode_from(&SliceReader::new(&image), &device_geom, ROOT_INO).unwrap();
+        let expected = read_inode(&image, &slice_geom, ROOT_INO).unwrap();
+        assert_eq!(root, expected);
+
+        let tree = extent_tree_from(&SliceReader::new(&image), &device_geom, &root).unwrap();
+        assert_eq!(tree, extent_tree(&image, &slice_geom, &root).unwrap());
+
+        let data = read_file_from(&SliceReader::new(&image), &device_geom, &root).unwrap();
+        assert_eq!(data, read_file(&image, &slice_geom, &root).unwrap());
     }
 
     #[test]
