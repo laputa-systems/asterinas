@@ -1,0 +1,164 @@
+{
+  "schema": 1,
+  "revision": "lc14-ext4-ordered-v1",
+  "block_size": 4096,
+  "fixtures": [
+    {
+      "name": "basic",
+      "size_bytes": 16777216,
+      "sha256": "1cc5809877832f4646b56fd35029a63e028bf7ab2c62749bd4f93ec208921bbc",
+      "block_size": 4096,
+      "features": [
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "single-group baseline with a bounded ext4 feature mask"
+    },
+    {
+      "name": "multi-group",
+      "size_bytes": 134217728,
+      "sha256": "a0906e32f68e8c7688549b2f1d6c2124abbf2ffcc879f5813734aa7a95452dcb",
+      "block_size": 1024,
+      "features": [
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "many block groups with 1 KiB blocks"
+    },
+    {
+      "name": "nearly-full",
+      "size_bytes": 16777216,
+      "sha256": "ef3d2b052523741542cef7eaa00f0969c49bcb7554fe76a1e719caf3932d4680",
+      "block_size": 4096,
+      "features": [
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "small free-block count for allocation edge cases"
+    },
+    {
+      "name": "fragmented",
+      "size_bytes": 16777216,
+      "sha256": "bd8fef8692547660ce2a164aadf4c7517971f1974a1f512b3502ef982657bf2b",
+      "block_size": 4096,
+      "features": [
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "many small files producing non-contiguous extents"
+    },
+    {
+      "name": "sparse",
+      "size_bytes": 16777216,
+      "sha256": "2e4ab15689e5569ec9eb89c2fc8b36a83de49d05062e04e0b10118e46bc40f4e",
+      "block_size": 4096,
+      "features": [
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "large sparse file with holes"
+    },
+    {
+      "name": "large-address",
+      "size_bytes": 16777216,
+      "sha256": "3bd69030e1bea973de89f63dc98f2283b0ab0049191ddf018f15f3070e02a699",
+      "block_size": 4096,
+      "features": [
+        "64bit",
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "metadata_csum",
+        "metadata_csum_seed",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "64bit feature enabled with a fixed high hash seed"
+    },
+    {
+      "name": "malformed",
+      "size_bytes": 16777216,
+      "sha256": "b27a3d2c3a6784617a3ce88ace4d82ebd3bf0aefc347cc6762e56c09a1c0410e",
+      "block_size": 4096,
+      "features": [
+        "dir_index",
+        "dir_nlink",
+        "ext_attr",
+        "extent",
+        "extra_isize",
+        "filetype",
+        "flex_bg",
+        "has_journal",
+        "huge_file",
+        "large_file",
+        "orphan_file",
+        "resize_inode",
+        "sparse_super"
+      ],
+      "description": "one corrupted backup superblock for bounded-read tests"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -88,6 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     lock_group.add_argument("--verify", action="store_true", help="verify all locked inputs")
     lock_group.add_argument("--update", action="store_true", help="rebuild artifacts and regenerate the input lock")
 
+    fixtures = subparsers.add_parser("fixtures", help="build and verify qualification fixtures")
+    fixtures.add_argument("--build", choices=["ext4"], help="build fixtures for the given filesystem")
+    fixtures.add_argument("--check", action="store_true", help="rebuild and verify fixture hashes and feature masks")
+
     run = subparsers.add_parser("run", help="run a qualification profile")
     run.add_argument("--profile", required=True, help="profile name")
     run.add_argument("--candidate", default=None, help="candidate backend")
@@ -111,6 +116,24 @@ def main(argv: list[str]) -> int:
         parser.error("inventory requires --check")
     if arguments.command == "lock":
         return run_with_interrupt_policy(lambda: run_lock(arguments, repo))
+    if arguments.command == "fixtures":
+        from fixtures import ext4 as ext4_fixtures
+        from fixtures.ext4 import build, check
+
+        if arguments.check:
+            ok, failures = check(repo)
+            for failure in failures:
+                print(f"check failed: {failure}")
+            print("fixture check passed" if ok else "fixture check failed")
+            return 0 if ok else 1
+        if arguments.build == "ext4":
+            manifest = build(repo)
+            path = repo / ext4_fixtures.MANIFEST_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            print(f"fixture manifest written: {path}")
+            return 0
+        parser.error("fixtures requires --build ext4 or --check")
     if arguments.command == "run":
         if arguments.controls:
             return run_with_interrupt_policy(lambda: run_controls(repo, arguments.profile))
