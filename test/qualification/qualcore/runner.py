@@ -386,6 +386,8 @@ def execute_backend(
         inject_writeback_eio=bool(case.payload.get("inject_writeback_eio")),
         kernel_kind=backend,
     )
+    if execution.adapter_disk is not None:
+        bundle.register_file(f"{label}/adapter-disk.img", execution.adapter_disk.image)
     bundle.register_file(f"{label}/console.log", execution.console_log)
     qual_exists = execution.qual_log.is_file()
     if qual_exists:

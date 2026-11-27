@@ -17,12 +17,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "50185906c99c0a00ae469af0b65fd455207729ccffbceb1bd173cfede86d4e17",
+    "kernel_sha256": "6429d07b5448a3d85c950cf4b54e39210ae5c0d39c474e984972c441946ab72c",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "40d399ee97b9321515b396a753de89e06b59799699afd183c2460e932956bce0"
+    "source_tree_sha256": "8264578f748bbe4ea8b57952a82ba1c1e4e1dfed0cb2742cf77a87bca8d50fab"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -44,7 +44,7 @@
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
       "test/qualification/qualcore/qemu.py": "f93742ae85eaafaabab5d1ea549e783270513d0f848083257e3e0133d9256755",
       "test/qualification/qualcore/results.py": "09d0eed452b7a47d16f8f598b366d10383c423ec7a9b59f0b34d4cc0a68b5b1a",
-      "test/qualification/qualcore/runner.py": "b5c0d927bc16f2b2c9fb9c07d56248c4cd5bf4be84028b0c9240e0fa9f7ab685",
+      "test/qualification/qualcore/runner.py": "bd8ada97a44070f3a1a0fa82f31728a1b5cd5ebae531edcd7d0be480c5965c8e",
       "test/qualification/qualcore/selftest.py": "0105b98abf9eaa54519544d815a9104e623b1a863ec48114f25999801af3bde7",
       "test/qualification/qualcore/supervisor.py": "067c3d694359385ef35b79c60f57b2b7d9bbaf3b22080db6f9023182d582e0d5",
       "test/qualification/qualcore/util.py": "3698485c7a3a80f40c39024aefafe6c0bb46e708c4834180c8a163a5a847dd04",
