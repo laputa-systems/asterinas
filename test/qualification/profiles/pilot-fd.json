@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "pilot-fd",
+  "inherits": [],
+  "cases": [
+    "fd.eventfd",
+    "fd.epoll",
+    "fd.pipe",
+    "fd.lifetime"
+  ],
+  "excludes": []
+}

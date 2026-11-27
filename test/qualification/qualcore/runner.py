@@ -765,6 +765,21 @@ def _first_subtest_record(parsed: list[tuple[list[str], dict[str, Any]]], subtes
     return None
 
 
+def _first_assertion_record(parsed: list[tuple[list[str], dict[str, Any]]], subtest: str) -> dict[str, Any] | None:
+    """Returns the named subtest when present, otherwise the first subtest with an assertion.
+
+    Selfcheck profiles carry the canonical selfcheck subtests; other profiles have
+    their own subtests. Controls that corrupt an assertion must work on either.
+    """
+    preferred = _first_subtest_record(parsed, subtest)
+    if preferred is not None and preferred.get("assertions"):
+        return preferred
+    for _, record in parsed:
+        if record.get("kind") == "subtest" and record.get("assertions"):
+            return record
+    return None
+
+
 def real_stream_controls(base: BackendEvidence, selection: Selection) -> dict[str, dict[str, Any]]:
     controls: dict[str, dict[str, Any]] = {}
 
@@ -785,7 +800,7 @@ def real_stream_controls(base: BackendEvidence, selection: Selection) -> dict[st
     )
 
     def remove_assertion(parsed):
-        record = _first_subtest_record(parsed, "errno-on-failure")
+        record = _first_assertion_record(parsed, "errno-on-failure")
         if record is not None:
             record["assertions"] = []
 
@@ -806,15 +821,19 @@ def real_stream_controls(base: BackendEvidence, selection: Selection) -> dict[st
     ingestion_control("real-stale-log", "stale-log", stale_final)
 
     case = selection.cases[0]
-    for name, subtest, assertion_id, wrong in (
-        ("real-wrong-errno", "errno-on-failure", "errno", 0),
-        ("real-wrong-bytes", "read-fixed-input", "bytes", "Z29vZGJ5ZQo="),
-        ("real-wrong-permission", "dev-null-write", "permission", "deny"),
+    for name, subtest in (
+        ("real-wrong-errno", "errno-on-failure"),
+        ("real-wrong-bytes", "read-fixed-input"),
+        ("real-wrong-permission", "dev-null-write"),
     ):
-        def wrong_value(parsed, subtest=subtest, wrong=wrong):
-            record = _first_subtest_record(parsed, subtest)
+        def wrong_value(parsed, subtest=subtest):
+            record = _first_assertion_record(parsed, subtest)
             if record is not None:
-                record["assertions"][0]["value"] = wrong
+                current = record["assertions"][0]["value"]
+                if isinstance(current, bool) or isinstance(current, int):
+                    record["assertions"][0]["value"] = -999999 if current != -999999 else 999999
+                else:
+                    record["assertions"][0]["value"] = "__CONTROL_WRONG__"
 
         mutated = mutate_stream(base.stream_text, wrong_value)
         context = ResultContext(
@@ -822,7 +841,7 @@ def real_stream_controls(base: BackendEvidence, selection: Selection) -> dict[st
             nonce=base.nonce,
             manifest_hash=selection.manifest_hash,
             payload_hash=selection.payload_hash,
-            cases=selection.case_map,
+            cases={case.case_id: case},
             max_age_seconds=300,
             now=time.time(),
         )
@@ -837,7 +856,7 @@ def real_stream_controls(base: BackendEvidence, selection: Selection) -> dict[st
         failures = contract_failures + pair_failures
         controls[name] = {
             "detected": bool(contract_failures) and bool(pair_failures) and not ingestion.diagnostics,
-            "detail": "; ".join(failures) if failures else "mutation was not rejected",
+            "detail": "; ".join([*failures, *[f"diagnostic: {item}" for item in ingestion.diagnostics]]) if failures or ingestion.diagnostics else "mutation was not rejected",
         }
 
     recomputation_detected = not verify_comparison_claim("errno", "ENOENT", 0, claimed_match=True)
@@ -1222,7 +1241,7 @@ def run_controls(repo: Path, profile_name: str) -> int:
             ):
                 outcome = evaluate_case(case, base, evidence)
                 comparator = next(result for result in outcome.results if result.role == "comparator")
-                accounting = reconcile(selection.case_ids, [outcome])
+                accounting = reconcile([case.case_id], [outcome])
                 controls[control_name] = {
                     "detected": outcome.disposition == expected_disposition
                     and comparator.status == "not-comparable"

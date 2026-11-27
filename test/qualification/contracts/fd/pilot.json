@@ -1,0 +1,501 @@
+{
+  "cases": [
+    {
+      "id": "fd.eventfd",
+      "contract_revision": "lc08-fd-pilot-r1",
+      "area": "fd",
+      "item": "LC-08",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "fd-pilot-r1",
+        "upstream": "asterinas-qualification-fd-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "FD eventfd semaphore: empty read EAGAIN, write increments, read drains, writes coalesce.",
+      "expected_subtests": [
+        {
+          "id": "eventfd-create",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "empty-read",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "empty-read-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 11,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "semaphore-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 8,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "semaphore-read",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 8,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "semaphore-value",
+          "assertions": [
+            {
+              "id": "value",
+              "type": "integer",
+              "expected": 7,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "coalesced-read",
+          "assertions": [
+            {
+              "id": "value",
+              "type": "integer",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 60,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile pilot-fd --candidate asterinas",
+      "payload": {}
+    },
+    {
+      "id": "fd.epoll",
+      "contract_revision": "lc08-fd-pilot-r1",
+      "area": "fd",
+      "item": "LC-08",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "fd-pilot-r1",
+        "upstream": "asterinas-qualification-fd-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Register a pipe read end with epoll, verify no readiness before a write and EPOLLIN after, then no readiness after draining.",
+      "expected_subtests": [
+        {
+          "id": "pipe-create",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "epoll-create",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "ctl-add",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "wait-before",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "wait-after",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "event-mask",
+          "assertions": [
+            {
+              "id": "mask",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "wait-after-read",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 60,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile pilot-fd --candidate asterinas",
+      "payload": {}
+    },
+    {
+      "id": "fd.pipe",
+      "contract_revision": "lc08-fd-pilot-r1",
+      "area": "fd",
+      "item": "LC-08",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "fd-pilot-r1",
+        "upstream": "asterinas-qualification-fd-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Nonblocking pipe: empty read EAGAIN, write and read fixed bytes, then EOF after the writer closes.",
+      "expected_subtests": [
+        {
+          "id": "pipe-create",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "empty-read",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "empty-read-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 11,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "read",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "read-bytes",
+          "assertions": [
+            {
+              "id": "bytes",
+              "type": "bytes",
+              "expected": "cmVhZHk=",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "eof-read",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 60,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile pilot-fd --candidate asterinas",
+      "payload": {}
+    },
+    {
+      "id": "fd.lifetime",
+      "contract_revision": "lc08-fd-pilot-r1",
+      "area": "fd",
+      "item": "LC-08",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "fd-pilot-r1",
+        "upstream": "asterinas-qualification-fd-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Duplicate a descriptor, set close-on-exec, close the original and verify the duplicate still reads, then verify descriptor reuse.",
+      "expected_subtests": [
+        {
+          "id": "open",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "dup-distinct",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "cloexec-before",
+          "assertions": [
+            {
+              "id": "flag",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "cloexec-after",
+          "assertions": [
+            {
+              "id": "flag",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "dup-independent",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "reuse",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 60,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile pilot-fd --candidate asterinas",
+      "payload": {}
+    }
+  ]
+}

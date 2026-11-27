@@ -14,6 +14,8 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
@@ -31,6 +33,10 @@
 #define EXT2_PERMISSIONS_CASE_ID "ext2.permissions"
 #define EXT2_REMOUNT_CASE_ID "ext2.sync-remount"
 #define EXT2_ENOSPC_CASE_ID "ext2.enospc-fill"
+#define FD_EVENTFD_CASE_ID "fd.eventfd"
+#define FD_EPOLL_CASE_ID "fd.epoll"
+#define FD_PIPE_CASE_ID "fd.pipe"
+#define FD_LIFETIME_CASE_ID "fd.lifetime"
 #define INPUT_PATH "/qual/input.txt"
 #define MISSING_PATH "/qual/no-such-file"
 #define SERIAL_PATH "/dev/ttyS1"
@@ -1094,6 +1100,199 @@ static void run_selfcheck_probe(const char *run_id, const char *nonce, const cha
     diagnostic("probe complete status=%s", passed ? "pass" : "fail");
 }
 
+
+static void run_fd_eventfd_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                                const char *payload_hash) {
+    int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    bool create_ok = efd >= 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "eventfd-create", "ok", create_ok ? 1 : 0, create_ok);
+    if (!create_ok) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, 1, 1);
+        close(efd);
+        return;
+    }
+
+    uint64_t value = 0;
+    errno = 0;
+    long empty_read = read(efd, &value, sizeof(value));
+    long empty_errno = empty_read < 0 ? errno : 0;
+    bool empty_ok = empty_read < 0 && empty_errno == EAGAIN;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "empty-read", "result", empty_read, empty_ok);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "empty-read-errno", "errno", empty_errno, empty_errno == EAGAIN);
+
+    uint64_t seed = 7;
+    long write_result = write(efd, &seed, sizeof(seed));
+    bool write_ok = write_result == (long)sizeof(seed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "semaphore-write", "result", write_result, write_ok);
+
+    value = 0;
+    long read_result = read(efd, &value, sizeof(value));
+    bool read_ok = read_result == (long)sizeof(value) && value == seed;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "semaphore-read", "result", read_result, read_ok);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "semaphore-value", "value", (long)value, value == seed);
+
+    uint64_t first = 3, second = 2;
+    write(efd, &first, sizeof(first));
+    write(efd, &second, sizeof(second));
+    value = 0;
+    long coalesced = read(efd, &value, sizeof(value));
+    bool coalesced_ok = coalesced == (long)sizeof(value) && value == 5;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "coalesced-read", "value", (long)value, coalesced_ok);
+
+    close(efd);
+    bool passed = create_ok && empty_ok && write_ok && read_ok && coalesced_ok;
+    emit_final(run_id, nonce, manifest_hash, payload_hash, passed, 7, 7);
+}
+
+static void run_fd_epoll_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                              const char *payload_hash) {
+    int pipefd[2];
+    long pipe_result = pipe2(pipefd, O_NONBLOCK | O_CLOEXEC);
+    bool pipe_ok = pipe_result == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "pipe-create", "ok", pipe_ok ? 1 : 0, pipe_ok);
+    if (!pipe_ok) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, 1, 1);
+        return;
+    }
+
+    int epfd = epoll_create1(EPOLL_CLOEXEC);
+    bool create_ok = epfd >= 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "epoll-create", "ok", create_ok ? 1 : 0, create_ok);
+    if (!create_ok) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, 2, 2);
+        return;
+    }
+
+    struct epoll_event event = {0};
+    event.events = EPOLLIN;
+    event.data.fd = pipefd[0];
+    long ctl_result = epoll_ctl(epfd, EPOLL_CTL_ADD, pipefd[0], &event);
+    bool ctl_ok = ctl_result == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "ctl-add", "result", ctl_result, ctl_ok);
+
+    struct epoll_event ready = {0};
+    long wait_before = epoll_wait(epfd, &ready, 1, 0);
+    bool before_ok = wait_before == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "wait-before", "result", wait_before, before_ok);
+
+    long byte_written = write(pipefd[1], "x", 1);
+    long wait_after = epoll_wait(epfd, &ready, 1, 1000);
+    bool after_ok = byte_written == 1 && wait_after == 1;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "wait-after", "result", wait_after, after_ok);
+
+    long event_mask = (long)(ready.events & EPOLLIN);
+    bool mask_ok = wait_after == 1 && event_mask == EPOLLIN;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "event-mask", "mask", event_mask, mask_ok);
+
+    char byte = 0;
+    long drained = read(pipefd[0], &byte, 1);
+    long wait_after_read = epoll_wait(epfd, &ready, 1, 0);
+    bool after_read_ok = drained == 1 && wait_after_read == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "wait-after-read", "result", wait_after_read, after_read_ok);
+
+    close(epfd);
+    close(pipefd[0]);
+    close(pipefd[1]);
+    bool passed = pipe_ok && create_ok && ctl_ok && before_ok && after_ok && mask_ok && after_read_ok;
+    emit_final(run_id, nonce, manifest_hash, payload_hash, passed, 7, 7);
+}
+
+static void run_fd_pipe_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                             const char *payload_hash) {
+    int pipefd[2];
+    long pipe_result = pipe2(pipefd, O_NONBLOCK | O_CLOEXEC);
+    bool pipe_ok = pipe_result == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "pipe-create", "ok", pipe_ok ? 1 : 0, pipe_ok);
+    if (!pipe_ok) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, 1, 1);
+        return;
+    }
+
+    char buffer[16];
+    errno = 0;
+    long empty_read = read(pipefd[0], buffer, sizeof(buffer));
+    long empty_errno = empty_read < 0 ? errno : 0;
+    bool empty_ok = empty_read < 0 && empty_errno == EAGAIN;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "empty-read", "result", empty_read, empty_ok);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "empty-read-errno", "errno", empty_errno, empty_errno == EAGAIN);
+
+    const char message[] = "ready";
+    long write_result = write(pipefd[1], message, sizeof(message) - 1);
+    bool write_ok = write_result == (long)(sizeof(message) - 1);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "write", "result", write_result, write_ok);
+
+    memset(buffer, 0, sizeof(buffer));
+    long read_result = read(pipefd[0], buffer, sizeof(buffer));
+    bool read_ok = read_result == (long)(sizeof(message) - 1);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "read", "result", read_result, read_ok);
+
+    char encoded[64];
+    base64_encode((unsigned char *)buffer, read_ok ? (size_t)read_result : 0, encoded, sizeof(encoded));
+    bool bytes_ok = strcmp(encoded, "cmVhZHk=") == 0;
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "read-bytes", "bytes", encoded, bytes_ok);
+
+    close(pipefd[1]);
+    errno = 0;
+    long eof_read = read(pipefd[0], buffer, sizeof(buffer));
+    bool eof_ok = eof_read == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "eof-read", "result", eof_read, eof_ok);
+
+    close(pipefd[0]);
+    bool passed = pipe_ok && empty_ok && write_ok && read_ok && bytes_ok && eof_ok;
+    emit_final(run_id, nonce, manifest_hash, payload_hash, passed, 7, 7);
+}
+
+static void run_fd_lifetime_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                                 const char *payload_hash) {
+    int fd = open("/dev/null", O_RDONLY);
+    bool open_ok = fd >= 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "open", "ok", open_ok ? 1 : 0, open_ok);
+    if (!open_ok) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, 1, 1);
+        return;
+    }
+
+    int duplicate = dup(fd);
+    bool dup_ok = duplicate >= 0 && duplicate != fd;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "dup-distinct", "ok", dup_ok ? 1 : 0, dup_ok);
+    if (!dup_ok) {
+        close(fd);
+        if (duplicate >= 0) close(duplicate);
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, 2, 2);
+        return;
+    }
+
+    long flags_before = fcntl(duplicate, F_GETFD);
+    bool before_ok = flags_before >= 0 && (flags_before & FD_CLOEXEC) == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "cloexec-before", "flag",
+                       (flags_before & FD_CLOEXEC) != 0 ? 1 : 0, before_ok);
+
+    long set_result = fcntl(duplicate, F_SETFD, FD_CLOEXEC);
+    long flags_after = fcntl(duplicate, F_GETFD);
+    bool after_ok = set_result == 0 && flags_after >= 0 && (flags_after & FD_CLOEXEC) != 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "cloexec-after", "flag",
+                       (flags_after & FD_CLOEXEC) != 0 ? 1 : 0, after_ok);
+
+    close(fd);
+    char byte = 0;
+    errno = 0;
+    long independent_read = read(duplicate, &byte, 1);
+    bool independent_ok = independent_read == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "dup-independent", "result",
+                       independent_read, independent_ok);
+
+    close(duplicate);
+    int reused = open("/dev/null", O_RDONLY);
+    bool reuse_ok = reused >= 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "reuse", "ok", reuse_ok ? 1 : 0, reuse_ok);
+    if (reused >= 0) close(reused);
+
+    bool passed = open_ok && dup_ok && before_ok && after_ok && independent_ok && reuse_ok;
+    emit_final(run_id, nonce, manifest_hash, payload_hash, passed, 6, 6);
+}
+
 static void terminate_vm(void) {
     sync();
     if (serial_fd >= 0) {
@@ -1165,6 +1364,14 @@ int main(void) {
         run_ext2_remount_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT2_ENOSPC_CASE_ID) == 0) {
         run_ext2_enospc_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, FD_EVENTFD_CASE_ID) == 0) {
+        run_fd_eventfd_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, FD_EPOLL_CASE_ID) == 0) {
+        run_fd_epoll_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, FD_PIPE_CASE_ID) == 0) {
+        run_fd_pipe_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, FD_LIFETIME_CASE_ID) == 0) {
+        run_fd_lifetime_case(run_id, nonce, manifest_hash, payload_hash);
     } else {
         run_selfcheck_probe(run_id, nonce, manifest_hash, payload_hash);
     }
