@@ -11,7 +11,10 @@
 
 use core::fmt;
 
+pub mod jbd2;
+
 pub const SUPER_BLOCK_OFFSET: usize = 1024;
+pub const BLOCK_SIZE: usize = 4096;
 pub const MIN_BLOCK_SIZE: usize = 1024;
 pub const MAX_BLOCK_SIZE: usize = 65536;
 pub const MAGIC: u16 = 0xEF53;
