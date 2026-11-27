@@ -102,17 +102,33 @@ impl InodeBlockManager {
     }
 
     /// Allocates missing data blocks that cover the requested logical block range.
-    pub(super) fn allocate_range_blocks(&self, start_block: usize, end_block: usize) -> Result<()> {
+    ///
+    /// Returns the number of blocks covered, which may be less than requested if
+    /// the device runs out of space. Callers can turn a partial result into a
+    /// short write, matching Linux ext2 behavior.
+    pub(super) fn allocate_range_blocks(
+        &self,
+        start_block: usize,
+        end_block: usize,
+    ) -> Result<usize> {
         let fs = self.fs()?;
         let mut tree = self.block_ptr_tree.write();
         let mut current_block = start_block;
+        let mut enospc = None;
         while current_block < end_block {
             let iblock = Iblock::try_from(current_block)
                 .map_err(|_| errno!(EINVAL, "logical block number overflow"))?;
             let remaining = u32::try_from(end_block - current_block)
                 .map_err(|_| errno!(EINVAL, "block range length overflow"))?;
 
-            let block_range = tree.resolve_block_range(&fs, iblock, remaining)?;
+            let block_range = match tree.resolve_block_range(&fs, iblock, remaining) {
+                Ok(range) => range,
+                Err(error) if error.error() == Errno::ENOSPC => {
+                    enospc = Some(error);
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
             match block_range {
                 ResolvedBlockRange::Existing(range) => {
                     debug_assert!(!range.is_empty());
@@ -124,7 +140,12 @@ impl InodeBlockManager {
                 }
             }
         }
-        Ok(())
+        if current_block == start_block {
+            if let Some(error) = enospc {
+                return Err(error);
+            }
+        }
+        Ok(current_block - start_block)
     }
 
     /// Updates the cached page-cache capacity bound.

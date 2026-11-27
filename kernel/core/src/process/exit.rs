@@ -24,7 +24,11 @@ use crate::{
 ///
 /// [`do_exit`]: crate::process::posix_thread::do_exit
 /// [`do_exit_group`]: crate::process::posix_thread::do_exit_group
-pub(super) fn exit_process(current_process: &Process, uid: Uid) {
+pub(super) fn exit_process(
+    current_process: &Process,
+    uid: Uid,
+    tracer: Option<Arc<crate::thread::Thread>>,
+) {
     current_process.status().set_vfork_child(false);
 
     // Drop fields in `Process`.
@@ -44,12 +48,7 @@ pub(super) fn exit_process(current_process: &Process, uid: Uid) {
     // `find_reaper_process` for details.
     current_process.status().set_zombie();
 
-    if let Some(tracer) = current_process
-        .main_thread()
-        .as_posix_thread()
-        .unwrap()
-        .tracer()
-    {
+    if let Some(tracer) = tracer {
         tracer
             .as_posix_thread()
             .unwrap()

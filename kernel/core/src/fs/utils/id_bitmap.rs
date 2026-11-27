@@ -102,43 +102,32 @@ impl IdBitmap {
             return None;
         }
 
-        let end = self.first_available_id.checked_add(count)?;
-        if end > self.len {
+        let len = self.len as usize;
+        if count as usize > len {
             return None;
         }
 
-        // Scan the bitmap from the position `first_available_id`
-        // for the first `count` number of consecutive 0's.
-        let allocated_range = {
-            // Invariance: all bits within `curr_range` are 0's.
-            let bit_slice = self.bit_slice();
-            let mut curr_range = self.first_available_id..self.first_available_id + 1;
-            while curr_range.len() < count as usize && curr_range.end < self.len {
-                if !bit_slice[curr_range.end as usize] {
-                    curr_range.end += 1;
-                } else {
-                    curr_range = curr_range.end + 1..curr_range.end + 1;
+        let bit_slice = self.bit_slice();
+        let mut run_start = 0usize;
+        let mut found = None;
+        for id in 0..=len {
+            if id == len || bit_slice[id] {
+                if id - run_start >= count as usize {
+                    found = Some(run_start);
+                    break;
                 }
+                run_start = id + 1;
             }
+        }
+        let allocated_start = found? as u16;
+        let allocated_range = allocated_start..allocated_start + count;
 
-            if curr_range.len() < count as usize {
-                return None;
-            }
-
-            curr_range
-        };
-
-        // Set every bit to 1 within the allocated range.
         let bit_slice_mut = self.bit_slice_mut();
         for id in allocated_range.clone() {
             bit_slice_mut.set(id as usize, true);
         }
 
-        // In case we need to update `first_available_id`.
-        let bit_slice = self.bit_slice();
-        if bit_slice[self.first_available_id as usize] {
-            self.update_first_available_id(allocated_range.end);
-        }
+        self.update_first_available_id(allocated_start.min(self.first_available_id));
 
         Some(allocated_range)
     }

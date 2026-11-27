@@ -37,6 +37,63 @@ use crate::{
 /// The number of virtio block devices, used to assign minor device numbers.
 static NR_BLOCK_DEVICE: AtomicU32 = AtomicU32::new(0);
 
+const VIRTIO_BLK_ID_BYTES: usize = 20;
+const GET_ID_POLL_LIMIT: usize = 1 << 20;
+
+fn read_device_serial(
+    queue: &mut VirtQueue,
+    requests: &Arc<DmaStream>,
+    responses: &Arc<DmaStream>,
+) -> String {
+    let id_stream = match DmaStream::alloc(1, false) {
+        Ok(stream) => Arc::new(stream),
+        Err(_) => return String::new(),
+    };
+    let request = Slice::new(requests.clone(), 0..REQ_SIZE);
+    request
+        .write_val(
+            0,
+            &BlockReq {
+                type_: ReqType::GetId as _,
+                reserved: 0,
+                sector: 0,
+            },
+        )
+        .unwrap();
+    request.sync_to_device().unwrap();
+    let id = Slice::new(id_stream, 0..VIRTIO_BLK_ID_BYTES);
+    let response = Slice::new(responses.clone(), 0..RESP_SIZE);
+    response.write_val(0, &BlockResp::default()).unwrap();
+    response.sync_to_device().unwrap();
+
+    let token = match queue.add_dma_bufs(&[&request], &[&id, &response]) {
+        Ok(token) => token,
+        Err(_) => return String::new(),
+    };
+    if queue.should_notify() {
+        queue.notify();
+    }
+
+    for _ in 0..GET_ID_POLL_LIMIT {
+        if let Ok((returned, _)) = queue.pop_used()
+            && returned == token
+        {
+            id.sync_from_device().unwrap();
+            response.sync_from_device().unwrap();
+            let status: BlockResp = response.read_val(0).unwrap();
+            if !matches!(RespStatus::try_from(status.status), Ok(RespStatus::Ok)) {
+                return String::new();
+            }
+            let mut raw = [0u8; VIRTIO_BLK_ID_BYTES];
+            id.read_bytes(0, &mut raw).unwrap();
+            let length = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+            return String::from_utf8_lossy(&raw[..length]).into_owned();
+        }
+        core::hint::spin_loop();
+    }
+    String::new()
+}
+
 #[derive(Debug)]
 pub struct BlockDevice {
     device: Arc<DeviceInner>,
@@ -70,6 +127,20 @@ impl BlockDevice {
         let mut name = String::from(VIRTIO_DISK_PREFIX);
         name.extend(suffix);
         name
+    }
+
+    /// The serial reported by the device through `VIRTIO_BLK_T_GET_ID`.
+    pub fn serial(&self) -> &str {
+        &self.device.serial
+    }
+
+    /// The cache mode negotiated with the device.
+    pub fn cache_mode(&self) -> &'static str {
+        if self.device.write_cache {
+            "write back"
+        } else {
+            "write through"
+        }
     }
 
     /// Creates a new VirtIO-Block driver and registers it.
@@ -165,6 +236,8 @@ impl aster_block::BlockDevice for BlockDevice {
 struct DeviceInner {
     config_manager: ConfigManager<VirtioBlockConfig>,
     features: BlockFeatures,
+    serial: String,
+    write_cache: bool,
     queue: SpinLock<VirtQueue>,
     transport: SpinLock<DeviceTransport>,
     block_requests: Arc<DmaStream>,
@@ -219,12 +292,14 @@ impl DeviceInner {
             );
         }
 
-        let queue = VirtQueue::new(0, Self::QUEUE_SIZE, device_transport.as_mut())?;
+        let mut queue = VirtQueue::new(0, Self::QUEUE_SIZE, device_transport.as_mut())?;
 
         let block_requests =
             Arc::new(DmaStream::alloc(1, false).map_err(VirtioDeviceError::ResourceAlloc)?);
         let block_responses =
             Arc::new(DmaStream::alloc(1, false).map_err(VirtioDeviceError::ResourceAlloc)?);
+        let serial = read_device_serial(&mut queue, &block_requests, &block_responses);
+        let write_cache = config_manager.writeback() != 0;
         const {
             assert!(Self::QUEUE_SIZE as usize * REQ_SIZE <= PAGE_SIZE);
             assert!(Self::QUEUE_SIZE as usize * RESP_SIZE <= PAGE_SIZE);
@@ -233,6 +308,8 @@ impl DeviceInner {
         let device = Arc::new(Self {
             config_manager,
             features,
+            serial,
+            write_cache,
             queue: SpinLock::new(queue),
             transport: SpinLock::new(device_transport),
             block_requests,

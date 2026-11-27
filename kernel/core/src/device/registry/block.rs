@@ -224,7 +224,37 @@ impl Class for BlockClass {
 
 static BLOCK_CLASS: spin::Once<Arc<ClassHandle<BlockClass>>> = spin::Once::new();
 
-static DISK_TYPE: ModelDeviceType<ClassDevice<BlockClass>> = ModelDeviceType::named("disk");
+static DISK_TYPE: ModelDeviceType<ClassDevice<BlockClass>> = ModelDeviceType {
+    name: "disk",
+    attrs: &[Attr::ro("serial", show_disk_serial), Attr::ro("write_cache", show_write_cache)],
+    devnode: None,
+    has_device_link: true,
+    append_uevent_vars_fn: None,
+};
+
+fn show_disk_serial(
+    dev: &ClassDevice<BlockClass>,
+    writer: &mut dyn core::fmt::Write,
+) -> aster_device::common::Result<()> {
+    let device = &dev.payload().device;
+    let serial = device
+        .downcast_ref::<VirtIoBlockDevice>()
+        .map_or("", |disk| disk.serial());
+    writeln!(writer, "{}", serial)?;
+    Ok(())
+}
+
+fn show_write_cache(
+    dev: &ClassDevice<BlockClass>,
+    writer: &mut dyn core::fmt::Write,
+) -> aster_device::common::Result<()> {
+    let device = &dev.payload().device;
+    let mode = device
+        .downcast_ref::<VirtIoBlockDevice>()
+        .map_or("", |disk| disk.cache_mode());
+    writeln!(writer, "{}", mode)?;
+    Ok(())
+}
 
 static PARTITION_TYPE: ModelDeviceType<ClassDevice<BlockClass>> = ModelDeviceType {
     name: "partition",

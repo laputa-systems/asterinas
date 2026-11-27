@@ -204,6 +204,11 @@ impl ConfigManager<VirtioBlockConfig> {
             .unwrap()
     }
 
+    pub(self) fn writeback(&self) -> u8 {
+        self.read_once::<u8>(offset_of!(VirtioBlockConfig, writeback))
+            .unwrap()
+    }
+
     pub(self) fn block_size(&self) -> usize {
         self.read_once::<u32>(offset_of!(VirtioBlockConfig, blk_size))
             .unwrap() as usize

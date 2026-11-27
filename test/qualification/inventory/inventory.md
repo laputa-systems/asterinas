@@ -7,9 +7,9 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 
 ## Syscall dispatch
 
-- dispatch rows: 470
-- dispatched syscalls: 260
-- implemented: 254
+- dispatch rows: 474
+- dispatched syscalls: 262
+- implemented: 256
 - partial: 5
 - stub: 1
 - unresolvable: 0
@@ -17,8 +17,8 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 
 ### SCML coverage
 
-- fully covered: 163
-- constrained: 83
+- fully covered: 164
+- constrained: 84
 - undocumented: 14
 
 ### Stub syscalls
@@ -35,7 +35,7 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 
 ## SCML rules
 
-- invocation rows: 319
+- invocation rows: 327
 - undispatched rule names: 2
 
 ## Unsupported-success paths
@@ -57,8 +57,8 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/comps/systree/src/utils.rs:427` (comment): In general, the `offset` for attribute write operations is ignored directly.
 - `kernel/core/comps/systree/src/utils.rs:577` (comment): In general, the `offset` for attribute write operations is ignored directly.
 - `kernel/core/comps/time/src/rtc/cmos.rs:83` (warn): warn!("CMOS RTC reports unexpected status, ignoring this device");
-- `kernel/core/comps/virtio/src/device/block/device.rs:217` (warn): ostd::warn!( "Multi-Queue Block IO Queueing Mechanism is not supported yet; using the first queue" );
-- `kernel/core/comps/virtio/src/device/block/device.rs:457` (comment): This will be ignored if the device doesn't support the `VIRTIO_BLK_F_FLUSH` feature.
+- `kernel/core/comps/virtio/src/device/block/device.rs:290` (warn): ostd::warn!( "Multi-Queue Block IO Queueing Mechanism is not supported yet; using the first queue" );
+- `kernel/core/comps/virtio/src/device/block/device.rs:534` (comment): This will be ignored if the device doesn't support the `VIRTIO_BLK_F_FLUSH` feature.
 - `kernel/core/comps/virtio/src/device/network/device.rs:67` (warn): warn!( "unsupported device features: {:?}", device_features.difference(supported_features) );
 - `kernel/core/comps/virtio/src/device/socket/queue.rs:240` (warn): ostd::warn!("unexpected event length {}, ignoring trailing garbage", len);
 - `kernel/core/comps/virtio/src/lib.rs:137` (warn): warn!("Found unimplemented device: {:?}", device_type);
@@ -109,27 +109,27 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/src/net/socket/packet/mod.rs:221` (warn): warn!("sending control message is not supported");
 - `kernel/core/src/net/socket/unix/ctrl_msg.rs:39` (warn): warn!("unsupported control message type in {:?}", header);
 - `kernel/core/src/net/socket/unix/ctrl_msg.rs:54` (warn): warn!("unsupported control message type in {:?}", header);
-- `kernel/core/src/net/socket/unix/datagram/socket.rs:298` (warn): warn!("unsupported flags: {:?}", flags);
-- `kernel/core/src/net/socket/unix/datagram/socket.rs:329` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/unix/datagram/socket.rs:299` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/unix/datagram/socket.rs:330` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/unix/stream/connected.rs:244` (warn): warn!("setting MSG_TRUNC is not supported");
 - `kernel/core/src/net/socket/unix/stream/socket.rs:511` (warn): warn!("unsupported flags: {:?}", flags);
-- `kernel/core/src/net/socket/unix/stream/socket.rs:552` (warn): warn!("unsupported flags: {:?}", flags);
+- `kernel/core/src/net/socket/unix/stream/socket.rs:557` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/util/message_header.rs:86` (warn): warn!("unsupported control message level in {:?}", header);
 - `kernel/core/src/net/socket/util/message_header.rs:100` (warn): warn!("unsupported control message level in {:?}", header);
 - `kernel/core/src/net/socket/vsock/stream/mod.rs:338` (warn): warn!("unsupported flags: {:?}", flags);
 - `kernel/core/src/net/socket/vsock/stream/mod.rs:370` (warn): warn!("sending control message is not supported");
 - `kernel/core/src/net/socket/vsock/stream/mod.rs:385` (warn): warn!("unsupported flags: {:?}", flags);
-- `kernel/core/src/process/clone.rs:272` (warn): warn!("contains unsupported clone flags: {:?}", unsupported_flags);
-- `kernel/core/src/process/clone.rs:768` (warn): warn!("CLONE_SYSVSEM is not supported now");
-- `kernel/core/src/process/namespace/unshare.rs:37` (warn): warn!("unsharing System V semaphore is not supported");
-- `kernel/core/src/process/posix_thread/futex.rs:507` (comment): the bitset in `new_key` is ignored.
-- `kernel/core/src/process/posix_thread/futex.rs:533` (comment): the bitset in `new_key` is ignored.
+- `kernel/core/src/process/clone.rs:286` (warn): warn!("contains unsupported clone flags: {:?}", unsupported_flags);
+- `kernel/core/src/process/clone.rs:886` (warn): warn!("CLONE_SYSVSEM is not supported now");
+- `kernel/core/src/process/namespace/unshare.rs:46` (warn): warn!("unsharing System V semaphore is not supported");
+- `kernel/core/src/process/posix_thread/futex.rs:562` (comment): the bitset in `new_key` is ignored.
+- `kernel/core/src/process/posix_thread/futex.rs:588` (comment): the bitset in `new_key` is ignored.
 - `kernel/core/src/process/process/terminal.rs:80` (warn): warn!("stealing TTY from another session is not supported");
-- `kernel/core/src/process/signal/mod.rs:331` (warn): warn!("Unsupported signal flags: {:?}", flags);
+- `kernel/core/src/process/signal/mod.rs:337` (warn): warn!("Unsupported signal flags: {:?}", flags);
 - `kernel/core/src/process/signal/sig_action.rs:78` (comment): Returns whether signals will be ignored.
 - `kernel/core/src/process/signal/sig_action.rs:80` (comment): Signals will be ignored because either
 - `kernel/core/src/process/signal/sig_queues.rs:207` (comment): Note that signals are ignored but not blocked may be dequeued silently.
-- `kernel/core/src/process/wait.rs:42` (warn): warn!( "unsupported wait options are found: {:?}", *self - supported_args );
+- `kernel/core/src/process/wait.rs:43` (warn): warn!( "unsupported wait options are found: {:?}", *self - supported_args );
 - `kernel/core/src/security/lsm/modules/mod.rs:16` (comment): ! the mandatory modules in that order. Unknown module names are ignored with a
 - `kernel/core/src/security/lsm/modules/mod.rs:17` (comment): ! warning, and duplicate names are ignored after their first selection.
 - `kernel/core/src/security/lsm/modules/mod.rs:20` (comment): ! exclusive module is kept, and later exclusive entries are ignored.

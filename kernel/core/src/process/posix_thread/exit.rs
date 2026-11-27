@@ -152,9 +152,14 @@ fn exit_internal(
     // holding the `tracees` lock, and can not race with `clear_tracees`.
     posix_thread.clear_tracees();
 
-    if let Some(tracer) = posix_thread.tracer() {
-        let tracer = tracer.as_posix_thread().unwrap();
-        tracer.process().children_wait_queue().wake_all();
+    let tracer = posix_thread.tracer();
+    if let Some(tracer_thread) = &tracer {
+        tracer_thread
+            .as_posix_thread()
+            .unwrap()
+            .process()
+            .children_wait_queue()
+            .wake_all();
     }
 
     wake_clear_ctid(thread_local);
@@ -173,7 +178,7 @@ fn exit_internal(
     drop_after!(thread_local.remove_ns_proxy());
 
     if is_last_thread {
-        exit_process(&posix_process, posix_thread.credentials().ruid());
+        exit_process(&posix_process, posix_thread.credentials().ruid(), tracer);
     }
 }
 

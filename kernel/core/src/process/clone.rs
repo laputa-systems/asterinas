@@ -726,10 +726,9 @@ fn clone_child_process(
 
     // Inherit the seccomp policy before the child can run (Linux copy_seccomp()).
     // Credentials (including no-new-privs) are already shared via `new_from`.
-    child
-        .tasks()
-        .lock()
-        .main()
+    child_task
+        .as_thread()
+        .unwrap()
         .as_posix_thread()
         .unwrap()
         .inherit_seccomp(posix_thread);

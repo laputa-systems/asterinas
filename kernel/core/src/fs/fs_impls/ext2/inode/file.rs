@@ -238,15 +238,14 @@ impl InodeInner {
     /// original file size and `end` to restore page-cache capacity and
     /// free partially allocated blocks. The caller must hold `InodeInner`
     /// write lock for the entire prepare-write-commit sequence.
-    pub(super) fn prepare_write(&mut self, fs: &Ext2, offset: usize, end: usize) -> Result<()> {
+    pub(super) fn prepare_write(&mut self, fs: &Ext2, offset: usize, end: usize) -> Result<usize> {
         let old_size = self.file_size();
         if end > old_size {
             self.ensure_size_within_limit(fs, end)?;
             self.resize_page_cache(end, old_size)?;
         }
 
-        self.allocate_range_blocks(offset, end)?;
-        Ok(())
+        self.allocate_range_blocks(offset, end)
     }
 
     /// Truncates page cache and blocks after a failed write.
@@ -302,16 +301,26 @@ impl InodeInner {
         let old_size = self.file_size();
 
         let mut this = DropGuard::new(self, |this| this.rollback_write(old_size, end));
-        this.prepare_write(fs, offset, end)?;
-
+        let allocated_blocks = this.prepare_write(fs, offset, end)?;
+        let writable = (allocated_blocks * BLOCK_SIZE)
+            .saturating_sub(offset % BLOCK_SIZE)
+            .min(write_len);
+        if writable == 0 {
+            return Err(errno!(ENOSPC, "no space for write"));
+        }
+        if writable < write_len {
+            this.resize_page_cache(offset + writable, end)?;
+        }
+        reader.limit(writable);
         this.page_cache().write(offset, reader)?;
 
         let this = DropGuard::dismiss(this);
         this.set_mtime_ctime(utils::now());
-        if end > old_size {
-            this.set_file_size(end);
+        let new_size = offset + writable;
+        if new_size > old_size {
+            this.set_file_size(new_size);
         }
-        Ok(write_len)
+        Ok(writable)
     }
 
     /// Reads file data directly after flushing overlapping cached pages.
@@ -469,7 +478,8 @@ impl InodeInner {
     }
 
     /// Allocates any missing data blocks covering the requested file byte range.
-    fn allocate_range_blocks(&mut self, offset: usize, end: usize) -> Result<()> {
+    /// Returns the number of blocks covered, which may be short on ENOSPC.
+    fn allocate_range_blocks(&mut self, offset: usize, end: usize) -> Result<usize> {
         let start_block = offset / BLOCK_SIZE;
         let end_block = end.div_ceil(BLOCK_SIZE);
         self.block_manager()?

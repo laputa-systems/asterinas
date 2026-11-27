@@ -537,7 +537,10 @@ static void setup_storage_volume(struct storage_setup *setup) {
     }
     char cache_path[256];
     snprintf(cache_path, sizeof(cache_path), "%s/%s/queue/write_cache", block_sysfs_root(), setup->device_name);
-    read_first_line(cache_path, setup->write_cache, sizeof(setup->write_cache));
+    if (!read_first_line(cache_path, setup->write_cache, sizeof(setup->write_cache))) {
+        snprintf(cache_path, sizeof(cache_path), "%s/%s/write_cache", block_sysfs_root(), setup->device_name);
+        read_first_line(cache_path, setup->write_cache, sizeof(setup->write_cache));
+    }
     setup->cache_ok = strcmp(setup->write_cache, ADAPTER_WRITE_CACHE) == 0;
     if (!setup->cache_ok) {
         diagnostic("scratch disk write cache is %s, expected %s", setup->write_cache, ADAPTER_WRITE_CACHE);

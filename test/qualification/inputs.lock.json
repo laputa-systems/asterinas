@@ -1,13 +1,13 @@
 {
   "adapter": {
     "disk_path": "target/qualification/inputs/cache/adapter-disk.ext2",
-    "disk_sha256": "f7c62dc21564107fee97abbe9e3ed60be2b8e6dbe62632e0d93ca776daed70b9",
+    "disk_sha256": "21bf9e9cdbbea1de81da6b23559821bc312585736b89cb1d49513ff2781cd2d4",
     "disk_size_bytes": 16777216,
     "e2fsprogs_nix_path": "test/qualification/adapter/e2fsprogs.nix",
     "e2fsprogs_nix_sha256": "ec2c1266278327351814db9545079b5e14c2f3577493ddde9b17aa0a1f5814e1",
     "serial": "qual-lc06-adapter",
     "wrong_disk_path": "target/qualification/inputs/cache/adapter-wrong-disk.ext2",
-    "wrong_disk_sha256": "179f888865e60d90c121b628fb34073174172fec6b4c0b82e0721b32942b7dcf",
+    "wrong_disk_sha256": "0118d96fff491159285d7ebd4fbdb3d570b6c806e472a981f5a597693ac8a82a",
     "wrong_filesystem_path": "target/qualification/inputs/cache/adapter-wrong-filesystem.img",
     "wrong_filesystem_sha256": "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
   },
@@ -17,12 +17,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "7c19a721208be97836cccfd1e772c1f0f6eaa185cf1c670ee3dec12a9babfa83",
+    "kernel_sha256": "db65f8cc45bffbe936a7191ed35b60cda4c50c57df5ce4c6ba15f727ab9ec23c",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "5c15a85f25756b8a7c0f9062d4567b55d23356470b2ce41a66daf219604fd056"
+    "source_tree_sha256": "815570385515bf1cc53d1ada8be638547004928b14c9690b27ced1a1a59a7d86"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -38,7 +38,7 @@
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "30982026b3b22847c7b67c3071310d247a7bd542988fc1dfab05a7b2ee4a72b6",
+      "test/qualification/qualcore/lock.py": "33214436113995454fbf6d5b9394698669faceda271d551f14976d4e6b85da3b",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
       "test/qualification/qualcore/qemu.py": "f589a6a53f70ba89e3153e890302e643ca048f5d2cca9f3a0d6269b37f6b0317",
@@ -65,15 +65,15 @@
   "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "8801bc3193f4a68778e62894f432d01abff1e70ee5d996b54effa8e4969b7017",
+    "binary_sha256": "2e63e0f09e3dbf5cb3204e85544774fc93a63167eb0a18da69df0a5c17deb24a",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "4e3ed3cfa59d3da3228aa1df7940639bc9ca6fc3f01519ec4282e617bfdf568d",
+    "initramfs_sha256": "067d4a19d269c3eb9afe4385e5064e63c269bf3745a2d158a96b5cce49cde6f6",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "c2f07b6051db1706c90e0d94a853d40ac8893efdef3b1f798edafc732f49ac49"
+    "source_sha256": "629ad9dcf4d833e85cc041d4c45aba4aff41cf1170d68ffeec62f56a0e6159e6"
   },
   "python": {
     "minimum_version": "3.11"

@@ -114,7 +114,7 @@ def build_adapter_fixtures(repo: Path) -> None:
         "set -eu; "
         "result=$(nix-build --no-out-link test/qualification/adapter/e2fsprogs.nix); "
         "export SOURCE_DATE_EPOCH=0 E2FSPROGS_FAKE_TIME=0; "
-        "staging=target/qualification/inputs/adapter-mkfs; "
+        "staging=/tmp/qual-adapter-mkfs; "
         "rm -rf \"$staging\"; "
         "mkdir -p \"$staging/good\" \"$staging/wrong\"; "
         "printf 'lc06-adapter\\n' > \"$staging/good/marker.txt\"; "
