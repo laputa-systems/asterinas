@@ -193,6 +193,7 @@ aster-virtio = { path = "kernel/core/comps/virtio" }
 
 # Crates under kernel/libs
 aster-bigtcp = { path = "kernel/libs/aster-bigtcp" }
+aster-ext4 = { path = "kernel/libs/aster-ext4" }
 aster-fuse = { path = "kernel/libs/aster-fuse" }
 aster-rights = { path = "kernel/libs/aster-rights" }
 aster-rights-proc = { path = "kernel/libs/aster-rights-proc" }

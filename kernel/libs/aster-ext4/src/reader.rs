@@ -108,9 +108,16 @@ pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> 
 pub struct Inode {
     pub number: u32,
     pub mode: u16,
+    pub uid: u32,
+    pub gid: u32,
     pub size: u64,
     pub links: u16,
+    pub blocks: u32,
     pub flags: u32,
+    pub atime: u32,
+    pub ctime: u32,
+    pub mtime: u32,
+    pub generation: u32,
     pub block_ptrs: [u8; INODE_BLOCK_PTRS_LEN],
 }
 
@@ -155,9 +162,16 @@ pub fn read_inode_from(
     Ok(Inode {
         number: ino,
         mode: le_u16(&raw, 0x00).ok_or(ReaderError::Truncated)?,
+        uid: le_u16(&raw, 0x02).ok_or(ReaderError::Truncated)? as u32,
+        gid: le_u16(&raw, 0x18).ok_or(ReaderError::Truncated)? as u32,
         size: size_lo | (size_hi << 32),
         links: le_u16(&raw, 0x1A).ok_or(ReaderError::Truncated)?,
+        blocks: le_u32(&raw, 0x1C).ok_or(ReaderError::Truncated)?,
         flags: le_u32(&raw, 0x20).ok_or(ReaderError::Truncated)?,
+        atime: le_u32(&raw, 0x08).ok_or(ReaderError::Truncated)?,
+        ctime: le_u32(&raw, 0x0C).ok_or(ReaderError::Truncated)?,
+        mtime: le_u32(&raw, 0x10).ok_or(ReaderError::Truncated)?,
+        generation: le_u32(&raw, 0x64).ok_or(ReaderError::Truncated)?,
         block_ptrs,
     })
 }
@@ -290,11 +304,38 @@ pub fn read_file_from(
     Ok(data)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiskEntryType {
+    Unknown,
+    File,
+    Dir,
+    CharDevice,
+    BlockDevice,
+    Fifo,
+    Socket,
+    Symlink,
+}
+
+impl DiskEntryType {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::File,
+            2 => Self::Dir,
+            3 => Self::CharDevice,
+            4 => Self::BlockDevice,
+            5 => Self::Fifo,
+            6 => Self::Socket,
+            7 => Self::Symlink,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirEntry {
     pub ino: u32,
     pub name: Vec<u8>,
-    pub file_type: u8,
+    pub file_type: DiskEntryType,
 }
 
 /// Parses linear directory entries from a directory's data blocks.
@@ -321,7 +362,7 @@ pub fn read_dir_from(
             entries.push(DirEntry {
                 ino,
                 name: data[cursor + 8..cursor + 8 + name_len].to_vec(),
-                file_type,
+                file_type: DiskEntryType::from_u8(file_type),
             });
         }
         cursor += rec_len;

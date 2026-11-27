@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Filesystem-level state and VFS `FileSystem` implementation for ext4.
+
+use aster_block::{BLOCK_SIZE, BlockDevice, bio::BioStatus};
+use aster_ext4::{
+    MAGIC as EXT4_MAGIC, analyze,
+    reader::{BlockReader, geometry_from},
+};
+
+use super::{device::DeviceReader, inode::Ext4Inode};
+use crate::{
+    fs::{
+        utils::NAME_MAX,
+        vfs::{
+            file_system::{FileSystem, FsEventSubscriberStats, FsFlags, SuperBlock},
+            inode::Inode,
+        },
+    },
+    prelude::*,
+};
+
+pub(super) struct Ext4 {
+    device: Arc<dyn BlockDevice>,
+    reader: Arc<DeviceReader>,
+    info: aster_ext4::Info,
+    geometry: aster_ext4::reader::Geometry,
+    flags: FsFlags,
+    fs_event_subscriber_stats: FsEventSubscriberStats,
+    self_ref: Weak<Self>,
+}
+
+impl Ext4 {
+    pub(super) fn open(
+        device: Arc<dyn BlockDevice>,
+        _flags: FsFlags,
+        _data: Option<&str>,
+    ) -> Result<Arc<Self>> {
+        let reader = Arc::new(DeviceReader::new(device.clone()));
+        let info = analyze_device(&reader)?;
+        let geometry = geometry_from(reader.as_ref()).map_err(|error| {
+            error!("ext4: invalid geometry: {:?}", error);
+            errno!(EINVAL, "invalid ext4 geometry")
+        })?;
+        if geometry.block_size != BLOCK_SIZE {
+            return Err(errno!(
+                EINVAL,
+                "ext4 block sizes other than 4096 bytes are not supported"
+            ));
+        }
+        if reader
+            .read_at(1024, 1024)
+            .ok_or_else(|| errno!(EIO, "cannot read ext4 superblock"))?
+            .len()
+            != 1024
+        {
+            return Err(errno!(EIO, "short ext4 superblock read"));
+        }
+
+        Ok(Arc::new_cyclic(|self_ref| Self {
+            device,
+            reader,
+            info,
+            geometry,
+            flags: FsFlags::RDONLY,
+            fs_event_subscriber_stats: FsEventSubscriberStats::new(),
+            self_ref: self_ref.clone(),
+        }))
+    }
+
+    pub(super) fn reader(&self) -> &Arc<DeviceReader> {
+        &self.reader
+    }
+
+    pub(super) fn geometry(&self) -> &aster_ext4::reader::Geometry {
+        &self.geometry
+    }
+
+    pub(super) fn device(&self) -> &Arc<dyn BlockDevice> {
+        &self.device
+    }
+
+    pub(super) fn upgrade(&self) -> Option<Arc<Self>> {
+        self.self_ref.upgrade()
+    }
+}
+
+fn analyze_device(reader: &DeviceReader) -> Result<aster_ext4::Info> {
+    let superblock = reader
+        .read_at(1024, 1024)
+        .ok_or_else(|| errno!(EIO, "cannot read ext4 superblock"))?;
+    analyze(&superblock).map_err(|error| {
+        warn!("ext4: refusing mount: {:?}", error);
+        match error {
+            aster_ext4::Error::NeedsRecovery | aster_ext4::Error::Unclean => {
+                errno!(EINVAL, "ext4 image needs journal recovery")
+            }
+            aster_ext4::Error::UnsupportedFeature(_) => {
+                errno!(EINVAL, "unsupported ext4 incompatible features")
+            }
+            _ => errno!(EINVAL, "invalid ext4 superblock"),
+        }
+    })
+}
+
+impl FileSystem for Ext4 {
+    fn name(&self) -> &'static str {
+        "ext4"
+    }
+
+    fn sync(&self) -> Result<()> {
+        if self.device.sync()? != BioStatus::Complete {
+            return Err(errno!(EIO, "failed to flush block device"));
+        }
+        Ok(())
+    }
+
+    fn root_inode(&self) -> Arc<dyn Inode> {
+        Ext4Inode::new(
+            self.upgrade().expect("ext4 root inode outlives its filesystem"),
+            aster_ext4::reader::ROOT_INO,
+        )
+    }
+
+    fn sb(&self) -> SuperBlock {
+        let info = &self.info;
+        SuperBlock {
+            magic: EXT4_MAGIC as u64,
+            bsize: BLOCK_SIZE,
+            blocks: info.blocks_count as usize,
+            bfree: info.free_blocks_count as usize,
+            bavail: info
+                .free_blocks_count
+                .saturating_sub(info.reserved_blocks_count) as usize,
+            files: info.inodes_count as usize,
+            ffree: info.free_inodes_count as usize,
+            fsid: 0,
+            namelen: NAME_MAX,
+            frsize: info.block_size,
+            flags: 0,
+            container_dev_id: self.device.id(),
+        }
+    }
+
+    fn max_name_len(&self) -> usize {
+        NAME_MAX
+    }
+
+    fn flags(&self) -> FsFlags {
+        self.flags
+    }
+
+    fn fs_event_subscriber_stats(&self) -> &FsEventSubscriberStats {
+        &self.fs_event_subscriber_stats
+    }
+}
