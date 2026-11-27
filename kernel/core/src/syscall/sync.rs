@@ -24,6 +24,7 @@ pub(super) fn sys_syncfs(raw_fd: RawFileDesc, ctx: &Context) -> Result<SyscallRe
     if file.status_flags().contains(StatusFlags::O_PATH) {
         return Err(errno!(EBADF, "the file is opened as a path"));
     }
-    file.path().fs().sync()?;
+    let sync_result = file.path().fs().sync();
+    file.check_writeback_error(sync_result)?;
     Ok(SyscallReturn::Return(0))
 }

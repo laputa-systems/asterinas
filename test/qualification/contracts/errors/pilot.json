@@ -1,0 +1,1013 @@
+{
+  "cases": [
+    {
+      "id": "errors.fsync",
+      "contract_revision": "lc09-errors-r1",
+      "area": "errors",
+      "item": "LC-09",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "errors-pilot-r1",
+        "upstream": "asterinas-qualification-errors-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Via fsync, verify two descriptors each observe an injected writeback EIO once, then observe a second error after re-dirtying the page.",
+      "expected_subtests": [
+        {
+          "id": "setup-disk-identity",
+          "assertions": [
+            {
+              "id": "serial",
+              "type": "text",
+              "expected": "qual-lc06-adapter",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-write-cache",
+          "assertions": [
+            {
+              "id": "mode",
+              "type": "text",
+              "expected": "write back",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-filesystem",
+          "assertions": [
+            {
+              "id": "filesystem",
+              "type": "text",
+              "expected": "ext2",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-mount",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-privilege",
+          "assertions": [
+            {
+              "id": "uid",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd2-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 90,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile s0-errors --candidate asterinas",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "inject_writeback_eio": true
+      }
+    },
+    {
+      "id": "errors.fdatasync",
+      "contract_revision": "lc09-errors-r1",
+      "area": "errors",
+      "item": "LC-09",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "errors-pilot-r1",
+        "upstream": "asterinas-qualification-errors-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Via fdatasync, verify two descriptors each observe an injected writeback EIO once, then observe a second error after re-dirtying the page.",
+      "expected_subtests": [
+        {
+          "id": "setup-disk-identity",
+          "assertions": [
+            {
+              "id": "serial",
+              "type": "text",
+              "expected": "qual-lc06-adapter",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-write-cache",
+          "assertions": [
+            {
+              "id": "mode",
+              "type": "text",
+              "expected": "write back",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-filesystem",
+          "assertions": [
+            {
+              "id": "filesystem",
+              "type": "text",
+              "expected": "ext2",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-mount",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-privilege",
+          "assertions": [
+            {
+              "id": "uid",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd2-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 90,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile s0-errors --candidate asterinas",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "inject_writeback_eio": true
+      }
+    },
+    {
+      "id": "errors.syncfs",
+      "contract_revision": "lc09-errors-r1",
+      "area": "errors",
+      "item": "LC-09",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "errors-pilot-r1",
+        "upstream": "asterinas-qualification-errors-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Via syncfs, verify two descriptors each observe an injected writeback EIO once, then observe a second error after re-dirtying the page.",
+      "expected_subtests": [
+        {
+          "id": "setup-disk-identity",
+          "assertions": [
+            {
+              "id": "serial",
+              "type": "text",
+              "expected": "qual-lc06-adapter",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-write-cache",
+          "assertions": [
+            {
+              "id": "mode",
+              "type": "text",
+              "expected": "write back",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-filesystem",
+          "assertions": [
+            {
+              "id": "filesystem",
+              "type": "text",
+              "expected": "ext2",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-mount",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-privilege",
+          "assertions": [
+            {
+              "id": "uid",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-fsync-fd2-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-fsync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-fsync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 90,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile s0-errors --candidate asterinas",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "inject_writeback_eio": true
+      }
+    },
+    {
+      "id": "errors.msync",
+      "contract_revision": "lc09-errors-r1",
+      "area": "errors",
+      "item": "LC-09",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "errors-pilot-r1",
+        "upstream": "asterinas-qualification-errors-pilot"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Map a pre-existing ext2 file into two shared mappings, dirty a page, and verify msync(MS_SYNC) reports the injected writeback EIO once per mapping, then again after re-dirtying.",
+      "expected_subtests": [
+        {
+          "id": "setup-disk-identity",
+          "assertions": [
+            {
+              "id": "serial",
+              "type": "text",
+              "expected": "qual-lc06-adapter",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-write-cache",
+          "assertions": [
+            {
+              "id": "mode",
+              "type": "text",
+              "expected": "write back",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-filesystem",
+          "assertions": [
+            {
+              "id": "filesystem",
+              "type": "text",
+              "expected": "ext2",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-mount",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-privilege",
+          "assertions": [
+            {
+              "id": "uid",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "mmap",
+          "assertions": [
+            {
+              "id": "ok",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-msync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-msync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-msync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "first-msync-fd2-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-msync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "repeat-msync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-msync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-msync-fd1-errno",
+          "assertions": [
+            {
+              "id": "errno",
+              "type": "errno",
+              "expected": 5,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "second-msync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": -1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-msync-fd1",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "final-msync-fd2",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 90,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile s0-errors --candidate asterinas",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter",
+        "inject_writeback_eio": true
+      }
+    }
+  ]
+}

@@ -185,6 +185,7 @@ def run_qemu(
     adapter_write_through: bool = False,
     isolated_network: bool = False,
     inject_read_errors: bool = False,
+    inject_writeback_eio: bool = False,
     kernel_kind: str = "linux",
 ) -> QemuExecution:
     vm_dir = work_dir / label
@@ -200,6 +201,13 @@ def run_qemu(
         blkdebug_config = vm_dir / "blkdebug.conf"
         if inject_read_errors:
             blkdebug_config.write_text('[inject-error]\nevent = "none"\niotype = "read"\nerrno = "5"\n', encoding="utf-8")
+        elif inject_writeback_eio:
+            # sector 1104 is the first 512-byte sector of ext2 block 138, the
+            # data block of /marker.txt in the pinned adapter fixture.
+            blkdebug_config.write_text(
+                '[inject-error]\nevent = "none"\niotype = "write"\nerrno = "5"\nsector = "1104"\n',
+                encoding="utf-8",
+            )
         else:
             blkdebug_config.write_text("", encoding="utf-8")
         adapter_disk = AdapterDisk(disk_image, write_log, blkdebug_config, adapter_serial, not adapter_write_through)

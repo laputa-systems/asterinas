@@ -76,9 +76,9 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/src/device/tty/vt/keyboard/handler.rs:437` (warn): ostd::warn!( "Virtual terminal keyboard handler received unsupported event: {:?}", event );
 - `kernel/core/src/events/epoll/file.rs:259` (warn): warn!("{:?} contains unsupported flags", flags);
 - `kernel/core/src/fs/file/file_handle.rs:81` (comment): If the file is append-only, the `offset` will be ignored.
-- `kernel/core/src/fs/file/file_handle.rs:196` (comment): `O_ASYNC` is ignored if it is not supported. An attempt to enable
-- `kernel/core/src/fs/file/inode_handle.rs:410` (comment): If the file has the `O_APPEND` flag, the offset is ignored.
-- `kernel/core/src/fs/file/inode_handle.rs:626` (comment): the offset in the `seek()` operation will be ignored.
+- `kernel/core/src/fs/file/file_handle.rs:209` (comment): `O_ASYNC` is ignored if it is not supported. An attempt to enable
+- `kernel/core/src/fs/file/inode_handle.rs:416` (comment): If the file has the `O_APPEND` flag, the offset is ignored.
+- `kernel/core/src/fs/file/inode_handle.rs:633` (comment): the offset in the `seek()` operation will be ignored.
 - `kernel/core/src/fs/fs_impls/cgroupfs/controller/cpu.rs:232` (todo): TODO: Enforce cgroup CPU weight for scheduling and remove this warning.
 - `kernel/core/src/fs/fs_impls/cgroupfs/controller/cpu.rs:233` (warn): warn!( "`cpu.weight` is accepted but not enforced yet; weight = {}", weight );
 - `kernel/core/src/fs/fs_impls/cgroupfs/controller/cpu.rs:290` (todo): TODO: Enforce CPU bandwidth throttling and remove this warning.
@@ -151,7 +151,7 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/src/syscall/rt_sigtimedwait.rs:110` (comment): If the signal is ignored and not blocked, it will be dropped and
 - `kernel/core/src/syscall/rt_sigtimedwait.rs:121` (comment): If the signal is ignored and not blocked, the signal will be directly dropped.
 - `kernel/core/src/syscall/sendmmsg.rs:28` (warn): warn!("sendmmsg flags {:?} are not supported", flags);
-- `kernel/core/src/vm/page_cache/mod.rs:768` (annotation): writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)
+- `kernel/core/src/vm/page_cache/mod.rs:810` (annotation): writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)
 
 ## Conformance blocklists
 

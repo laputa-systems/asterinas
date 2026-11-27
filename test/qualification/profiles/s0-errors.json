@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "s0-errors",
+  "inherits": [],
+  "cases": [
+    "errors.fsync",
+    "errors.fdatasync",
+    "errors.syncfs",
+    "errors.msync"
+  ],
+  "excludes": []
+}

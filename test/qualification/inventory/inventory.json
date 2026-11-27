@@ -39160,24 +39160,24 @@
   },
   {
    "kind": "comment",
-   "line": 196,
+   "line": 209,
    "path": "kernel/core/src/fs/file/file_handle.rs",
    "snippet": "`O_ASYNC` is ignored if it is not supported. An attempt to enable",
-   "source": "kernel/core/src/fs/file/file_handle.rs:196"
+   "source": "kernel/core/src/fs/file/file_handle.rs:209"
   },
   {
    "kind": "comment",
-   "line": 410,
+   "line": 416,
    "path": "kernel/core/src/fs/file/inode_handle.rs",
    "snippet": "If the file has the `O_APPEND` flag, the offset is ignored.",
-   "source": "kernel/core/src/fs/file/inode_handle.rs:410"
+   "source": "kernel/core/src/fs/file/inode_handle.rs:416"
   },
   {
    "kind": "comment",
-   "line": 626,
+   "line": 633,
    "path": "kernel/core/src/fs/file/inode_handle.rs",
    "snippet": "the offset in the `seek()` operation will be ignored.",
-   "source": "kernel/core/src/fs/file/inode_handle.rs:626"
+   "source": "kernel/core/src/fs/file/inode_handle.rs:633"
   },
   {
    "kind": "todo",
@@ -39685,10 +39685,10 @@
   },
   {
    "kind": "annotation",
-   "line": 768,
+   "line": 810,
    "path": "kernel/core/src/vm/page_cache/mod.rs",
    "snippet": "writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)",
-   "source": "kernel/core/src/vm/page_cache/mod.rs:768"
+   "source": "kernel/core/src/vm/page_cache/mod.rs:810"
   }
  ]
 }

@@ -346,7 +346,8 @@ def execute_backend(
     expected_cases = {case.case_id: case}
     assert_selection_snapshot(selection, snapshot)
     assert_backend_snapshot(snapshot.qemu_path, snapshot)
-    adapter_enabled = bool(case.payload.get("adapter"))
+    termination_control = control in {"panic", "hang"} or label.endswith("timeout")
+    adapter_enabled = bool(case.payload.get("adapter")) and not termination_control
     adapter_image = None
     if adapter_enabled and control != "missing-device":
         image_name = "adapter-disk.ext2"
@@ -381,6 +382,7 @@ def execute_backend(
         adapter_write_through=control == "wrong-cache",
         isolated_network=adapter_enabled,
         inject_read_errors=control == "failed-mount",
+        inject_writeback_eio=bool(case.payload.get("inject_writeback_eio")),
         kernel_kind=backend,
     )
     bundle.register_file(f"{label}/console.log", execution.console_log)

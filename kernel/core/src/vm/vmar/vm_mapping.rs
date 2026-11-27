@@ -189,6 +189,11 @@ impl VmMapping {
         self.file.as_ref().map(|file| file.path().inode())
     }
 
+    /// Returns the file description that backs the mapping.
+    pub(crate) fn file(&self) -> Option<&Arc<dyn FileLike>> {
+        self.file.as_ref()
+    }
+
     /// Returns a reference to the VMO if this mapping is VMO-backed.
     pub(super) fn vmo(&self) -> Option<&MappedVmo> {
         match &self.mapped_mem {

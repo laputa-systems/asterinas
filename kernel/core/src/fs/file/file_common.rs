@@ -2,7 +2,7 @@
 
 //! State shared by all references to a file description.
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::{AccessMode, AtomicStatusFlags, FileLike, StatusFlags, file_handle::StatusFlagsUpdate};
 use crate::{
@@ -24,6 +24,7 @@ pub(crate) struct FileCommon {
     access_mode: AccessMode,
     status_flags: AtomicStatusFlags,
     owner: FileOwner,
+    writeback_cursor: AtomicU64,
 }
 
 impl FileCommon {
@@ -34,6 +35,7 @@ impl FileCommon {
             access_mode,
             status_flags: AtomicStatusFlags::new(status_flags),
             owner: FileOwner::new(),
+            writeback_cursor: AtomicU64::new(0),
         }
     }
 
@@ -85,6 +87,21 @@ impl FileCommon {
     /// Returns the asynchronous I/O signal owner.
     pub(crate) fn owner(&self) -> &FileOwner {
         &self.owner
+    }
+
+    /// Returns this file description's observed writeback-error sequence.
+    pub(crate) fn writeback_cursor(&self) -> u64 {
+        self.writeback_cursor.load(Ordering::Acquire)
+    }
+
+    /// Sets the cursor to the inode's sequence at open time.
+    pub(crate) fn set_writeback_cursor(&self, sequence: u64) {
+        self.writeback_cursor.store(sequence, Ordering::Release);
+    }
+
+    /// Advances the cursor so an observed error is not reported again.
+    pub(crate) fn advance_writeback_cursor(&self, sequence: u64) {
+        self.writeback_cursor.fetch_max(sequence, Ordering::AcqRel);
     }
 }
 

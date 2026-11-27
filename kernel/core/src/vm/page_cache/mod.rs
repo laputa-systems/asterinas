@@ -105,7 +105,7 @@
 
 use core::{
     ops::{Deref, Range},
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicI32, AtomicU64, Ordering},
 };
 
 use align_ext::AlignExt;
@@ -161,6 +161,30 @@ pub(crate) use vmo::{VmoCommitError, VmoFlags, VmoMapMode, VmoOptions};
 /// Reach for [`PageCache::as_vmo`] only when a lower-level consumer such as
 /// memory mapping or page-fault code must operate on the underlying [`Vmo`]
 /// directly.
+/// Asynchronous writeback failures retained until a sync reports them.
+///
+/// The error number is stored before the sequence advances, so an observer
+/// that sees a new sequence also sees the matching error number.
+#[derive(Debug, Default)]
+pub(crate) struct WritebackErrors {
+    sequence: AtomicU64,
+    errno: AtomicI32,
+}
+
+impl WritebackErrors {
+    pub(crate) fn record(&self, errno: i32) {
+        self.errno.store(errno, Ordering::Relaxed);
+        self.sequence.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn snapshot(&self) -> (u64, i32) {
+        (
+            self.sequence.load(Ordering::Acquire),
+            self.errno.load(Ordering::Acquire),
+        )
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PageCache(Arc<Vmo>);
 
@@ -189,6 +213,11 @@ impl PageCache {
     /// Returns the wrapped [`Vmo`].
     pub(crate) fn as_vmo(&self) -> &Arc<Vmo> {
         &self.0
+    }
+
+    /// Returns the retained asynchronous writeback errors.
+    pub(crate) fn writeback_errors(&self) -> &Arc<WritebackErrors> {
+        self.0.writeback_errors()
     }
 
     /// Returns the current page-cache capacity in bytes.
@@ -449,6 +478,7 @@ impl dyn PageCacheBackend {
 pub(crate) struct PageRun<'a> {
     start_idx: usize,
     pages: &'a mut dyn ExactSizeIterator<Item = LockedCachePage>,
+    writeback_errors: Arc<WritebackErrors>,
 }
 
 impl Iterator for PageRun<'_> {
@@ -462,12 +492,20 @@ impl Iterator for PageRun<'_> {
 }
 
 impl<'a> PageRun<'a> {
-    pub(super) fn new<I>(start_idx: usize, pages: &'a mut I) -> Self
+    pub(super) fn new<I>(
+        start_idx: usize,
+        pages: &'a mut I,
+        writeback_errors: Arc<WritebackErrors>,
+    ) -> Self
     where
         I: ExactSizeIterator<Item = LockedCachePage>,
     {
         debug_assert!(pages.len() > 0);
-        Self { start_idx, pages }
+        Self {
+            start_idx,
+            pages,
+            writeback_errors,
+        }
     }
 
     /// Returns the first logical page index in the run.
@@ -567,7 +605,11 @@ impl<'a> PageRun<'a> {
 
             let pages = Arc::new(pages);
             let completion_pages = pages.clone();
+            let writeback_errors = self.writeback_errors.clone();
             let complete_fn = Box::new(move |status| {
+                if status != BioStatus::Complete {
+                    writeback_errors.record(Errno::EIO as i32);
+                }
                 for page in completion_pages.iter() {
                     complete_write_page(page, status);
                 }

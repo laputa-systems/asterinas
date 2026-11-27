@@ -140,6 +140,15 @@ pub struct Vmo {
     pub(super) writable_mapping_status: WritableMappingStatus,
     /// Reverse mappings.
     pub(super) rmap: Mutex<Rmap>,
+    /// Asynchronous writeback failures retained for the next sync to report.
+    pub(super) writeback_errors: Arc<super::WritebackErrors>,
+}
+
+impl Vmo {
+    /// Returns the retained asynchronous writeback errors for this VMO.
+    pub(crate) fn writeback_errors(&self) -> &Arc<super::WritebackErrors> {
+        &self.writeback_errors
+    }
 }
 
 impl Debug for Vmo {
@@ -947,20 +956,15 @@ impl<'a> BackedVmo<'a> {
         for locked_page_run in locked_dirty_pages
             .chunk_by_mut(|(page_idx, _), (next_page_idx, _)| page_idx + 1 == *next_page_idx)
         {
-            // Single page in one run.
-            if locked_page_run.len() == 1 {
-                let (idx, locked_page) = &mut locked_page_run[0];
-                self.backend
-                    .write_page_async(*idx, locked_page.detach(), &mut io_batch)?;
-                continue;
-            }
-
-            // Multiple pages in one run.
             let start_idx = locked_page_run[0].0;
             let mut locked_pages = locked_page_run
                 .iter_mut()
                 .map(|(_, locked_page)| locked_page.detach());
-            let pages = PageRun::new(start_idx, &mut locked_pages);
+            let pages = PageRun::new(
+                start_idx,
+                &mut locked_pages,
+                self.vmo.writeback_errors.clone(),
+            );
             if let Err(err) = self.backend.write_pages_async(pages, &mut io_batch) {
                 for locked_page in locked_pages {
                     locked_page.set_dirty();

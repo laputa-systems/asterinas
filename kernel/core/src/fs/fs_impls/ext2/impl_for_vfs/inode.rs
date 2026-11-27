@@ -344,6 +344,11 @@ impl Inode for Ext2Inode {
         Ok(())
     }
 
+    fn writeback_error(&self) -> Option<(u64, i32)> {
+        self.page_cache()
+            .map(|vmo| vmo.writeback_errors().snapshot())
+    }
+
     fn fallocate(&self, mode: FallocMode, offset: usize, len: usize) -> Result<()> {
         self.fallocate(mode, offset, len)
     }

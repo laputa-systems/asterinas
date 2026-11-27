@@ -12,7 +12,10 @@ use super::{Vmo, VmoFlags, WritableMappingStatus};
 use crate::{
     prelude::*,
     vm::{
-        page_cache::{CachePage, CachePageMeta, PageCacheBackend, PageKind, cache_page::PageState},
+        page_cache::{
+            CachePage, CachePageMeta, PageCacheBackend, PageKind, WritebackErrors,
+            cache_page::PageState,
+        },
         vmar::Rmap,
     },
 };
@@ -138,6 +141,7 @@ fn alloc_vmo(
         size: AtomicUsize::new(size),
         writable_mapping_status,
         rmap: Mutex::new(rmap),
+        writeback_errors: Arc::new(WritebackErrors::default()),
     })
 }
 

@@ -91,10 +91,16 @@ impl InodeHandle {
                 .transpose()?
         };
 
+        let writeback_sequence = inode.writeback_error().map(|(sequence, _)| sequence);
+        let common = FileCommon::new(path, access_mode, status_flags);
+        if let Some(sequence) = writeback_sequence {
+            common.set_writeback_cursor(sequence);
+        }
+
         Ok(Self {
             open_file,
             offset: Mutex::new(0),
-            common: FileCommon::new(path, access_mode, status_flags),
+            common,
         })
     }
 
@@ -581,7 +587,8 @@ impl FileLike for InodeHandle {
             return open_file.sync(mode);
         }
 
-        self.path().sync(mode)
+        let sync_result = self.path().sync(mode);
+        self.check_writeback_error(sync_result)
     }
 }
 

@@ -156,6 +156,19 @@ pub(crate) trait FileLike: Pollable + Send + Sync + Any {
     fn sync(&self, _mode: SyncMode) -> Result<()> {
         Err(errno!(EINVAL, "the file does not support synchronization"))
     }
+
+    /// Reports a retained asynchronous writeback error this file description
+    /// has not observed yet, otherwise returns `sync_result` unchanged.
+    fn check_writeback_error(&self, sync_result: Result<()>) -> Result<()> {
+        if let Some((sequence, error)) = self.common().path().inode().writeback_error()
+            && sequence > self.common().writeback_cursor()
+        {
+            self.common().advance_writeback_cursor(sequence);
+            let errno = Errno::try_from(error).unwrap_or(Errno::EIO);
+            return Err(Error::new(errno));
+        }
+        sync_result
+    }
 }
 
 impl dyn FileLike {

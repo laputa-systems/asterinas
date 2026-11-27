@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <linux/capability.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -37,6 +38,10 @@
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
 #define FD_LIFETIME_CASE_ID "fd.lifetime"
+#define ERRORS_FSYNC_CASE_ID "errors.fsync"
+#define ERRORS_FDATASYNC_CASE_ID "errors.fdatasync"
+#define ERRORS_SYNCFS_CASE_ID "errors.syncfs"
+#define ERRORS_MSYNC_CASE_ID "errors.msync"
 #define INPUT_PATH "/qual/input.txt"
 #define MISSING_PATH "/qual/no-such-file"
 #define SERIAL_PATH "/dev/ttyS1"
@@ -1293,6 +1298,197 @@ static void run_fd_lifetime_case(const char *run_id, const char *nonce, const ch
     emit_final(run_id, nonce, manifest_hash, payload_hash, passed, 6, 6);
 }
 
+
+static long errors_sync(int fd, int mode) {
+    if (mode == 1) return fdatasync(fd);
+    if (mode == 2) return syncfs(fd);
+    return fsync(fd);
+}
+
+static void run_errors_sync_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                                 const char *payload_hash, int mode) {
+    struct storage_setup setup;
+    if (!begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+
+    const char *path = ADAPTER_MOUNT_POINT "/marker.txt";
+    int fd1 = open(path, O_RDWR);
+    int fd2 = open(path, O_RDWR);
+    if (fd1 < 0 || fd2 < 0) {
+        diagnostic("errors.fsync open failed: %s", strerror(errno));
+        if (fd1 >= 0) close(fd1);
+        if (fd2 >= 0) close(fd2);
+        unmount_adapter_volume();
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+
+    long first_write = write(fd1, "A", 1);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "first-write", "result", first_write, first_write == 1);
+
+    errno = 0;
+    long first_fsync_fd1 = errors_sync(fd1, mode);
+    long first_fsync_fd1_errno = first_fsync_fd1 < 0 ? errno : 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "first-fsync-fd1", "result", first_fsync_fd1,
+                       first_fsync_fd1 < 0 && first_fsync_fd1_errno == EIO);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "first-fsync-fd1-errno", "errno", first_fsync_fd1_errno,
+                     first_fsync_fd1_errno == EIO);
+
+    errno = 0;
+    long first_fsync_fd2 = errors_sync(fd2, mode);
+    long first_fsync_fd2_errno = first_fsync_fd2 < 0 ? errno : 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "first-fsync-fd2", "result", first_fsync_fd2,
+                       first_fsync_fd2 < 0 && first_fsync_fd2_errno == EIO);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "first-fsync-fd2-errno", "errno", first_fsync_fd2_errno,
+                     first_fsync_fd2_errno == EIO);
+
+    errno = 0;
+    long repeat_fsync_fd1 = errors_sync(fd1, mode);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "repeat-fsync-fd1", "result", repeat_fsync_fd1,
+                       repeat_fsync_fd1 == 0);
+    errno = 0;
+    long repeat_fsync_fd2 = errors_sync(fd2, mode);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "repeat-fsync-fd2", "result", repeat_fsync_fd2,
+                       repeat_fsync_fd2 == 0);
+
+    long second_write = write(fd1, "B", 1);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "second-write", "result", second_write, second_write == 1);
+
+    errno = 0;
+    long second_fsync_fd1 = errors_sync(fd1, mode);
+    long second_fsync_fd1_errno = second_fsync_fd1 < 0 ? errno : 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "second-fsync-fd1", "result", second_fsync_fd1,
+                       second_fsync_fd1 < 0 && second_fsync_fd1_errno == EIO);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "second-fsync-fd1-errno", "errno", second_fsync_fd1_errno,
+                     second_fsync_fd1_errno == EIO);
+
+    errno = 0;
+    long second_fsync_fd2 = errors_sync(fd2, mode);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "second-fsync-fd2", "result", second_fsync_fd2,
+                       second_fsync_fd2 < 0);
+
+    errno = 0;
+    long final_fsync_fd1 = errors_sync(fd1, mode);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-fsync-fd1", "result", final_fsync_fd1,
+                       final_fsync_fd1 == 0);
+    errno = 0;
+    long final_fsync_fd2 = errors_sync(fd2, mode);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-fsync-fd2", "result", final_fsync_fd2,
+                       final_fsync_fd2 == 0);
+
+    close(fd1);
+    close(fd2);
+    unmount_adapter_volume();
+
+    bool passed = first_write == 1 && first_fsync_fd1_errno == EIO && first_fsync_fd2_errno == EIO
+                  && repeat_fsync_fd1 == 0 && repeat_fsync_fd2 == 0 && second_write == 1
+                  && second_fsync_fd1_errno == EIO && second_fsync_fd2 < 0
+                  && final_fsync_fd1 == 0 && final_fsync_fd2 == 0;
+    emit_final(run_id, nonce, manifest_hash, payload_hash, passed,
+               SETUP_SUBTESTS + 13, SETUP_ASSERTIONS + 13);
+    diagnostic("errors.fsync probe complete status=%s", passed ? "pass" : "fail");
+}
+
+
+static void run_errors_msync_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                                  const char *payload_hash) {
+    struct storage_setup setup;
+    if (!begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+
+    const char *path = ADAPTER_MOUNT_POINT "/marker.txt";
+    int fd1 = open(path, O_RDWR);
+    int fd2 = open(path, O_RDWR);
+    if (fd1 < 0 || fd2 < 0) {
+        if (fd1 >= 0) close(fd1);
+        if (fd2 >= 0) close(fd2);
+        unmount_adapter_volume();
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+
+    void *map1 = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd1, 0);
+    void *map2 = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
+    bool maps_ok = map1 != MAP_FAILED && map2 != MAP_FAILED;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "mmap", "ok", maps_ok ? 1 : 0, maps_ok);
+    if (!maps_ok) {
+        if (map1 != MAP_FAILED) munmap(map1, 4096);
+        if (map2 != MAP_FAILED) munmap(map2, 4096);
+        close(fd1);
+        close(fd2);
+        unmount_adapter_volume();
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS + 1, SETUP_ASSERTIONS + 1);
+        return;
+    }
+
+    ((char *)map1)[0] = 'A';
+    errno = 0;
+    long first_msync_fd1 = msync(map1, 4096, MS_SYNC);
+    long first_msync_fd1_errno = first_msync_fd1 < 0 ? errno : 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "first-msync-fd1", "result", first_msync_fd1,
+                       first_msync_fd1 < 0 && first_msync_fd1_errno == EIO);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "first-msync-fd1-errno", "errno", first_msync_fd1_errno,
+                     first_msync_fd1_errno == EIO);
+
+    errno = 0;
+    long first_msync_fd2 = msync(map2, 4096, MS_SYNC);
+    long first_msync_fd2_errno = first_msync_fd2 < 0 ? errno : 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "first-msync-fd2", "result", first_msync_fd2,
+                       first_msync_fd2 < 0 && first_msync_fd2_errno == EIO);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "first-msync-fd2-errno", "errno", first_msync_fd2_errno,
+                     first_msync_fd2_errno == EIO);
+
+    errno = 0;
+    long repeat_msync_fd1 = msync(map1, 4096, MS_SYNC);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "repeat-msync-fd1", "result", repeat_msync_fd1,
+                       repeat_msync_fd1 == 0);
+    errno = 0;
+    long repeat_msync_fd2 = msync(map2, 4096, MS_SYNC);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "repeat-msync-fd2", "result", repeat_msync_fd2,
+                       repeat_msync_fd2 == 0);
+
+    ((char *)map1)[0] = 'B';
+    errno = 0;
+    long second_msync_fd1 = msync(map1, 4096, MS_SYNC);
+    long second_msync_fd1_errno = second_msync_fd1 < 0 ? errno : 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "second-msync-fd1", "result", second_msync_fd1,
+                       second_msync_fd1 < 0 && second_msync_fd1_errno == EIO);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "second-msync-fd1-errno", "errno", second_msync_fd1_errno,
+                     second_msync_fd1_errno == EIO);
+
+    errno = 0;
+    long second_msync_fd2 = msync(map2, 4096, MS_SYNC);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "second-msync-fd2", "result", second_msync_fd2,
+                       second_msync_fd2 < 0);
+
+    errno = 0;
+    long final_msync_fd1 = msync(map1, 4096, MS_SYNC);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-msync-fd1", "result", final_msync_fd1,
+                       final_msync_fd1 == 0);
+    errno = 0;
+    long final_msync_fd2 = msync(map2, 4096, MS_SYNC);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-msync-fd2", "result", final_msync_fd2,
+                       final_msync_fd2 == 0);
+
+    munmap(map1, 4096);
+    munmap(map2, 4096);
+    close(fd1);
+    close(fd2);
+    unmount_adapter_volume();
+
+    bool passed = first_msync_fd1_errno == EIO && first_msync_fd2_errno == EIO
+                  && repeat_msync_fd1 == 0 && repeat_msync_fd2 == 0
+                  && second_msync_fd1_errno == EIO && second_msync_fd2 < 0
+                  && final_msync_fd1 == 0 && final_msync_fd2 == 0;
+    emit_final(run_id, nonce, manifest_hash, payload_hash, passed,
+               SETUP_SUBTESTS + 12, SETUP_ASSERTIONS + 12);
+    diagnostic("errors.msync probe complete status=%s", passed ? "pass" : "fail");
+}
+
 static void terminate_vm(void) {
     sync();
     if (serial_fd >= 0) {
@@ -1372,6 +1568,14 @@ int main(void) {
         run_fd_pipe_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, FD_LIFETIME_CASE_ID) == 0) {
         run_fd_lifetime_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, ERRORS_FSYNC_CASE_ID) == 0) {
+        run_errors_sync_case(run_id, nonce, manifest_hash, payload_hash, 0);
+    } else if (strcmp(active_case_id, ERRORS_FDATASYNC_CASE_ID) == 0) {
+        run_errors_sync_case(run_id, nonce, manifest_hash, payload_hash, 1);
+    } else if (strcmp(active_case_id, ERRORS_SYNCFS_CASE_ID) == 0) {
+        run_errors_sync_case(run_id, nonce, manifest_hash, payload_hash, 2);
+    } else if (strcmp(active_case_id, ERRORS_MSYNC_CASE_ID) == 0) {
+        run_errors_msync_case(run_id, nonce, manifest_hash, payload_hash);
     } else {
         run_selfcheck_probe(run_id, nonce, manifest_hash, payload_hash);
     }

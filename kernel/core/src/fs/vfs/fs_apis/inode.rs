@@ -600,6 +600,15 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Ok(())
     }
 
+    /// Returns the current asynchronous writeback error sequence and error number.
+    ///
+    /// The sequence advances whenever an asynchronous writeback fails. A file
+    /// description compares it against its own cursor to report errors it has
+    /// not observed yet.
+    fn writeback_error(&self) -> Option<(u64, i32)> {
+        None
+    }
+
     /// Manipulates a range of space of the file according to the specified allocate mode,
     /// the manipulated range starts at `offset` and continues for `len` bytes.
     fn fallocate(&self, mode: FallocMode, offset: usize, len: usize) -> Result<()> {
