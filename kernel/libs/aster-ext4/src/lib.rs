@@ -12,6 +12,7 @@
 use core::fmt;
 
 pub mod jbd2;
+pub mod reader;
 
 pub const SUPER_BLOCK_OFFSET: usize = 1024;
 pub const BLOCK_SIZE: usize = 4096;
