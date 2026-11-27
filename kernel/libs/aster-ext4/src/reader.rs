@@ -248,6 +248,95 @@ pub fn read_file(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<u8>
     Ok(data)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirEntry {
+    pub ino: u32,
+    pub name: Vec<u8>,
+    pub file_type: u8,
+}
+
+/// Parses linear directory entries from a directory's data blocks.
+pub fn read_dir(image: &[u8], geom: &Geometry, inode: &Inode) -> Result<Vec<DirEntry>, ReaderError> {
+    let data = read_file(image, geom, inode)?;
+    let mut entries = Vec::new();
+    let mut cursor = 0usize;
+    while cursor + 8 <= data.len() {
+        let ino = le_u32(&data, cursor).ok_or(ReaderError::Truncated)?;
+        let rec_len = le_u16(&data, cursor + 4).ok_or(ReaderError::Truncated)? as usize;
+        if rec_len < 8 || cursor + rec_len > data.len() {
+            return Err(ReaderError::Truncated);
+        }
+        let name_len = data[cursor + 6] as usize;
+        let file_type = data[cursor + 7];
+        if name_len + 8 > rec_len {
+            return Err(ReaderError::Truncated);
+        }
+        if ino != 0 {
+            entries.push(DirEntry {
+                ino,
+                name: data[cursor + 8..cursor + 8 + name_len].to_vec(),
+                file_type,
+            });
+        }
+        cursor += rec_len;
+    }
+    Ok(entries)
+}
+
+pub fn lookup(image: &[u8], geom: &Geometry, dir: &Inode, name: &[u8]) -> Option<u32> {
+    read_dir(image, geom, dir)
+        .ok()?
+        .into_iter()
+        .find(|entry| entry.name == name)
+        .map(|entry| entry.ino)
+}
+
+/// Reads a fast symlink target stored inline in the inode's block pointers.
+pub fn fast_symlink(inode: &Inode) -> Option<Vec<u8>> {
+    if inode.size as usize > INODE_BLOCK_PTRS_LEN || inode.size == 0 {
+        return None;
+    }
+    if inode.mode & 0xF000 != 0xA000 {
+        return None;
+    }
+    Some(inode.block_ptrs[..inode.size as usize].to_vec())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XattrEntry {
+    pub name_index: u8,
+    pub name_len: u8,
+    pub value_len: u16,
+}
+
+pub fn xattr_entries(block: &[u8]) -> Result<Vec<XattrEntry>, ReaderError> {
+    if block.len() < 32 {
+        return Err(ReaderError::Truncated);
+    }
+    let magic = le_u32(block, 0x00).ok_or(ReaderError::Truncated)?;
+    if magic != 0xEA020000 {
+        return Err(ReaderError::BadExtentMagic);
+    }
+    let mut cursor = 32usize;
+    let mut entries = Vec::new();
+    while cursor + 8 <= block.len() {
+        let name_len = block[cursor] as usize;
+        let name_index = block[cursor + 1];
+        let value_len = le_u16(block, cursor + 2).ok_or(ReaderError::Truncated)? as usize;
+        let entry_len = 8 + ((name_len + 3) & !3) + ((value_len + 3) & !3);
+        if entry_len < 8 || cursor + entry_len > block.len() {
+            return Err(ReaderError::Truncated);
+        }
+        entries.push(XattrEntry {
+            name_index,
+            name_len: name_len as u8,
+            value_len: value_len as u16,
+        });
+        cursor += entry_len;
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +377,26 @@ mod tests {
         let geom = geometry(&image).unwrap();
         let root = read_inode(&image, &geom, ROOT_INO).unwrap();
         let _ = read_file(&image, &geom, &root).unwrap();
+    }
+
+    #[test]
+    fn reads_root_directory_and_finds_marker() {
+        let image = fixture("basic");
+        let geom = geometry(&image).unwrap();
+        let root = read_inode(&image, &geom, ROOT_INO).unwrap();
+        let entries = read_dir(&image, &geom, &root).unwrap();
+        assert!(entries.iter().any(|entry| entry.name == b"marker.txt"));
+        let ino = lookup(&image, &geom, &root, b"marker.txt").unwrap();
+        let marker = read_inode(&image, &geom, ino).unwrap();
+        let data = read_file(&image, &geom, &marker).unwrap();
+        assert_eq!(data, b"lc14-basic\n");
+    }
+
+    #[test]
+    fn xattr_parser_rejects_bad_magic() {
+        let mut block = vec![0u8; 64];
+        assert_eq!(xattr_entries(&block), Err(ReaderError::BadExtentMagic));
+        block[0..4].copy_from_slice(&0xEA02_0000u32.to_le_bytes());
+        assert!(xattr_entries(&block).is_ok());
     }
 }
