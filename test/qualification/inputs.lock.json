@@ -17,12 +17,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "b6546468800cd0d9fdae89a554271854842423f1488456b490db812b4817c6ec",
+    "kernel_sha256": "50185906c99c0a00ae469af0b65fd455207729ccffbceb1bd173cfede86d4e17",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "4cd704d7140be45f3490857257593d48dbc71ef8e50664db9aae9c3dbe2b8e4b"
+    "source_tree_sha256": "40d399ee97b9321515b396a753de89e06b59799699afd183c2460e932956bce0"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -38,13 +38,14 @@
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "d36801e8a9f140000a0438c1758b13c74b2f884e2eaffcf27d3232857ed61969",
+      "test/qualification/qualcore/lock.py": "02349a1dc606862ed69b296ad7faa35ceed9bacdb01f2b7428df61ffb2240f72",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
+      "test/qualification/qualcore/persistence.py": "72b8345b57375e962cc328df8340318a303913415ca26c91104aa94fe98973b4",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
       "test/qualification/qualcore/qemu.py": "f93742ae85eaafaabab5d1ea549e783270513d0f848083257e3e0133d9256755",
       "test/qualification/qualcore/results.py": "09d0eed452b7a47d16f8f598b366d10383c423ec7a9b59f0b34d4cc0a68b5b1a",
-      "test/qualification/qualcore/runner.py": "07e19fa8c267b5d59c67cde2781fb32c07d2b4ac3899fb91d61631b7674b764c",
-      "test/qualification/qualcore/selftest.py": "a62d46671cfb0daa5b3da06c17d5cbcdeea15b6021483cf87e0d0eb879f28bb6",
+      "test/qualification/qualcore/runner.py": "b5c0d927bc16f2b2c9fb9c07d56248c4cd5bf4be84028b0c9240e0fa9f7ab685",
+      "test/qualification/qualcore/selftest.py": "0105b98abf9eaa54519544d815a9104e623b1a863ec48114f25999801af3bde7",
       "test/qualification/qualcore/supervisor.py": "067c3d694359385ef35b79c60f57b2b7d9bbaf3b22080db6f9023182d582e0d5",
       "test/qualification/qualcore/util.py": "3698485c7a3a80f40c39024aefafe6c0bb46e708c4834180c8a163a5a847dd04",
       "test/qualification/run.py": "a964c34866c9353c279c1b05e8ccd2ece45f6fe2ff262c9cab4eb3f6edb32677"
@@ -65,15 +66,15 @@
   "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "bdf0e9c6d6c7d2893f31fce547b180760b058d56b33ffc62ce8f519b0211947c",
+    "binary_sha256": "203dfacb3a43b070920d4805d2d375282601947ada63b9a0bec4516aeb8baec4",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "9fd898359a623283dd842b41a8deaae2b1729f51a8830d2160d953041b33309a",
+    "initramfs_sha256": "74dd05af4ba8cd39333fb56bd1c90bf358a0c6a3a92355016958de054e2f4ab3",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "126ff751ede7b76bfa4500abc1be72bb00f9b91d58a2dc6dbb6f6c3fc9b2b5a7"
+    "source_sha256": "65d0bbaffc02dc462e26cfe21eaf64366e51ede2dfb58915a47857916b09afcb"
   },
   "python": {
     "minimum_version": "3.11"
@@ -311,6 +312,38 @@
       "manifest_hash": "4f66b9674dcab3802e15c48362e9a5458d3daa14ca1f9ed75d530b8115251405",
       "normalization_rules": [],
       "payload_hash": "56b75920990458b9e31307bbce82f365335d6a0a3c8be865b8a8876807a620de"
+    },
+    "s0-persistence": {
+      "case_ids": [
+        "persistence.synced",
+        "persistence.omitted-sync"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc11-persistence-r1",
+          "deadline_seconds": 90.0,
+          "id": "persistence.synced",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        },
+        {
+          "artifacts": [],
+          "contract_revision": "lc11-persistence-r1",
+          "deadline_seconds": 90.0,
+          "id": "persistence.omitted-sync",
+          "validators": [
+            "reference-contract",
+            "blklogwrites-log"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "47485142ff869a503cc73acd69ff405e7382b66682b402a288f2cc30b50d5ee3",
+      "normalization_rules": [],
+      "payload_hash": "401a3a532291fbafb2ebb84542452195939cdb29178ce7e446a8e09ea1ba6916"
     },
     "selfcheck": {
       "case_ids": [

@@ -369,6 +369,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     pilot_selection = _load_selection(repo, "pilot-ext2")
     fd_selection = _load_selection(repo, "pilot-fd")
     errors_selection = _load_selection(repo, "s0-errors")
+    persistence_selection = _load_selection(repo, "s0-persistence")
     return {
         "schema": 1,
         "lock_revision": "lc07-r1",
@@ -438,6 +439,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "pilot-ext2": _selection_lock(pilot_selection),
             "pilot-fd": _selection_lock(fd_selection),
             "s0-errors": _selection_lock(errors_selection),
+            "s0-persistence": _selection_lock(persistence_selection),
         },
     }
 
@@ -601,6 +603,12 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("selections", "s0-errors", "cases"),
         ("selections", "s0-errors", "excluded"),
         ("selections", "s0-errors", "normalization_rules"),
+        ("selections", "s0-persistence", "manifest_hash"),
+        ("selections", "s0-persistence", "payload_hash"),
+        ("selections", "s0-persistence", "case_ids"),
+        ("selections", "s0-persistence", "cases"),
+        ("selections", "s0-persistence", "excluded"),
+        ("selections", "s0-persistence", "normalization_rules"),
     )
     missing: list[str] = []
     for path in required:
@@ -732,7 +740,7 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         build_asterinas(repo)
     _check_file_hash(repo, asterinas_build["kernel_path"], asterinas_build["kernel_sha256"], "Asterinas kernel", failures, checked)
 
-    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors"):
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)

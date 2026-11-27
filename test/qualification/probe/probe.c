@@ -42,6 +42,8 @@
 #define ERRORS_FDATASYNC_CASE_ID "errors.fdatasync"
 #define ERRORS_SYNCFS_CASE_ID "errors.syncfs"
 #define ERRORS_MSYNC_CASE_ID "errors.msync"
+#define PERSISTENCE_SYNCED_CASE_ID "persistence.synced"
+#define PERSISTENCE_OMITTED_CASE_ID "persistence.omitted-sync"
 #define INPUT_PATH "/qual/input.txt"
 #define MISSING_PATH "/qual/no-such-file"
 #define SERIAL_PATH "/dev/ttyS1"
@@ -56,6 +58,7 @@
 #define SETUP_ASSERTIONS 5
 
 static int serial_fd = -1;
+static bool omit_final_sync = false;
 static unsigned long sequence = 0;
 static char active_case_id[128] = SELFCHECK_CASE_ID;
 
@@ -603,7 +606,9 @@ static bool begin_storage_case(const char *run_id, const char *nonce, const char
 }
 
 static void unmount_adapter_volume(void) {
-    sync();
+    if (!omit_final_sync) {
+        sync();
+    }
     if (umount(ADAPTER_MOUNT_POINT) != 0) {
         diagnostic("ext2 umount failed: %s", strerror(errno));
     }
@@ -1489,8 +1494,50 @@ static void run_errors_msync_case(const char *run_id, const char *nonce, const c
     diagnostic("errors.msync probe complete status=%s", passed ? "pass" : "fail");
 }
 
+static void run_persistence_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                                 const char *payload_hash, bool sync_file) {
+    struct storage_setup setup;
+    if (!begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+
+    const char *path = ADAPTER_MOUNT_POINT "/marker.txt";
+    int fd = open(path, O_WRONLY);
+    long write_result = -1;
+    long sync_result = 0;
+    if (fd >= 0) {
+        write_result = write(fd, "P", 1);
+        if (sync_file) {
+            sync_result = fsync(fd);
+        }
+        close(fd);
+    } else {
+        diagnostic("persistence open failed: %s", strerror(errno));
+    }
+
+    bool write_ok = write_result == 1;
+    bool sync_ok = sync_result == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "data-write", "result", write_result, write_ok);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "sync-result", "result", sync_result, sync_ok);
+    if (!omit_final_sync) {
+        unmount_adapter_volume();
+    }
+    emit_final(run_id, nonce, manifest_hash, payload_hash, write_ok && sync_ok,
+               SETUP_SUBTESTS + 2, SETUP_ASSERTIONS + 2);
+    diagnostic("persistence probe complete status=%s sync=%s", write_ok && sync_ok ? "pass" : "fail", sync_file ? "yes" : "no");
+    if (omit_final_sync) {
+        /* Stay silent so the supervisor cuts power before any implicit flush. */
+        for (;;) {
+            pause();
+        }
+    }
+}
+
 static void terminate_vm(void) {
-    sync();
+    if (!omit_final_sync) {
+        sync();
+    }
     if (serial_fd >= 0) {
         tcdrain(serial_fd);
     }
@@ -1526,6 +1573,7 @@ int main(void) {
     }
 
     emit_start(run_id, nonce, manifest_hash, payload_hash);
+    omit_final_sync = strcmp(control, "omit-sync") == 0;
     if (strcmp(control, "hang") == 0) {
         diagnostic("entering deliberate hang control");
         for (;;) {
@@ -1576,6 +1624,10 @@ int main(void) {
         run_errors_sync_case(run_id, nonce, manifest_hash, payload_hash, 2);
     } else if (strcmp(active_case_id, ERRORS_MSYNC_CASE_ID) == 0) {
         run_errors_msync_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, PERSISTENCE_SYNCED_CASE_ID) == 0) {
+        run_persistence_case(run_id, nonce, manifest_hash, payload_hash, true);
+    } else if (strcmp(active_case_id, PERSISTENCE_OMITTED_CASE_ID) == 0) {
+        run_persistence_case(run_id, nonce, manifest_hash, payload_hash, false);
     } else {
         run_selfcheck_probe(run_id, nonce, manifest_hash, payload_hash);
     }

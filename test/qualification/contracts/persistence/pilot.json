@@ -1,0 +1,270 @@
+{
+  "cases": [
+    {
+      "id": "persistence.synced",
+      "contract_revision": "lc11-persistence-r1",
+      "area": "persistence",
+      "item": "LC-11",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "persistence-r1",
+        "upstream": "asterinas-qualification-persistence"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Write one byte to a pre-existing ext2 file and fsync it, leaving a durable log prefix.",
+      "expected_subtests": [
+        {
+          "id": "setup-disk-identity",
+          "assertions": [
+            {
+              "id": "serial",
+              "type": "text",
+              "expected": "qual-lc06-adapter",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-write-cache",
+          "assertions": [
+            {
+              "id": "mode",
+              "type": "text",
+              "expected": "write back",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-filesystem",
+          "assertions": [
+            {
+              "id": "filesystem",
+              "type": "text",
+              "expected": "ext2",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-mount",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-privilege",
+          "assertions": [
+            {
+              "id": "uid",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "data-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "sync-result",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 90,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile s0-persistence --controls",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter"
+      }
+    },
+    {
+      "id": "persistence.omitted-sync",
+      "contract_revision": "lc11-persistence-r1",
+      "area": "persistence",
+      "item": "LC-11",
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "persistence-r1",
+        "upstream": "asterinas-qualification-persistence"
+      },
+      "membership": "required",
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT2_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "procedure": "Write one byte to a pre-existing ext2 file without sync, leaving a volatile log tail.",
+      "expected_subtests": [
+        {
+          "id": "setup-disk-identity",
+          "assertions": [
+            {
+              "id": "serial",
+              "type": "text",
+              "expected": "qual-lc06-adapter",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-write-cache",
+          "assertions": [
+            {
+              "id": "mode",
+              "type": "text",
+              "expected": "write back",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-filesystem",
+          "assertions": [
+            {
+              "id": "filesystem",
+              "type": "text",
+              "expected": "ext2",
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-mount",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "setup-privilege",
+          "assertions": [
+            {
+              "id": "uid",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "data-write",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 1,
+              "mode": "exact"
+            }
+          ]
+        },
+        {
+          "id": "sync-result",
+          "assertions": [
+            {
+              "id": "result",
+              "type": "integer",
+              "expected": 0,
+              "mode": "exact"
+            }
+          ]
+        }
+      ],
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "deadline_seconds": 90,
+      "budget_bytes": 131072,
+      "seed": 0,
+      "iterations": 1,
+      "artifacts": [],
+      "validators": [
+        "reference-contract",
+        "blklogwrites-log"
+      ],
+      "replay": "python3 test/qualification/run.py run --profile s0-persistence --controls",
+      "payload": {
+        "adapter": true,
+        "disk_serial": "qual-lc06-adapter"
+      }
+    }
+  ]
+}

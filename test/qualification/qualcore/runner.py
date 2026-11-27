@@ -23,6 +23,7 @@ from .lock import (
     write_effective_lock,
 )
 from .manifest import CaseSpec, Selection, load_case_index, load_profile
+from .persistence import missing_durable_sectors, omitted_sync_detected, parse_records
 from .qemu import VmExclusion, qemu_version, resolve_qemu_path, run_qemu
 from .supervisor import Supervisor
 from .results import ResultContext, ingest_result_stream, make_result_line
@@ -1138,9 +1139,117 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
         return 1
 
 
+def run_persistence_controls(repo: Path, profile_name: str) -> int:
+    bundle: EvidenceBundle | None = None
+    controls: dict[str, dict[str, Any]] = {}
+    internal_failures: list[str] = []
+    control_backends: dict[str, dict[str, Any]] = {}
+    try:
+        verification = verify_lock(repo)
+        selection = load_selection(repo, profile_name)
+        snapshot = create_snapshot(verification, selection)
+        assert_selection_snapshot(selection, snapshot)
+        bundle = EvidenceBundle.create(repo / "target/qualification")
+        inputs = copy_run_inputs(
+            repo,
+            bundle,
+            snapshot,
+            any(bool(case.payload.get("adapter")) for case in selection.cases),
+        )
+        input_hashes, effective_lock_hash = bind_run_inputs(bundle, verification, selection, snapshot)
+        _delegate_lc02_controls(repo, bundle, controls)
+
+        with VmExclusion(repo / "target/qualification/vm.lock"):
+            synced = execute_backend(
+                repo, bundle, inputs, snapshot, selection, "control-synced",
+                case=selection.case_map["persistence.synced"], backend="asterinas",
+            )
+            omitted = execute_backend(
+                repo, bundle, inputs, snapshot, selection, "control-omitted-sync",
+                case=selection.case_map["persistence.omitted-sync"],
+                control="omit-sync", backend="asterinas",
+                deadline=20, silence_timeout=3,
+            )
+        control_backends["synced"] = _backend_json(synced)
+        control_backends["omitted-sync"] = _backend_json(omitted)
+
+        def log_records(label: str):
+            path = bundle.artifacts_dir / f"{label}/blklogwrites.log"
+            if not path.is_file():
+                raise ValueError(f"{label}: blklogwrites log is missing")
+            return parse_records(path)
+
+        synced_records = log_records("control-synced")
+        omitted_records = log_records("control-omitted-sync")
+        synced_omitted = omitted_sync_detected(synced_records)
+        missing = missing_durable_sectors(synced_records, omitted_records)
+        controls["persistence:synced-log-complete"] = {
+            "detected": not synced_omitted,
+            "detail": f"synced log has no volatile data tail: {not synced_omitted}",
+        }
+        controls["persistence:omitted-sync-crash-cut"] = {
+            "detected": bool(missing),
+            "detail": f"sectors durable with sync but absent without: {sorted(missing)}",
+        }
+        if synced_omitted or not missing:
+            internal_failures.append("persistence model did not separate synced and omitted-sync logs")
+
+        detected_count = sum(1 for item in controls.values() if item["detected"])
+        report = {
+            "run_id": bundle.run_id,
+            "profile": profile_name,
+            "controls": True,
+            "lock_hash": verification.lock_hash,
+            "manifest_hash": selection.manifest_hash,
+            "payload_hash": selection.payload_hash,
+            "input_hashes": input_hashes,
+            "effective_lock_sha256": effective_lock_hash,
+            "backend_identity": snapshot.backend_identity,
+            "selection_snapshot": {
+                "manifest_hash": snapshot.manifest_hash,
+                "payload_hash": snapshot.payload_hash,
+                "case_ids": list(snapshot.case_ids),
+            },
+            "replay": replay_index(selection),
+            "control_backends": control_backends,
+            "controls": controls,
+            "pending_controls": {},
+            "controls_detected": detected_count,
+            "controls_total": len(controls),
+            "internal_failures": internal_failures,
+        }
+        teardown_errors = bundle.teardown()
+        report["teardown_errors"] = teardown_errors
+        bundle.publish_report(report)
+        print(f"controls evidence: {bundle.root}")
+        print(f"report: {bundle.report_path}")
+        for name, item in sorted(controls.items()):
+            state = "DETECTED" if item["detected"] else "NOT-DETECTED"
+            print(f"{state} {name}: {item['detail']}")
+        for failure in internal_failures:
+            print(f"INTERNAL-FAIL {failure}")
+        for error in teardown_errors:
+            print(f"teardown error: {error}")
+        print(f"CONTROLS RESULT: {detected_count}/{len(controls)} controls detected")
+        ok = detected_count == len(controls) and not internal_failures and not teardown_errors
+        return 0 if ok else 1
+    except Exception as error:
+        if bundle is not None and not bundle.report_path.exists():
+            try:
+                bundle.register_artifact("harness-error.txt", f"{type(error).__name__}: {error}\n".encode("utf-8", errors="replace"))
+                bundle.publish_report({"run_id": bundle.run_id, "profile": profile_name, "controls": True,
+                                       "error": f"{type(error).__name__}: {error}", "controls": controls})
+            except Exception:
+                pass
+        print(f"HARNESS_ERROR {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+
+
 def run_controls(repo: Path, profile_name: str) -> int:
     if profile_name == "adapter":
         return run_adapter_controls(repo, profile_name)
+    if profile_name == "s0-persistence":
+        return run_persistence_controls(repo, profile_name)
     bundle: EvidenceBundle | None = None
     controls: dict[str, dict[str, Any]] = {}
     internal_failures: list[str] = []

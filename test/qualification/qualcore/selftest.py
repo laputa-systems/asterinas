@@ -31,6 +31,14 @@ from . import lock as lock_module
 from .gtest import parse_gtest_report
 from .lock import _probe_rebuild_required, asterinas_source_tree_hash
 from .manifest import Selection, load_case_index, load_case_manifest, load_profile
+from .persistence import (
+    durable_writes,
+    enumerate_crash_cuts,
+    is_data_write,
+    missing_durable_sectors,
+    omitted_sync_detected,
+    parse_records,
+)
 from .results import ResultContext, ingest_result_stream, make_result_line
 from .runner import (
     BackendEvidence,
@@ -1141,6 +1149,59 @@ def selftest_main() -> int:
     evaluate("blklog-impossible-size", blklog_control("impossible-size", [(0, 1 << 62, 0)]))
     evaluate("blklog-unsupported-flags", blklog_control("unsupported-flags", [(0, 1, 1 << 20)]))
     evaluate("blklog-no-data-writes", blklog_control("no-data-writes", [(0, 0, LOG_FLUSH_FLAG)]))
+
+    def persistence_model(name: str, entries: list[tuple[int, int, int]]) -> tuple[bool, str]:
+        path = bundle.work_dir / f"persistence-{name}.log"
+        _blklog_fixture(path, entries)
+        records = parse_records(path)
+        cuts = enumerate_crash_cuts(records)
+        detected = omitted_sync_detected(records)
+        durable_at_last_cut = len(durable_writes(records, cuts[-1]))
+        write_count = sum(1 for record in records if is_data_write(record))
+        return cuts[0] == 0 and cuts[-1] == len(records) and durable_at_last_cut == write_count and not detected, (
+            f"cuts={cuts} durable={durable_at_last_cut} writes={write_count} omitted={detected}"
+        )
+
+    evaluate(
+        "persistence-synced-write-durable",
+        lambda: persistence_model("synced", [(0, 1, 0), (8, 1, 0), (16, 0, LOG_FLUSH_FLAG)]),
+    )
+
+    def persistence_omitted() -> tuple[bool, str]:
+        path = bundle.work_dir / "persistence-omitted.log"
+        _blklog_fixture(path, [(0, 1, 0), (8, 0, LOG_FLUSH_FLAG), (16, 1, 0)])
+        records = parse_records(path)
+        detected = omitted_sync_detected(records)
+        cuts = enumerate_crash_cuts(records)
+        durable = durable_writes(records, cuts[-1])
+        return detected and cuts == [0, 2] and len(durable) == 1 and durable[0].index == 0, (
+            f"cuts={cuts} omitted={detected} durable={list(durable)}"
+        )
+
+    evaluate("persistence-omitted-sync-detected", persistence_omitted)
+
+    def persistence_corrupt() -> tuple[bool, str]:
+        path = bundle.work_dir / "persistence-corrupt.log"
+        _blklog_fixture(path, [(0, 1, 0)])
+        raw = path.read_bytes()
+        path.write_bytes(raw[:800])
+        try:
+            parse_records(path)
+        except ValueError:
+            return True, "corrupt log rejected by model"
+        return False, "corrupt log accepted by model"
+
+    evaluate("persistence-corrupt-log-rejected", persistence_corrupt)
+
+    def persistence_missing_sector() -> tuple[bool, str]:
+        synced_path = bundle.work_dir / "persistence-compare-synced.log"
+        omitted_path = bundle.work_dir / "persistence-compare-omitted.log"
+        _blklog_fixture(synced_path, [(0, 1, 0), (8, 1, 0), (16, 0, LOG_FLUSH_FLAG)])
+        _blklog_fixture(omitted_path, [(0, 1, 0), (8, 0, LOG_FLUSH_FLAG)])
+        missing = missing_durable_sectors(parse_records(synced_path), parse_records(omitted_path))
+        return missing == {8}, f"missing durable sectors={sorted(missing)}"
+
+    evaluate("persistence-missing-durable-sector", persistence_missing_sector)
 
     def copied_input_control(name: str, original: bytes, replacement: bytes) -> tuple[bool, str]:
         path = bundle.work_dir / f"copy-{name}"

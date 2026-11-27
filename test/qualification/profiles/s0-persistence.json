@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "s0-persistence",
+  "inherits": [],
+  "cases": [
+    "persistence.synced",
+    "persistence.omitted-sync"
+  ],
+  "excludes": []
+}
