@@ -48,6 +48,7 @@ members = [
     "kernel/core/comps/time",
     "kernel/core/comps/virtio",
     "kernel/libs/aster-bigtcp",
+    "kernel/libs/aster-ext4",
     "kernel/libs/aster-fuse",
     "kernel/libs/aster-rights",
     "kernel/libs/aster-rights-proc",

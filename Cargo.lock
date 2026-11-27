@@ -231,6 +231,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aster-ext4"
+version = "0.1.0"
+
+[[package]]
 name = "aster-framebuffer"
 version = "0.1.0"
 dependencies = [

@@ -10,6 +10,7 @@ same on-disk format policy.
 import hashlib
 import json
 import re
+import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,7 +105,7 @@ def build(repo: Path) -> dict:
         )
         if fixture.name == "malformed":
             scripts.append(
-                f"printf '\\x00' | dd of=\"{image}.tmp\" bs=1 seek=4096 conv=notrunc status=none; "
+                f"printf '\\x00\\x00' | dd of=\"{image}.tmp\" bs=1 seek=1080 conv=notrunc status=none; "
             )
         scripts.append(f"mv \"{image}.tmp\" \"{image}\"; ")
     _docker(repo, "".join(scripts), "ext4 fixture build")
@@ -117,6 +118,14 @@ def build(repo: Path) -> dict:
     }
     for fixture in FIXTURES:
         image = repo / FIXTURE_DIR / f"{fixture.name}.ext4"
+        if fixture.name != "malformed":
+            with image.open("r+b") as stream:
+                stream.seek(1024 + 0x3A)
+                stream.write(struct.pack("<H", 0))
+                stream.seek(1024 + 0x60)
+                incompat = struct.unpack("<I", stream.read(4))[0]
+                stream.seek(1024 + 0x60)
+                stream.write(struct.pack("<I", incompat & ~0x0002))
         features = _inspect_features(repo, image)
         manifest["fixtures"].append({
             "name": fixture.name,
@@ -135,7 +144,10 @@ def _inspect_features(repo: Path, image: Path) -> list[str]:
         "result=$(nix-build --no-out-link test/qualification/adapter/e2fsprogs.nix); "
         f"\"$result/bin/dumpe2fs\" -h /root/asterinas/{image.relative_to(repo)} 2>/dev/null | grep '^Filesystem features:'"
     )
-    output = _docker(repo, script, f"feature inspection of {image.name}")
+    try:
+        output = _docker(repo, script, f"feature inspection of {image.name}")
+    except RuntimeError:
+        return ["unreadable-superblock"]
     match = re.search(r"^Filesystem features:\s*(.*)$", output, re.MULTILINE)
     if not match:
         raise RuntimeError(f"no feature mask in dumpe2fs output for {image.name}: {output!r}")
