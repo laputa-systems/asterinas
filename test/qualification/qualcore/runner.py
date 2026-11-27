@@ -114,6 +114,7 @@ def create_snapshot(verification: LockVerification, selection: Selection) -> Run
         "probe-input.txt": document["probe"]["input_payload_sha256"],
         "inputs.lock.json": verification.lock_hash,
         "adapter-disk.ext2": document["adapter"]["disk_sha256"],
+        "adapter-disk.ext4": document["adapter"]["ext4_disk_sha256"],
         "adapter-wrong-disk.ext2": document["adapter"]["wrong_disk_sha256"],
         "adapter-wrong-filesystem.img": document["adapter"]["wrong_filesystem_sha256"],
     }
@@ -212,6 +213,7 @@ def copy_run_inputs(
         sources.update(
             {
                 "adapter-disk.ext2": repo / CACHE_DIR / "adapter-disk.ext2",
+                "adapter-disk.ext4": repo / CACHE_DIR / "adapter-disk.ext4",
                 "adapter-wrong-disk.ext2": repo / CACHE_DIR / "adapter-wrong-disk.ext2",
                 "adapter-wrong-filesystem.img": repo / CACHE_DIR / "adapter-wrong-filesystem.img",
             }
@@ -351,7 +353,7 @@ def execute_backend(
     adapter_enabled = bool(case.payload.get("adapter")) and not termination_control
     adapter_image = None
     if adapter_enabled and control != "missing-device":
-        image_name = "adapter-disk.ext2"
+        image_name = case.payload.get("disk_image", "adapter-disk.ext2")
         if control == "wrong-disk":
             image_name = "adapter-wrong-disk.ext2"
         elif control == "wrong-filesystem":
@@ -406,7 +408,8 @@ def execute_backend(
         else:
             bundle.register_file(f"{label}/blkdebug.conf", execution.adapter_disk.blkdebug_config)
             bundle.register_file(f"{label}/blklogwrites.log", execution.adapter_disk.write_log)
-            storage_failures.extend(validate_blklogwrites(execution.adapter_disk.write_log))
+            if case.payload.get("expect_writes", True):
+                storage_failures.extend(validate_blklogwrites(execution.adapter_disk.write_log))
     storage_diagnostics = tuple(storage_failures)
     stream_text = stream_bytes.decode("utf-8", errors="replace")
     context = ResultContext(

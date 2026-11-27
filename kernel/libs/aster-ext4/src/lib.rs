@@ -15,6 +15,8 @@ pub mod jbd2;
 pub mod reader;
 pub mod recovery;
 
+use reader::{BlockReader, SliceReader};
+
 pub const SUPER_BLOCK_OFFSET: usize = 1024;
 pub const BLOCK_SIZE: usize = 4096;
 pub const MIN_BLOCK_SIZE: usize = 1024;
@@ -126,17 +128,23 @@ pub fn check_feature_policy(info: &Info) -> Result<(), Error> {
 
 /// Parses the superblock and verifies the group descriptor table checksums.
 pub fn analyze(image: &[u8]) -> Result<Info, Error> {
-    let sb = image
-        .get(SUPER_BLOCK_OFFSET..SUPER_BLOCK_OFFSET + 1024)
+    analyze_from(&SliceReader::new(image))
+}
+
+/// Parses through a bounded reader so a block device need only supply the
+/// superblock and group-descriptor blocks it actually needs.
+pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
+    let sb = reader
+        .read_at(SUPER_BLOCK_OFFSET as u64, 1024)
         .ok_or(Error::Truncated)?;
-    if read_u16(sb, SB_MAGIC)? != MAGIC {
+    if read_u16(&sb, SB_MAGIC)? != MAGIC {
         return Err(Error::BadMagic);
     }
-    if read_u32(sb, SB_REV_LEVEL)? < 1 {
+    if read_u32(&sb, SB_REV_LEVEL)? < 1 {
         return Err(Error::BadRevision);
     }
 
-    let log_block_size = read_u32(sb, 0x18)?;
+    let log_block_size = read_u32(&sb, 0x18)?;
     if log_block_size > 6 {
         return Err(Error::BadBlockSize);
     }
@@ -145,15 +153,15 @@ pub fn analyze(image: &[u8]) -> Result<Info, Error> {
         return Err(Error::BadBlockSize);
     }
 
-    let inode_size = read_u16(sb, SB_INODE_SIZE)? as usize;
+    let inode_size = read_u16(&sb, SB_INODE_SIZE)? as usize;
     if inode_size < 128 || !inode_size.is_power_of_two() {
         return Err(Error::BadInodeSize);
     }
 
-    let features_compat = read_u32(sb, SB_FEATURE_COMPAT)?;
-    let features_incompat = read_u32(sb, SB_FEATURE_INCOMPAT)?;
-    let features_ro_compat = read_u32(sb, SB_FEATURE_RO_COMPAT)?;
-    let state = read_u16(sb, SB_STATE)?;
+    let features_compat = read_u32(&sb, SB_FEATURE_COMPAT)?;
+    let features_incompat = read_u32(&sb, SB_FEATURE_INCOMPAT)?;
+    let features_ro_compat = read_u32(&sb, SB_FEATURE_RO_COMPAT)?;
+    let state = read_u16(&sb, SB_STATE)?;
     if state & STATE_NEEDS_RECOVERY != 0 || features_incompat & INCOMPAT_RECOVERY != 0 {
         return Err(Error::NeedsRecovery);
     }
@@ -161,31 +169,31 @@ pub fn analyze(image: &[u8]) -> Result<Info, Error> {
         return Err(Error::Unclean);
     }
 
-    let blocks_per_group = read_u32(sb, 0x20)? as usize;
-    let blocks_count_lo = read_u32(sb, 0x04)? as u64;
+    let blocks_per_group = read_u32(&sb, 0x20)? as usize;
+    let blocks_count_lo = read_u32(&sb, 0x04)? as u64;
     let blocks_count_hi = if features_incompat & INCOMPAT_64BIT != 0 {
-        read_u32(sb, 0x150)? as u64
+        read_u32(&sb, 0x150)? as u64
     } else {
         0
     };
     let blocks_count = blocks_count_lo | (blocks_count_hi << 32);
-    let inodes_count = read_u32(sb, 0x00)?;
-    let inodes_per_group = read_u32(sb, 0x28)? as usize;
-    let free_blocks_lo = read_u32(sb, 0x0C)? as u64;
-    let reserved_blocks_lo = read_u32(sb, 0x08)? as u64;
+    let inodes_count = read_u32(&sb, 0x00)?;
+    let inodes_per_group = read_u32(&sb, 0x28)? as usize;
+    let free_blocks_lo = read_u32(&sb, 0x0C)? as u64;
+    let reserved_blocks_lo = read_u32(&sb, 0x08)? as u64;
     let free_blocks_hi = if features_incompat & INCOMPAT_64BIT != 0 {
-        read_u32(sb, 0x1F4)? as u64
+        read_u32(&sb, 0x1F4)? as u64
     } else {
         0
     };
     let reserved_blocks_hi = if features_incompat & INCOMPAT_64BIT != 0 {
-        read_u32(sb, 0x1EC)? as u64
+        read_u32(&sb, 0x1EC)? as u64
     } else {
         0
     };
     let free_blocks_count = free_blocks_lo | (free_blocks_hi << 32);
     let reserved_blocks_count = reserved_blocks_lo | (reserved_blocks_hi << 32);
-    let free_inodes_count = read_u32(sb, 0x10)?;
+    let free_inodes_count = read_u32(&sb, 0x10)?;
     if blocks_per_group == 0 || inodes_per_group == 0 {
         return Err(Error::BadBlockSize);
     }
@@ -220,10 +228,10 @@ pub fn analyze(image: &[u8]) -> Result<Info, Error> {
         let start = table_offset
             .checked_add(desc_offset)
             .ok_or(Error::GroupDescriptorTruncated(index))?;
-        let desc = image
-            .get(start..start + GROUP_DESC_SIZE_64)
+        let desc = reader
+            .read_at(start as u64, GROUP_DESC_SIZE_64)
             .ok_or(Error::GroupDescriptorTruncated(index))?;
-        if !verify_group_checksums || group_descriptor_checksum_ok(uuid, index, desc) {
+        if !verify_group_checksums || group_descriptor_checksum_ok(uuid, index, &desc) {
             groups_verified += 1;
         }
     }

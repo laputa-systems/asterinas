@@ -34,6 +34,7 @@
 #define EXT2_PERMISSIONS_CASE_ID "ext2.permissions"
 #define EXT2_REMOUNT_CASE_ID "ext2.sync-remount"
 #define EXT2_ENOSPC_CASE_ID "ext2.enospc-fill"
+#define EXT4_READ_CASE_ID "ext4.read"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -538,6 +539,10 @@ static void read_mount_filesystem(char *output, size_t output_size) {
     }
 }
 
+static const char *expected_mount_filesystem(void) {
+    return strcmp(active_case_id, EXT4_READ_CASE_ID) == 0 ? "ext4" : "ext2";
+}
+
 static void setup_storage_volume(struct storage_setup *setup) {
     memset(setup, 0, sizeof(*setup));
     setup->mount_errno = ENODEV;
@@ -568,9 +573,10 @@ static void setup_storage_volume(struct storage_setup *setup) {
     }
     mkdir("/mnt", 0555);
     mkdir(ADAPTER_MOUNT_POINT, 0555);
-    if (mount(setup->device_path, ADAPTER_MOUNT_POINT, "ext2", 0, NULL) != 0) {
+    int mount_flags = strcmp(active_case_id, EXT4_READ_CASE_ID) == 0 ? MS_RDONLY : 0;
+    if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
-        diagnostic("ext2 mount failed: %s", strerror(errno));
+        diagnostic("filesystem mount failed: %s", strerror(errno));
         return;
     }
     setup->mounted = true;
@@ -579,14 +585,15 @@ static void setup_storage_volume(struct storage_setup *setup) {
 
 static bool storage_setup_ok(const struct storage_setup *setup) {
     return setup->disk_found && strcmp(setup->serial, ADAPTER_SERIAL) == 0 && setup->cache_ok &&
-           setup->privilege_ok && setup->mounted && strcmp(setup->filesystem, "ext2") == 0;
+           setup->privilege_ok && setup->mounted &&
+           strcmp(setup->filesystem, expected_mount_filesystem()) == 0;
 }
 
 static void emit_setup_observations(const char *run_id, const char *nonce, const char *manifest_hash,
                                     const char *payload_hash, const struct storage_setup *setup) {
     bool serial_ok = strcmp(setup->serial, ADAPTER_SERIAL) == 0;
     bool cache_ok = strcmp(setup->write_cache, ADAPTER_WRITE_CACHE) == 0;
-    bool filesystem_ok = strcmp(setup->filesystem, "ext2") == 0;
+    bool filesystem_ok = strcmp(setup->filesystem, expected_mount_filesystem()) == 0;
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "setup-disk-identity", "serial", setup->serial, serial_ok);
     emit_text_named(run_id, nonce, manifest_hash, payload_hash, "setup-write-cache", "mode", setup->write_cache, cache_ok);
     emit_text_named(run_id, nonce, manifest_hash, payload_hash, "setup-filesystem", "filesystem", setup->filesystem, filesystem_ok);
@@ -657,6 +664,31 @@ static void make_case_directory(const char *path) {
     if (mkdir(path, 0755) != 0) {
         diagnostic("mkdir %s failed: %s", path, strerror(errno));
     }
+}
+
+static void run_ext4_read_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *path = ADAPTER_MOUNT_POINT "/marker.txt";
+    struct storage_setup setup;
+    char marker_b64[256] = "";
+    long size = -1;
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        read_file_base64(path, marker_b64, sizeof(marker_b64));
+        struct stat status;
+        if (stat(path, &status) == 0) {
+            size = (long)status.st_size;
+        }
+        unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    bool bytes_passed = strcmp(marker_b64, "bGMxNC1iYXNpYwo=") == 0;
+    bool size_passed = size == 11;
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "marker-read", "bytes", marker_b64, bytes_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-size", "bytes", size, size_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               bytes_passed && size_passed,
+               SETUP_SUBTESTS + 2, SETUP_ASSERTIONS + 2);
 }
 
 static void run_ext2_create_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -1596,6 +1628,8 @@ int main(void) {
     }
     if (strcmp(active_case_id, ADAPTER_CASE_ID) == 0) {
         run_adapter_probe(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_READ_CASE_ID) == 0) {
+        run_ext4_read_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT2_SPARSE_CASE_ID) == 0) {

@@ -4,7 +4,7 @@
 
 use aster_block::{BLOCK_SIZE, BlockDevice, bio::BioStatus};
 use aster_ext4::{
-    MAGIC as EXT4_MAGIC, analyze,
+    MAGIC as EXT4_MAGIC,
     reader::{BlockReader, geometry_from},
 };
 
@@ -86,11 +86,7 @@ impl Ext4 {
 }
 
 fn analyze_device(reader: &DeviceReader) -> Result<aster_ext4::Info> {
-    let superblock = reader
-        .read_at(1024, 1024)
-        .ok_or_else(|| errno!(EIO, "cannot read ext4 superblock"))?;
-    analyze(&superblock).map_err(|error| {
-        warn!("ext4: refusing mount: {:?}", error);
+    aster_ext4::analyze_from(reader).map_err(|error| {
         match error {
             aster_ext4::Error::NeedsRecovery | aster_ext4::Error::Unclean => {
                 errno!(EINVAL, "ext4 image needs journal recovery")

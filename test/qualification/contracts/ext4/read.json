@@ -1,0 +1,133 @@
+{
+  "cases": [
+    {
+      "applicability": {
+        "architectures": ["x86_64"],
+        "backends": ["qemu-tcg"],
+        "privileges": ["guest-root"],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT4_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext4",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc15-ext4-read-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext4",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "bGMxNC1iYXNpYwo=",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "marker-read"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 11,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-size"
+        }
+      ],
+      "id": "ext4.read",
+      "item": "LC-15",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_image": "adapter-disk.ext4",
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "expect_writes": false,
+        "filesystem": "ext4",
+        "mount_point": "/mnt/qualification"
+      },
+      "procedure": "Mount a pinned Linux-created ext4 image read-only, read marker.txt, and verify its bytes and size.",
+      "replay": "python3 test/qualification/run.py run --profile ext4-read --candidate asterinas",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext4-read-r1",
+        "upstream": "asterinas-qualification-ext4-read"
+      },
+      "validators": ["reference-contract"]
+    }
+  ]
+}
