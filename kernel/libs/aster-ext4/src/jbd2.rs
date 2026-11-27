@@ -370,6 +370,33 @@ mod tests {
     }
 
     #[test]
+    fn revoke_records_filter_data_writes() {
+        let mut revoke = blank(JOURNAL_BLOCK_SIZE);
+        revoke[0..4].copy_from_slice(&REVOKE_BLOCK.to_be_bytes());
+        revoke[16] = TAG_LAST | TAG_64BIT;
+        revoke[17..21].copy_from_slice(&10u32.to_be_bytes());
+        revoke[21..25].copy_from_slice(&0u32.to_be_bytes());
+        let targets = revoke_targets(&revoke, JOURNAL_BLOCK_SIZE).unwrap();
+        assert_eq!(targets, vec![10]);
+
+        let mut journal = superblock(u32::MAX, 1);
+        journal.resize(JOURNAL_BLOCK_SIZE * 5, 0);
+        let desc = JOURNAL_BLOCK_SIZE;
+        journal[desc..desc + 4].copy_from_slice(&DESC_BLOCK.to_be_bytes());
+        journal[desc + 12] = TAG_LAST | TAG_SAME_UUID;
+        journal[desc + 13..desc + 17].copy_from_slice(&10u32.to_be_bytes());
+        let rev = JOURNAL_BLOCK_SIZE * 3;
+        journal[rev..rev + 4].copy_from_slice(&REVOKE_BLOCK.to_be_bytes());
+        journal[rev + 16] = TAG_LAST;
+        journal[rev + 17..rev + 21].copy_from_slice(&10u32.to_be_bytes());
+        set_commit(&mut journal, 4);
+        let sb = parse_superblock(&journal).unwrap();
+        let plan = recovery_plan(&journal, &sb).unwrap();
+        assert_eq!(sb.sequence, u32::MAX);
+        assert_eq!(plan.actions, vec![Action::Revoke { fs_block: 10 }]);
+    }
+
+    #[test]
     fn rejects_truncated_and_corrupt() {
         let short = vec![0u8; 1024];
         assert_eq!(parse_superblock(&short), Err(JournalError::Truncated));
