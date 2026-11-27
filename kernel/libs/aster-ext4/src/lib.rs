@@ -13,6 +13,7 @@ use core::fmt;
 
 pub mod jbd2;
 pub mod reader;
+pub mod extent_edit;
 pub mod recovery;
 pub mod transaction;
 
