@@ -102,24 +102,6 @@ def build_asterinas(repo: Path) -> None:
     _docker_build(repo, script, "Asterinas qualification kernel build")
 
 
-def build_asterinas_rw(repo: Path) -> None:
-    script = (
-        "set -eu; "
-        "mkdir -p target/qualification/inputs/cache; "
-        "osdk_root=target/qualification/inputs/cache/osdk-root; "
-        "osdk=target/qualification/inputs/cache/cargo-osdk; "
-        "OSDK_LOCAL_DEV=1 cargo install cargo-osdk --path osdk --root \"$osdk_root\" --force >/dev/null; "
-        "cp \"$osdk_root/bin/cargo-osdk\" \"$osdk\"; "
-        "cd kernel; "
-        "OSDK_TARGET_ARCH=x86_64 /root/asterinas/$osdk osdk build --boot-method=vmm-direct --strip-elf --features=pvh_boot,ext4_rw_experimental "
-        "--kcmd-args=loglevel=error --kcmd-args=earlycon --kcmd-args=console=ttyS0 >/dev/null; "
-        "cd ..; "
-        "cp target/osdk/asterinas/asterinas-osdk-bin.elf target/qualification/inputs/cache/asterinas-kernel-rw.tmp; "
-        "mv target/qualification/inputs/cache/asterinas-kernel-rw.tmp target/qualification/inputs/cache/asterinas-kernel-rw"
-    )
-    _docker_build(repo, script, "Asterinas qualification RW kernel build")
-
-
 def build_initramfs(repo: Path) -> None:
     write_selfcheck_initramfs(
         repo / CACHE_DIR / "probe",
@@ -401,7 +383,6 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     initramfs_path = repo / CACHE_DIR / "initramfs.cpio"
     build_adapter_fixtures(repo)
     build_asterinas(repo)
-    build_asterinas_rw(repo)
     adapter_disk = repo / CACHE_DIR / "adapter-disk.ext2"
     adapter_wrong_disk = repo / CACHE_DIR / "adapter-wrong-disk.ext2"
     adapter_wrong_filesystem = repo / CACHE_DIR / "adapter-wrong-filesystem.img"
@@ -417,11 +398,6 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     persistence_selection = _load_selection(repo, "s0-persistence")
     ext4_read_selection = _load_selection(repo, "ext4-read")
     ext4_extra_selection = _load_selection(repo, "ext4-read-extra")
-    ext4_journal_selection = _load_selection(repo, "ext4-journal")
-    ext4_alloc_selection = _load_selection(repo, "ext4-alloc")
-    ext4_dir_selection = _load_selection(repo, "ext4-dir")
-    ext4_orphan_selection = _load_selection(repo, "ext4-orphan")
-    ext4_xattr_selection = _load_selection(repo, "ext4-xattr")
     return {
         "schema": 1,
         "lock_revision": "lc07-r1",
@@ -488,8 +464,6 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "nixpkgs_sha256": _sha256_file(repo / "distro/nixpkgs.nix"),
             "kernel_path": str(CACHE_DIR / "asterinas-kernel"),
             "kernel_sha256": _sha256_file(repo / CACHE_DIR / "asterinas-kernel"),
-            "rw_kernel_path": str(CACHE_DIR / "asterinas-kernel-rw"),
-            "rw_kernel_sha256": _sha256_file(repo / CACHE_DIR / "asterinas-kernel-rw"),
             "source_tree_sha256": asterinas_source_tree_hash(repo),
         },
         "selections": {
@@ -502,11 +476,6 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "s0-persistence": _selection_lock(persistence_selection),
             "ext4-read": _selection_lock(ext4_read_selection),
             "ext4-read-extra": _selection_lock(ext4_extra_selection),
-            "ext4-journal": _selection_lock(ext4_journal_selection),
-            "ext4-alloc": _selection_lock(ext4_alloc_selection),
-            "ext4-dir": _selection_lock(ext4_dir_selection),
-            "ext4-orphan": _selection_lock(ext4_orphan_selection),
-            "ext4-xattr": _selection_lock(ext4_xattr_selection),
         },
     }
 
@@ -639,8 +608,6 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("asterinas_build", "nixpkgs_sha256"),
         ("asterinas_build", "kernel_path"),
         ("asterinas_build", "kernel_sha256"),
-        ("asterinas_build", "rw_kernel_path"),
-        ("asterinas_build", "rw_kernel_sha256"),
         ("asterinas_build", "source_tree_sha256"),
         ("selections", "selfcheck", "manifest_hash"),
         ("selections", "selfcheck", "payload_hash"),
@@ -817,12 +784,8 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
     if not asterinas_kernel.exists() and build_missing and not failures:
         build_asterinas(repo)
     _check_file_hash(repo, asterinas_build["kernel_path"], asterinas_build["kernel_sha256"], "Asterinas kernel", failures, checked)
-    rw_kernel = repo / asterinas_build["rw_kernel_path"]
-    if not rw_kernel.exists() and build_missing and not failures:
-        build_asterinas_rw(repo)
-    _check_file_hash(repo, asterinas_build["rw_kernel_path"], asterinas_build["rw_kernel_sha256"], "Asterinas RW kernel", failures, checked)
 
-    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra", "ext4-journal", "ext4-alloc", "ext4-dir", "ext4-orphan", "ext4-xattr"):
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)

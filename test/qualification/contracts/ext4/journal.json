@@ -143,12 +143,9 @@
         "disk_serial": "qual-lc06-adapter",
         "disk_size_bytes": 16777216,
         "filesystem": "ext4",
-        "mount_point": "/mnt/qualification",
-        "features": [
-          "ext4_rw_experimental"
-        ]
+        "mount_point": "/mnt/qualification"
       },
-      "procedure": "Mount a pinned ext4 image with ext4_rw_experimental, overwrite a file, fsync, and verify readback and size.",
+      "procedure": "Mount a pinned writable ext4 image, overwrite a file, fsync, and verify readback and size.",
       "replay": "python3 test/qualification/run.py run --profile ext4-journal --candidate asterinas",
       "seed": 0,
       "source": {

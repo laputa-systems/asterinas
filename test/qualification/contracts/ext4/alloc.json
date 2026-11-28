@@ -165,10 +165,7 @@
         "disk_serial": "qual-lc06-adapter",
         "disk_size_bytes": 16777216,
         "filesystem": "ext4",
-        "mount_point": "/mnt/qualification",
-        "features": [
-          "ext4_rw_experimental"
-        ]
+        "mount_point": "/mnt/qualification"
       },
       "procedure": "Create an ext4 file, write bytes, fsync, read back, then unlink and verify the entry is gone.",
       "replay": "python3 test/qualification/run.py run --profile ext4-alloc --candidate asterinas",

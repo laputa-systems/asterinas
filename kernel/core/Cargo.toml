@@ -79,7 +79,6 @@ loongArch64.workspace = true
 [features]
 default = ["cvm_guest"]
 coverage = ["ostd/coverage"]
-ext4_rw_experimental = []
 cvm_guest = ["dep:tdx-guest", "ostd/cvm_guest", "aster-virtio/cvm_guest"]
 pvh_boot = ["ostd/pvh_boot"]
 # By default we use the Sv48 address translation mode.
