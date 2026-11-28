@@ -13,10 +13,12 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     extent_edit::BlockAllocator,
+    jbd2::JOURNAL_BLOCK_SIZE,
     reader::{
         BlockReader, BlockWriter, EXTENT_MAGIC, Geometry, Inode, block_bitmap_offset_from,
         inode_offset_from, read_block_bitmap_from, read_file_from,
     },
+    transaction::Transaction,
 };
 
 const MAX_FILE_SIZE: usize = 128 * 1024 * 1024;
@@ -49,7 +51,7 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
         }
     }
 
-    pub fn write_at(&self, offset: usize, data: &[u8]) -> Result<(), WriteError> {
+    fn prepare(&self, offset: usize, data: &[u8]) -> Result<Prepared, WriteError> {
         if data.len() > MAX_FILE_SIZE {
             return Err(WriteError::TooLarge);
         }
@@ -82,17 +84,6 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
             physical.push(allocator.allocate().ok_or(WriteError::NoSpace)?);
         }
 
-        for (index, block) in physical.iter().enumerate() {
-            let mut buffer = vec![0u8; block_size];
-            let start = index * block_size;
-            let stop = (start + block_size).min(content.len());
-            buffer[..stop - start].copy_from_slice(&content[start..stop]);
-            let offset = block
-                .checked_mul(block_size as u64)
-                .ok_or(WriteError::TooLarge)?;
-            self.writer.write_at(offset, &buffer).ok_or(WriteError::Io)?;
-        }
-
         let inode_offset = inode_offset_from(self.reader, self.geom, self.inode.number)
             .map_err(|_| WriteError::Io)?;
         let mut raw = self
@@ -105,18 +96,18 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
         let sectors = (nr_blocks * (block_size / 512)) as u32;
         raw[0x1C..0x20].copy_from_slice(&sectors.to_le_bytes());
 
-        let tree_start = 0x28;
-        let tree = &mut raw[tree_start..tree_start + 60];
+        let tree = &mut raw[0x28..0x28 + 60];
         tree[0..2].copy_from_slice(&EXTENT_MAGIC.to_le_bytes());
         tree[2..4].copy_from_slice(&1u16.to_le_bytes());
         tree[4..6].copy_from_slice(&4u16.to_le_bytes());
         tree[6..8].copy_from_slice(&0u16.to_le_bytes());
         tree[8..12].copy_from_slice(&self.inode.generation.to_le_bytes());
-        let entry = EXTENT_HEADER_LEN;
-        tree[entry..entry + 4].copy_from_slice(&0u32.to_le_bytes());
-        tree[entry + 4..entry + 6].copy_from_slice(&(nr_blocks as u16).to_le_bytes());
-        tree[entry + 6..entry + 8].copy_from_slice(&0u16.to_le_bytes());
-        tree[entry + 8..entry + 12].copy_from_slice(&(physical[0] as u32).to_le_bytes());
+        tree[EXTENT_HEADER_LEN..EXTENT_HEADER_LEN + 4].copy_from_slice(&0u32.to_le_bytes());
+        tree[EXTENT_HEADER_LEN + 4..EXTENT_HEADER_LEN + 6]
+            .copy_from_slice(&(nr_blocks as u16).to_le_bytes());
+        tree[EXTENT_HEADER_LEN + 6..EXTENT_HEADER_LEN + 8].copy_from_slice(&0u16.to_le_bytes());
+        tree[EXTENT_HEADER_LEN + 8..EXTENT_HEADER_LEN + 12]
+            .copy_from_slice(&(physical[0] as u32).to_le_bytes());
 
         let bitmap_offset = block_bitmap_offset_from(self.reader, self.geom, self.group)
             .map_err(|_| WriteError::Io)?;
@@ -127,12 +118,80 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
                 *byte |= 1 << (index % 8);
             }
         }
+
+        Ok(Prepared {
+            content,
+            physical,
+            inode_offset,
+            raw,
+            bitmap_offset,
+            updated_bitmap,
+        })
+    }
+
+    fn apply(&self, prepared: &Prepared) -> Result<(), WriteError> {
+        let block_size = self.geom.block_size;
+        for (index, block) in prepared.physical.iter().enumerate() {
+            let mut buffer = vec![0u8; block_size];
+            let start = index * block_size;
+            let stop = (start + block_size).min(prepared.content.len());
+            buffer[..stop - start].copy_from_slice(&prepared.content[start..stop]);
+            let offset = block
+                .checked_mul(block_size as u64)
+                .ok_or(WriteError::TooLarge)?;
+            self.writer.write_at(offset, &buffer).ok_or(WriteError::Io)?;
+        }
         self.writer
-            .write_at(bitmap_offset, &updated_bitmap)
+            .write_at(prepared.bitmap_offset, &prepared.updated_bitmap)
             .ok_or(WriteError::Io)?;
-        self.writer.write_at(inode_offset, &raw).ok_or(WriteError::Io)?;
+        self.writer
+            .write_at(prepared.inode_offset, &prepared.raw)
+            .ok_or(WriteError::Io)?;
         Ok(())
     }
+
+    pub fn write_at(&self, offset: usize, data: &[u8]) -> Result<(), WriteError> {
+        let prepared = self.prepare(offset, data)?;
+        self.apply(&prepared)
+    }
+
+    /// Writes the data through a JBD2 transaction whose descriptor/data/commit
+    /// records are emitted into `journal`. The journal record is parseable by
+    /// `jbd2::recovery_plan`, giving the write path one on-disk contract with
+    /// recovery.
+    pub fn write_at_journaled(
+        &self,
+        offset: usize,
+        data: &[u8],
+        journal: &mut [u8],
+    ) -> Result<(), WriteError> {
+        let prepared = self.prepare(offset, data)?;
+        let total = journal.len() / JOURNAL_BLOCK_SIZE;
+        let mut tx = Transaction::begin(self.inode.generation, total);
+        tx.reserve_credits(prepared.physical.len() as u32 + 2)
+            .map_err(|_| WriteError::NoSpace)?;
+        let block_size = self.geom.block_size;
+        for (index, block) in prepared.physical.iter().enumerate() {
+            let mut buffer = vec![0u8; block_size];
+            let start = index * block_size;
+            let stop = (start + block_size).min(prepared.content.len());
+            buffer[..stop - start].copy_from_slice(&prepared.content[start..stop]);
+            tx.add_ordered_data(*block, buffer)
+                .map_err(|_| WriteError::NoSpace)?;
+            let _ = index;
+        }
+        tx.commit(journal).map_err(|_| WriteError::NoSpace)?;
+        self.apply(&prepared)
+    }
+}
+
+struct Prepared {
+    content: Vec<u8>,
+    physical: Vec<u64>,
+    inode_offset: u64,
+    raw: Vec<u8>,
+    bitmap_offset: u64,
+    updated_bitmap: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -187,6 +246,28 @@ mod tests {
         assert_eq!(new_inode.size, inode.size);
         let data = crate::reader::read_file(&updated, &geom, &new_inode).unwrap();
         assert_eq!(&data[..16], b"written-by-lc20\n");
+    }
+
+    #[test]
+    fn journaled_write_round_trips_through_recovery() {
+        let image = fixture("basic");
+        let device = MemoryDevice { bytes: Mutex::new(image.clone()) };
+        let geom = crate::reader::geometry(&image).unwrap();
+        let inode = crate::reader::read_inode(&image, &geom, crate::reader::ROOT_INO).unwrap();
+        let mut journal = vec![0u8; 8 * JOURNAL_BLOCK_SIZE];
+
+        let engine = WriteEngine::new(&device, &device, &geom, &inode, 0);
+        engine
+            .write_at_journaled(0, b"journaled-write\n", &mut journal)
+            .unwrap();
+
+        let sb = crate::jbd2::parse_superblock(&journal).unwrap();
+        let plan = crate::jbd2::recovery_plan(&journal, &sb).unwrap();
+        assert_eq!(plan.actions.len(), 1);
+        let updated = device.bytes.lock().unwrap().clone();
+        let new_inode = crate::reader::read_inode(&updated, &geom, inode.number).unwrap();
+        let data = crate::reader::read_file(&updated, &geom, &new_inode).unwrap();
+        assert_eq!(&data[..16], b"journaled-write\n");
     }
 
     #[test]
