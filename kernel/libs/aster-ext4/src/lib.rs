@@ -18,6 +18,7 @@ pub mod extent_edit;
 pub mod orphan;
 pub mod recovery;
 pub mod transaction;
+pub mod xattr_edit;
 pub mod write;
 
 use reader::{BlockReader, SliceReader};

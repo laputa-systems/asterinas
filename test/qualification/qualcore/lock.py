@@ -421,6 +421,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     ext4_alloc_selection = _load_selection(repo, "ext4-alloc")
     ext4_dir_selection = _load_selection(repo, "ext4-dir")
     ext4_orphan_selection = _load_selection(repo, "ext4-orphan")
+    ext4_xattr_selection = _load_selection(repo, "ext4-xattr")
     return {
         "schema": 1,
         "lock_revision": "lc07-r1",
@@ -505,6 +506,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "ext4-alloc": _selection_lock(ext4_alloc_selection),
             "ext4-dir": _selection_lock(ext4_dir_selection),
             "ext4-orphan": _selection_lock(ext4_orphan_selection),
+            "ext4-xattr": _selection_lock(ext4_xattr_selection),
         },
     }
 
@@ -820,7 +822,7 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         build_asterinas_rw(repo)
     _check_file_hash(repo, asterinas_build["rw_kernel_path"], asterinas_build["rw_kernel_sha256"], "Asterinas RW kernel", failures, checked)
 
-    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra", "ext4-journal", "ext4-alloc", "ext4-dir", "ext4-orphan"):
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra", "ext4-journal", "ext4-alloc", "ext4-dir", "ext4-orphan", "ext4-xattr"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)

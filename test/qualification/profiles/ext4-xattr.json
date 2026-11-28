@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "name": "ext4-xattr",
+  "inherits": [],
+  "cases": [
+    "ext4.xattr"
+  ],
+  "excludes": []
+}

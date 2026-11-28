@@ -14,10 +14,12 @@ use aster_ext4::{
     dir_edit,
     extent_edit::BlockAllocator,
     reader::{
-        BlockReader, BlockWriter, DiskEntryType, EXTENT_MAGIC, DirEntry, Inode as RawInode, fast_symlink,
-        inode_bitmap_offset_from, inode_number_to_group, inode_offset_from, lookup_from,
-        read_dir_from, read_file_from, read_inode_bitmap_from, read_inode_from,
+        BlockReader, BlockWriter, DiskEntryType, EXTENT_MAGIC, DirEntry, Inode as RawInode,
+        block_bitmap_offset_from, fast_symlink, inode_bitmap_offset_from, inode_number_to_group,
+        inode_offset_from, lookup_from, read_block_bitmap_from, read_dir_from, read_file_from,
+        read_inode_bitmap_from, read_inode_from,
     },
+    xattr_edit,
     write::{WriteEngine, WriteError},
 };
 
@@ -30,6 +32,7 @@ use crate::{
             file_system::FileSystem,
             inode::{Extension, FileOps, Inode, Metadata, RenameMode, SymbolicLink},
             path::Dentry,
+            xattr::{XattrName, XattrNamespace, XattrSetFlags},
         },
     },
     prelude::*,
@@ -206,6 +209,87 @@ impl Ext4Inode {
             InodeType::SymLink => 7,
             InodeType::Unknown => 0,
         }
+    }
+
+    fn xattr_block(fs: &Ext4, ino: u32) -> Result<Option<(u32, Vec<u8>)>> {
+        let geom = fs.geometry();
+        let geom = fs.geometry();
+        let inode_offset = inode_offset_from(fs.reader().as_ref(), geom, ino)
+            .map_err(|_| errno!(EIO, "ext4 inode is out of range"))?;
+        let raw = fs
+            .reader()
+            .read_at(inode_offset, geom.inode_size)
+            .ok_or_else(|| errno!(EIO, "failed to read ext4 inode"))?;
+        let block = u32::from_le_bytes(
+            raw.get(0x68..0x6C)
+                .ok_or_else(|| errno!(EIO, "short ext4 inode"))?
+                .try_into()
+                .unwrap(),
+        );
+        if block == 0 {
+            return Ok(None);
+        }
+        let offset = (block as u64)
+            .checked_mul(geom.block_size as u64)
+            .ok_or_else(|| errno!(EINVAL, "ext4 xattr block overflow"))?;
+        let data = fs
+            .reader()
+            .read_at(offset, geom.block_size)
+            .ok_or_else(|| errno!(EIO, "failed to read ext4 xattr block"))?;
+        Ok(Some((block, data)))
+    }
+
+    fn name_parts<'a>(name: &'a XattrName<'a>) -> (u8, &'a [u8]) {
+        let full = name.full_name();
+        let suffix = full.split_once('.').map(|(_, rest)| rest).unwrap_or(full);
+        (name.namespace() as u8, suffix.as_bytes())
+    }
+
+    fn save_xattr_block(
+        &self,
+        fs: &Ext4,
+        ino: u32,
+        block: Option<u32>,
+        data: &[u8],
+    ) -> Result<()> {
+        let geom = fs.geometry();
+        let block = if let Some(block) = block {
+            block
+        } else {
+            let bitmap = read_block_bitmap_from(fs.reader().as_ref(), geom, 0)
+                .map_err(|_| errno!(EIO, "failed to read ext4 block bitmap"))?;
+            let mut allocator = BlockAllocator::from_bitmap(&bitmap, geom.usable_blocks(0));
+            let index = allocator
+                .allocate()
+                .ok_or_else(|| errno!(ENOSPC, "ext4 xattr blocks exhausted"))? as usize;
+            let bitmap_offset = block_bitmap_offset_from(fs.reader().as_ref(), geom, 0)
+                .map_err(|_| errno!(EIO, "failed to locate ext4 block bitmap"))?;
+            let mut updated = bitmap;
+            if let Some(byte) = updated.get_mut(index / 8) {
+                *byte |= 1 << (index % 8);
+            }
+            fs.reader()
+                .write_at(bitmap_offset, &updated)
+                .ok_or_else(|| errno!(EIO, "failed to update ext4 block bitmap"))?;
+            index as u32
+        };
+        let offset = (block as u64)
+            .checked_mul(geom.block_size as u64)
+            .ok_or_else(|| errno!(EINVAL, "ext4 xattr block overflow"))?;
+        fs.reader()
+            .write_at(offset, data)
+            .ok_or_else(|| errno!(EIO, "failed to write ext4 xattr block"))?;
+        let inode_offset = inode_offset_from(fs.reader().as_ref(), geom, ino)
+            .map_err(|_| errno!(EIO, "ext4 inode is out of range"))?;
+        let mut raw = fs
+            .reader()
+            .read_at(inode_offset, geom.inode_size)
+            .ok_or_else(|| errno!(EIO, "failed to read ext4 inode"))?;
+        raw[0x68..0x6C].copy_from_slice(&block.to_le_bytes());
+        fs.reader()
+            .write_at(inode_offset, &raw)
+            .ok_or_else(|| errno!(EIO, "failed to update ext4 xattr inode"))?;
+        Ok(())
     }
 
     fn read_all(&self) -> Result<Vec<u8>> {
@@ -650,6 +734,113 @@ impl Inode for Ext4Inode {
             return Ok(SymbolicLink::Plain(target));
         }
         Ok(SymbolicLink::Plain(self.read_all()?))
+    }
+
+    fn set_xattr(
+        &self,
+        _self_dentry: &Dentry,
+        name: XattrName<'_>,
+        value_reader: &mut VmReader,
+        flags: XattrSetFlags,
+    ) -> Result<()> {
+        let fs = self.fs()?;
+        if !fs.writable() {
+            return Err(errno!(EROFS, "ext4 mounts are read-only"));
+        }
+        let mut buf = vec![0u8; value_reader.remain()];
+        let mut writer = VmWriter::from(buf.as_mut_slice());
+        let value_len = value_reader.read_fallible(&mut writer)?;
+        buf.truncate(value_len);
+        let (index, suffix) = Self::name_parts(&name);
+        let (block, current) = match Self::xattr_block(&fs, self.number)? {
+            Some(entry) => (Some(entry.0), entry.1),
+            None => (None, Vec::new()),
+        };
+        let updated = xattr_edit::set(
+            &current,
+            index,
+            suffix,
+            &buf,
+            fs.geometry().block_size,
+            flags.contains(XattrSetFlags::REPLACE_ONLY),
+            flags.contains(XattrSetFlags::CREATE_ONLY),
+        )
+        .map_err(|error| match error {
+            xattr_edit::XattrError::NotFound => errno!(ENODATA, "ext4 xattr not found"),
+            xattr_edit::XattrError::Exists => errno!(EEXIST, "ext4 xattr already exists"),
+            xattr_edit::XattrError::TooLarge => errno!(ENOSPC, "ext4 xattr block is full"),
+            _ => errno!(EIO, "corrupt ext4 xattr block"),
+        })?;
+        self.save_xattr_block(&fs, self.number, block, &updated)
+    }
+
+    fn get_xattr(&self, name: XattrName<'_>, value_writer: &mut VmWriter) -> Result<usize> {
+        let fs = self.fs()?;
+        let (index, suffix) = Self::name_parts(&name);
+        let block = Self::xattr_block(&fs, self.number)?
+            .ok_or_else(|| errno!(ENODATA, "no ext4 xattrs"))?;
+        let value = xattr_edit::get(&block.1, index, suffix)
+            .map_err(|_| errno!(EIO, "corrupt ext4 xattr block"))?
+            .ok_or_else(|| errno!(ENODATA, "ext4 xattr not found"))?;
+        let value_len = value.len();
+        if value_writer.avail() == 0 {
+            return Ok(value_len);
+        }
+        if value_len > value_writer.avail() {
+            return Err(errno!(ERANGE, "the xattr value buffer is too small"));
+        }
+        value_writer.write_fallible(&mut VmReader::from(value.as_slice()))?;
+        Ok(value_len)
+    }
+
+    fn list_xattr(&self, namespace: XattrNamespace, list_writer: &mut VmWriter) -> Result<usize> {
+        let fs = self.fs()?;
+        let Some(block) = Self::xattr_block(&fs, self.number)? else {
+            return Ok(0);
+        };
+        let names = xattr_edit::names(&block.1)
+            .map_err(|_| errno!(EIO, "corrupt ext4 xattr block"))?;
+        let selected: Vec<Vec<u8>> = names
+            .into_iter()
+            .filter(|(index, _)| namespace != XattrNamespace::User || *index == namespace as u8)
+            .map(|(index, name)| {
+                let prefix = match index {
+                    1 => "user.",
+                    2 => "trusted.",
+                    3 => "system.",
+                    4 => "security.",
+                    _ => "user.",
+                };
+                let mut full = prefix.as_bytes().to_vec();
+                full.extend_from_slice(name.as_bytes());
+                full.push(0);
+                full
+            })
+            .collect();
+        let total: usize = selected.iter().map(Vec::len).sum();
+        if list_writer.avail() == 0 {
+            return Ok(total);
+        }
+        if total > list_writer.avail() {
+            return Err(errno!(ERANGE, "the xattr list buffer is too small"));
+        }
+        for entry in &selected {
+            list_writer.write_fallible(&mut VmReader::from(entry.as_slice()))?;
+        }
+        Ok(total)
+    }
+
+    fn remove_xattr(&self, _self_dentry: &Dentry, name: XattrName) -> Result<()> {
+        let fs = self.fs()?;
+        if !fs.writable() {
+            return Err(errno!(EROFS, "ext4 mounts are read-only"));
+        }
+        let (index, suffix) = Self::name_parts(&name);
+        let (block, current) = Self::xattr_block(&fs, self.number)?
+            .ok_or_else(|| errno!(ENODATA, "no ext4 xattrs"))?;
+        let updated = xattr_edit::remove(&current, index, suffix, fs.geometry().block_size)
+            .map_err(|_| errno!(ENODATA, "ext4 xattr not found"))?;
+        self.save_xattr_block(&fs, self.number, Some(block), &updated)
     }
 
     fn sync(&self, _mode: SyncMode) -> Result<()> {

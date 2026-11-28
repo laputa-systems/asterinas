@@ -19,6 +19,7 @@
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/xattr.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -41,6 +42,7 @@
 #define EXT4_ALLOC_CASE_ID "ext4.alloc"
 #define EXT4_DIR_CASE_ID "ext4.dir"
 #define EXT4_ORPHAN_CASE_ID "ext4.orphan"
+#define EXT4_XATTR_CASE_ID "ext4.xattr"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -552,7 +554,8 @@ static bool is_ext4_case(void) {
            strcmp(active_case_id, EXT4_WRITE_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0 ||
-           strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0;
+           strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0;
 }
 
 static const char *expected_mount_filesystem(void) {
@@ -593,7 +596,8 @@ static void setup_storage_volume(struct storage_setup *setup) {
         (is_ext4_case() && strcmp(active_case_id, EXT4_WRITE_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_ALLOC_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_DIR_CASE_ID) != 0 &&
-         strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) != 0) ? MS_RDONLY : 0;
+         strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) != 0 &&
+         strcmp(active_case_id, EXT4_XATTR_CASE_ID) != 0) ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -729,6 +733,56 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                bytes_passed && size_passed && tail_passed,
                SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
+}
+
+static void run_ext4_xattr_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *path = ADAPTER_MOUNT_POINT "/xattr.txt";
+    const char *expected = "lc23-xattr\n";
+    struct storage_setup setup;
+    char value[64] = "";
+    char listing[256] = "";
+    long written = -1;
+    long set_result = -1;
+    long get_size = -1;
+    long list_size = -1;
+    long remove_result = -1;
+    long after_remove_errno = 0;
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (fd >= 0) {
+            written = write(fd, expected, strlen(expected));
+            close(fd);
+            set_result = setxattr(path, "user.test", "value", 5, 0);
+            get_size = getxattr(path, "user.test", value, sizeof(value));
+            list_size = listxattr(path, listing, sizeof(listing));
+            remove_result = removexattr(path, "user.test");
+            char probe[64];
+            after_remove_errno = getxattr(path, "user.test", probe, sizeof(probe)) < 0 ? errno : 0;
+        } else {
+            diagnostic("ext4 xattr create failed: %s", strerror(errno));
+        }
+        unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    bool write_passed = written == 11;
+    bool set_passed = set_result == 0;
+    bool get_passed = get_size == 5 && strcmp(value, "value") == 0;
+    bool list_passed = list_size == 10 && strcmp(listing, "user.test") == 0;
+    bool remove_passed = remove_result == 0;
+    bool gone_passed = after_remove_errno == ENODATA;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "create-write", "bytes_written", written, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "setxattr", "result", set_result, set_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "getxattr-size", "bytes", get_size, get_size == 5);
+    emit_text_named(run_id, nonce, manifest_hash, payload_hash, "getxattr-value", "value", value, strcmp(value, "value") == 0);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "listxattr-size", "bytes", list_size, list_size == 10);
+    emit_text_named(run_id, nonce, manifest_hash, payload_hash, "listxattr-names", "names", listing, strcmp(listing, "user.test") == 0);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "removexattr", "result", remove_result, remove_passed);
+    emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "after-remove", "errno", after_remove_errno, gone_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               write_passed && set_passed && get_passed && list_passed && remove_passed && gone_passed,
+               SETUP_SUBTESTS + 8, SETUP_ASSERTIONS + 8);
 }
 
 static void run_ext4_orphan_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -1899,6 +1953,8 @@ int main(void) {
         run_ext4_dir_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0) {
         run_ext4_orphan_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0) {
+        run_ext4_xattr_case(run_id, nonce, manifest_hash, payload_hash);
 
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);

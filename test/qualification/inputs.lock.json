@@ -23,14 +23,14 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "4ea38ec2791441d03f3eacc3e10bbeb936b1113a871dd38cd744e06c729a6e57",
+    "kernel_sha256": "6157a4bbd5c6cc2ab6a9a2b27359069f2e88eb94d3b71cc32a6bc686dd5f5e34",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
     "rw_kernel_path": "target/qualification/inputs/cache/asterinas-kernel-rw",
-    "rw_kernel_sha256": "37ae9336e86487855d0e06b540fa9af21a3f305df25e561307854f22dd4191c3",
-    "source_tree_sha256": "ab1cbf1f11749fe50a6fc5b1b103eb25df5826dd95a7d84b0d1b4b5a17a93a24"
+    "rw_kernel_sha256": "19bad16b08ad781562a179c07aa197535eae2f6951fbec01918dcf2a08938441",
+    "source_tree_sha256": "2df781e15f33054340ef4c3781b99adad15281140513d5030b907ebfc158c897"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -46,7 +46,7 @@
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "167755b04749095cd67d134c0f86b91497411ba3bb38d7fda276978c3c7aefc4",
+      "test/qualification/qualcore/lock.py": "26ed870fd14310ab10aac4dd2fbbf23d28d62c378eaf108ba24822caea8f75c5",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/persistence.py": "72b8345b57375e962cc328df8340318a303913415ca26c91104aa94fe98973b4",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
@@ -74,15 +74,15 @@
   "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "63d64992e613e9732a649b047fbc64959f41be0a344d3b4b76bb974409bb3154",
+    "binary_sha256": "96f051a6e1020901f0a9e994a44d0430b5cccb117b2a719b57dadbc3fede5160",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "f4d599d77c5c6a61190d0649a56f16ef2a16bade935cea57d6220a51a5d5c24b",
+    "initramfs_sha256": "8da50f3b14d903d09dfd278ab9dd3bfea27ea6cd0b903a5c333bd73970625b34",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "0c1cc7a9848f0031b079721aae15afdfac0d894bca17ce8250743aad666667b9"
+    "source_sha256": "14100ab250262ca38feb1f03d2eb4d395577de37c04bebf3ad373045f0420cb8"
   },
   "python": {
     "minimum_version": "3.11"
@@ -250,6 +250,26 @@
       "manifest_hash": "5091a3448e1e3119656f5c49640e125ef58217dcc67732045db09606e91a4f03",
       "normalization_rules": [],
       "payload_hash": "b846d1a46ee6522fec9e545a3a456046ec8cb6258cbd7fb5674d90be66c831c1"
+    },
+    "ext4-xattr": {
+      "case_ids": [
+        "ext4.xattr"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc23-ext4-xattr-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.xattr",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "d995ce55b7823242cd53ced9269803e853425d70b82316a3ac42b117c09e8558",
+      "normalization_rules": [],
+      "payload_hash": "db1558ac891928e5016af003c030adb2e85703f282ebae900012ae37a907bdc9"
     },
     "lc02-selftest": {
       "case_ids": [
