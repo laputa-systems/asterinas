@@ -455,10 +455,29 @@ impl Inode for Ext4Inode {
         if !fs.writable() {
             return Err(errno!(EROFS, "ext4 mounts are read-only"));
         }
+        let child = child_dentry
+            .inode()
+            .downcast_ref::<Ext4Inode>()
+            .ok_or_else(|| errno!(EINVAL))?;
+        aster_ext4::orphan::add(
+            fs.reader().as_ref(),
+            fs.reader().as_ref(),
+            fs.geometry(),
+            child.number,
+        )
+        .map_err(|_| errno!(EIO, "failed to add ext4 orphan"))?;
         let data = self.read_all()?;
         let updated = dir_edit::remove(&data, &child_dentry.name_bytes(), fs.geometry().block_size)
             .map_err(|_| errno!(ENOENT, "ext4 directory entry not found"))?;
-        self.rewrite_dir(&fs, &updated)
+        self.rewrite_dir(&fs, &updated)?;
+        aster_ext4::orphan::remove(
+            fs.reader().as_ref(),
+            fs.reader().as_ref(),
+            fs.geometry(),
+            child.number,
+        )
+        .map_err(|_| errno!(EIO, "failed to remove ext4 orphan"))?;
+        Ok(())
     }
 
     fn link_bytes(&self, _self_dentry: &Dentry, old_dentry: &Dentry, name: &[u8]) -> Result<()> {

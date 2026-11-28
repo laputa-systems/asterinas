@@ -15,6 +15,7 @@ pub mod jbd2;
 pub mod reader;
 pub mod dir_edit;
 pub mod extent_edit;
+pub mod orphan;
 pub mod recovery;
 pub mod transaction;
 pub mod write;

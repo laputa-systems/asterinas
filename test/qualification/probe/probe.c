@@ -40,6 +40,7 @@
 #define EXT4_WRITE_CASE_ID "ext4.write"
 #define EXT4_ALLOC_CASE_ID "ext4.alloc"
 #define EXT4_DIR_CASE_ID "ext4.dir"
+#define EXT4_ORPHAN_CASE_ID "ext4.orphan"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -550,7 +551,8 @@ static bool is_ext4_case(void) {
            strcmp(active_case_id, EXT4_SPARSE_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_WRITE_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0 ||
-           strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0;
+           strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0;
 }
 
 static const char *expected_mount_filesystem(void) {
@@ -590,7 +592,8 @@ static void setup_storage_volume(struct storage_setup *setup) {
     int mount_flags =
         (is_ext4_case() && strcmp(active_case_id, EXT4_WRITE_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_ALLOC_CASE_ID) != 0 &&
-         strcmp(active_case_id, EXT4_DIR_CASE_ID) != 0) ? MS_RDONLY : 0;
+         strcmp(active_case_id, EXT4_DIR_CASE_ID) != 0 &&
+         strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) != 0) ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -726,6 +729,52 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                bytes_passed && size_passed && tail_passed,
                SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
+}
+
+static void run_ext4_orphan_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *path = ADAPTER_MOUNT_POINT "/orphan.txt";
+    const char *first = "lc22-orphan\n";
+    const char *second = "lc22-after\n";
+    struct storage_setup setup;
+    long written = -1;
+    long fsync_result = -1;
+    long unlink_result = -1;
+    long gone = 0;
+    long after_unlink_write = -1;
+    long close_result = -1;
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (fd >= 0) {
+            written = write(fd, first, strlen(first));
+            fsync_result = fsync(fd);
+            unlink_result = unlink(path);
+            struct stat status;
+            gone = (stat(path, &status) == 0) ? 0 : 1;
+            after_unlink_write = write(fd, second, strlen(second));
+            close_result = close(fd);
+        } else {
+            diagnostic("ext4 orphan create failed: %s", strerror(errno));
+        }
+        unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    bool write_passed = written == 12;
+    bool fsync_passed = fsync_result == 0;
+    bool unlink_passed = unlink_result == 0;
+    bool gone_passed = gone == 1;
+    bool after_passed = after_unlink_write == 11;
+    bool close_passed = close_result == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "create-write", "bytes_written", written, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-fsync", "result", fsync_result, fsync_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "open-unlink", "result", unlink_result, unlink_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "after-unlink", "gone", gone, gone_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "write-after-unlink", "bytes_written", after_unlink_write, after_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "close", "result", close_result, close_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               write_passed && fsync_passed && unlink_passed && gone_passed && after_passed && close_passed,
+               SETUP_SUBTESTS + 6, SETUP_ASSERTIONS + 6);
 }
 
 static void run_ext4_dir_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -1848,6 +1897,8 @@ int main(void) {
         run_ext4_alloc_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0) {
         run_ext4_dir_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0) {
+        run_ext4_orphan_case(run_id, nonce, manifest_hash, payload_hash);
 
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);

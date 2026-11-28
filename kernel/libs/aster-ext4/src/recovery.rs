@@ -19,7 +19,14 @@ pub const SB_FEATURE_INCOMPAT: usize = 0x60;
 pub enum MountError {
     Unrecoverable(Error),
     Journal(JournalError),
+    Orphan(crate::orphan::OrphanError),
     RecoveryDidNotClean,
+}
+
+impl From<crate::orphan::OrphanError> for MountError {
+    fn from(error: crate::orphan::OrphanError) -> Self {
+        MountError::Orphan(error)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +74,7 @@ pub fn mount(image: &mut [u8], journal: &[u8]) -> Result<MountOutcome, MountErro
     }
 
     let blocks_replayed = replay_once(image, journal)?;
+    crate::orphan::cleanup_image(image)?;
 
     let mut probe = image.to_vec();
     set_clean(&mut probe)?;
@@ -162,6 +170,21 @@ mod tests {
             mount(&mut image, &journal),
             Ok(MountOutcome::Recovered { blocks_replayed: 1 })
         );
+        assert!(analyze(&image).is_ok());
+    }
+
+    #[test]
+    fn mount_cleans_orphans_after_replay() {
+        let mut image = fixture("basic");
+        mark_needs_recovery(&mut image);
+        let head = SUPER_BLOCK_OFFSET + crate::orphan::ORPHAN_HEAD_OFFSET;
+        image[head..head + 4].copy_from_slice(&11u32.to_le_bytes());
+        let journal = valid_journal();
+        assert_eq!(
+            mount(&mut image, &journal),
+            Ok(MountOutcome::Recovered { blocks_replayed: 1 })
+        );
+        assert_eq!(&image[head..head + 4], &0u32.to_le_bytes());
         assert!(analyze(&image).is_ok());
     }
 
