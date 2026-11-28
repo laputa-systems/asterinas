@@ -241,10 +241,19 @@ impl Ext4Inode {
         Ok(Some((block, data)))
     }
 
-    fn name_parts<'a>(name: &'a XattrName<'a>) -> (u8, &'a [u8]) {
+    fn name_parts<'a>(name: &'a XattrName<'a>) -> Result<(u8, &'a [u8])> {
         let full = name.full_name();
         let suffix = full.split_once('.').map(|(_, rest)| rest).unwrap_or(full);
-        (name.namespace() as u8, suffix.as_bytes())
+        let index = match name.namespace() {
+            XattrNamespace::User => 1,
+            XattrNamespace::Trusted => 4,
+            XattrNamespace::Security => 6,
+            XattrNamespace::System if matches!(suffix, "posix_acl_access" | "posix_acl_default") => {
+                return Err(errno!(EOPNOTSUPP, "ext4 ACLs are unsupported"));
+            }
+            XattrNamespace::System => 7,
+        };
+        Ok((index, suffix.as_bytes()))
     }
 
     fn save_xattr_block(
@@ -753,7 +762,7 @@ impl Inode for Ext4Inode {
         let mut writer = VmWriter::from(buf.as_mut_slice());
         let value_len = value_reader.read_fallible(&mut writer)?;
         buf.truncate(value_len);
-        let (index, suffix) = Self::name_parts(&name);
+        let (index, suffix) = Self::name_parts(&name)?;
         let (block, current) = match Self::xattr_block(&fs, self.number)? {
             Some(entry) => (Some(entry.0), entry.1),
             None => (None, Vec::new()),
@@ -778,7 +787,7 @@ impl Inode for Ext4Inode {
 
     fn get_xattr(&self, name: XattrName<'_>, value_writer: &mut VmWriter) -> Result<usize> {
         let fs = self.fs()?;
-        let (index, suffix) = Self::name_parts(&name);
+        let (index, suffix) = Self::name_parts(&name)?;
         let block = Self::xattr_block(&fs, self.number)?
             .ok_or_else(|| errno!(ENODATA, "no ext4 xattrs"))?;
         let value = xattr_edit::get(&block.1, index, suffix)
@@ -804,19 +813,19 @@ impl Inode for Ext4Inode {
             .map_err(|_| errno!(EIO, "corrupt ext4 xattr block"))?;
         let selected: Vec<Vec<u8>> = names
             .into_iter()
-            .filter(|(index, _)| namespace != XattrNamespace::User || *index == namespace as u8)
-            .map(|(index, name)| {
+            .filter(|(index, _)| namespace != XattrNamespace::User || *index == 1)
+            .filter_map(|(index, name)| {
                 let prefix = match index {
                     1 => "user.",
-                    2 => "trusted.",
-                    3 => "system.",
-                    4 => "security.",
-                    _ => "user.",
+                    4 => "trusted.",
+                    6 => "security.",
+                    7 => "system.",
+                    _ => return None,
                 };
                 let mut full = prefix.as_bytes().to_vec();
                 full.extend_from_slice(name.as_bytes());
                 full.push(0);
-                full
+                Some(full)
             })
             .collect();
         let total: usize = selected.iter().map(Vec::len).sum();
@@ -837,7 +846,7 @@ impl Inode for Ext4Inode {
         if !fs.writable() {
             return Err(errno!(EROFS, "ext4 mounts are read-only"));
         }
-        let (index, suffix) = Self::name_parts(&name);
+        let (index, suffix) = Self::name_parts(&name)?;
         let (block, current) = Self::xattr_block(&fs, self.number)?
             .ok_or_else(|| errno!(ENODATA, "no ext4 xattrs"))?;
         let updated = xattr_edit::remove(&current, index, suffix, fs.geometry().block_size)

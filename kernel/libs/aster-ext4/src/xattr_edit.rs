@@ -13,6 +13,7 @@ use alloc::{string::String, vec, vec::Vec};
 
 const MAGIC: u32 = 0xEA02_0000;
 const HEADER_LEN: usize = 32;
+const ENTRY_HEADER_LEN: usize = 16;
 const MAX_ENTRIES: usize = 128;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,77 +30,110 @@ pub enum XattrError {
     NotFound,
     Exists,
     TooLarge,
+    Unsupported,
 }
 
 fn align4(value: usize) -> usize {
     (value + 3) & !3
 }
 
-pub fn new_block() -> Vec<u8> {
-    let mut block = vec![0u8; HEADER_LEN];
-    block[0..4].copy_from_slice(&MAGIC.to_le_bytes());
-    block[4..8].copy_from_slice(&1u32.to_le_bytes());
-    block
-}
-
 pub fn parse(block: &[u8]) -> Result<Vec<Entry>, XattrError> {
-    if block.len() < HEADER_LEN || u32::from_le_bytes(block[0..4].try_into().unwrap()) != MAGIC {
+    if block.len() < HEADER_LEN || block[..4] != MAGIC.to_le_bytes() {
         return Err(XattrError::BadMagic);
+    }
+    if block[8..12] != 1u32.to_le_bytes() || block[4..8] == [0; 4] {
+        return Err(XattrError::Unsupported);
     }
     let mut entries = Vec::new();
     let mut cursor = HEADER_LEN;
-    while cursor < block.len() {
+    let mut first_value = block.len();
+    loop {
+        let end_marker = block.get(cursor..cursor + 4).ok_or(XattrError::Truncated)?;
+        if end_marker == [0; 4] {
+            if cursor + 4 > first_value {
+                return Err(XattrError::Truncated);
+            }
+            break;
+        }
         if entries.len() >= MAX_ENTRIES {
             return Err(XattrError::TooLarge);
         }
-        if cursor + 8 > block.len() {
-            return Err(XattrError::Truncated);
+        let entry = block.get(cursor..cursor + ENTRY_HEADER_LEN).ok_or(XattrError::Truncated)?;
+        let name_len = entry[0] as usize;
+        let name_start = cursor + ENTRY_HEADER_LEN;
+        let name = block.get(name_start..name_start + name_len).ok_or(XattrError::Truncated)?;
+        if entry[4..8] != [0; 4] {
+            return Err(XattrError::Unsupported);
         }
-        if block[cursor..cursor + 8].iter().all(|byte| *byte == 0) {
-            break;
-        }
-        let name_len = block[cursor] as usize;
-        let name_index = block[cursor + 1];
-        let value_len = u16::from_le_bytes(block[cursor + 2..cursor + 4].try_into().unwrap()) as usize;
-        let name_start = cursor + 8;
-        let value_start = name_start + align4(name_len);
-        let end = value_start + align4(value_len);
-        if end > block.len() {
-            return Err(XattrError::Truncated);
-        }
+        let value_len = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as usize;
+        let value = if value_len == 0 {
+            &[][..]
+        } else {
+            let start = u16::from_le_bytes(entry[2..4].try_into().unwrap()) as usize;
+            let end = start.checked_add(value_len).ok_or(XattrError::TooLarge)?;
+            if start % 4 != 0 || start < HEADER_LEN || end > block.len() {
+                return Err(XattrError::Truncated);
+            }
+            first_value = first_value.min(start);
+            &block[start..end]
+        };
         entries.push(Entry {
-            name_index,
-            name: block[name_start..name_start + name_len].to_vec(),
-            value: block[value_start..value_start + value_len].to_vec(),
+            name_index: entry[1],
+            name: name.to_vec(),
+            value: value.to_vec(),
         });
-        cursor = end;
+        cursor = name_start + align4(name_len);
+        if cursor > first_value {
+            return Err(XattrError::Truncated);
+        }
     }
     Ok(entries)
 }
 
-fn build(entries: &[Entry], block_size: usize) -> Result<Vec<u8>, XattrError> {
-    let mut block = new_block();
+fn build(entries: &mut [Entry], block_size: usize) -> Result<Vec<u8>, XattrError> {
+    if !(HEADER_LEN + 4..=1 << 16).contains(&block_size) || entries.len() > MAX_ENTRIES {
+        return Err(XattrError::TooLarge);
+    }
+    entries.sort_unstable_by(|a, b| {
+        (a.name_index, a.name.len(), &a.name).cmp(&(b.name_index, b.name.len(), &b.name))
+    });
+    let mut block = vec![0u8; block_size];
+    block[..4].copy_from_slice(&MAGIC.to_le_bytes());
+    block[4..8].copy_from_slice(&1u32.to_le_bytes());
+    block[8..12].copy_from_slice(&1u32.to_le_bytes());
+    let mut cursor = HEADER_LEN;
+    let mut values = block_size;
+    let mut block_hash = 0u32;
     for entry in entries {
         if entry.name.len() > 255 || entry.value.len() > u16::MAX as usize {
             return Err(XattrError::TooLarge);
         }
         let name_padded = align4(entry.name.len());
         let value_padded = align4(entry.value.len());
-        let entry_len = 8 + name_padded + value_padded;
-        if block.len() + entry_len > block_size {
+        let entry_len = ENTRY_HEADER_LEN + name_padded;
+        values = values.checked_sub(value_padded).ok_or(XattrError::TooLarge)?;
+        if cursor + entry_len + 4 > values {
             return Err(XattrError::TooLarge);
         }
-        let start = block.len();
-        block.push(entry.name.len() as u8);
-        block.push(entry.name_index);
-        block.extend_from_slice(&(entry.value.len() as u16).to_le_bytes());
-        block.extend_from_slice(&0u32.to_le_bytes());
-        block.extend_from_slice(&entry.name);
-        block.resize(start + 8 + name_padded, 0);
-        block.extend_from_slice(&entry.value);
-        block.resize(start + entry_len, 0);
+        let mut hash = entry.name.iter().fold(0u32, |hash, byte| hash.rotate_left(5) ^ u32::from(*byte));
+        let header = &mut block[cursor..cursor + ENTRY_HEADER_LEN];
+        header[0] = entry.name.len() as u8;
+        header[1] = entry.name_index;
+        header[8..12].copy_from_slice(&(entry.value.len() as u32).to_le_bytes());
+        if !entry.value.is_empty() {
+            header[2..4].copy_from_slice(&(values as u16).to_le_bytes());
+            block[values..values + entry.value.len()].copy_from_slice(&entry.value);
+            for word in block[values..values + value_padded].chunks_exact(4) {
+                hash = hash.rotate_left(16) ^ u32::from_le_bytes(word.try_into().unwrap());
+            }
+        }
+        block[cursor + 12..cursor + 16].copy_from_slice(&hash.to_le_bytes());
+        let name_start = cursor + ENTRY_HEADER_LEN;
+        block[name_start..name_start + entry.name.len()].copy_from_slice(&entry.name);
+        cursor += entry_len;
+        block_hash = block_hash.rotate_left(16) ^ hash;
     }
-    block.resize(block_size, 0);
+    block[12..16].copy_from_slice(&block_hash.to_le_bytes());
     Ok(block)
 }
 
@@ -119,7 +153,7 @@ pub fn set(
     let mut entries = if block.is_empty() {
         Vec::new()
     } else {
-        parse(block)?
+        editable_entries(block)?
     };
     let position = entries
         .iter()
@@ -139,17 +173,25 @@ pub fn set(
     } else {
         entries.push(entry);
     }
-    build(&entries, block_size)
+    build(&mut entries, block_size)
 }
 
 pub fn remove(block: &[u8], name_index: u8, name: &[u8], block_size: usize) -> Result<Vec<u8>, XattrError> {
-    let mut entries = parse(block)?;
+    let mut entries = editable_entries(block)?;
     let position = entries
         .iter()
         .position(|entry| matches(entry, name_index, name))
         .ok_or(XattrError::NotFound)?;
     entries.remove(position);
-    build(&entries, block_size)
+    build(&mut entries, block_size)
+}
+
+fn editable_entries(block: &[u8]) -> Result<Vec<Entry>, XattrError> {
+    let entries = parse(block)?;
+    if block[4..8] != 1u32.to_le_bytes() || block[16..20] != [0; 4] {
+        return Err(XattrError::Unsupported);
+    }
+    Ok(entries)
 }
 
 pub fn get(block: &[u8], name_index: u8, name: &[u8]) -> Result<Option<Vec<u8>>, XattrError> {
@@ -174,6 +216,40 @@ pub fn names(block: &[u8]) -> Result<Vec<(u8, String)>, XattrError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, path::Path};
+
+    fn e2fsprogs_external_attributes() -> (Vec<u8>, core::ops::Range<usize>) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../target/qualification/inputs/ext4/external-xattrs.ext4");
+        let image = fs::read(path).unwrap();
+        let geom = crate::reader::geometry(&image).unwrap();
+        let root = crate::reader::read_inode(&image, &geom, crate::reader::ROOT_INO).unwrap();
+        let ino = crate::reader::lookup(&image, &geom, &root, b"marker.txt").unwrap();
+        let offset = crate::reader::inode_offset_from(&crate::reader::SliceReader::new(&image), &geom, ino).unwrap() as usize;
+        let block = u32::from_le_bytes(image[offset + 0x68..offset + 0x6C].try_into().unwrap()) as usize;
+        let start = block * geom.block_size;
+        (image, start..start + geom.block_size)
+    }
+
+    #[test]
+    #[ignore = "requires external-xattrs.ext4 from fixtures/ext4/build-xattrs.sh"]
+    fn reads_e2fsprogs_external_attributes() {
+        let (image, range) = e2fsprogs_external_attributes();
+        let data = &image[range];
+        assert_eq!(get(data, 1, b"foo"), Ok(Some(b"bar".to_vec())));
+        assert_eq!(get(data, 4, b"author"), Ok(Some(b"asterinas".to_vec())));
+    }
+
+    #[test]
+    #[ignore = "produces a clone for pinned e2fsprogs validation"]
+    fn writes_external_attributes_for_e2fsprogs() {
+        let (mut image, range) = e2fsprogs_external_attributes();
+        let modified = set(&image[range.clone()], 1, b"foo", b"candidate-value", range.len(), true, false).unwrap();
+        image[range].copy_from_slice(&modified);
+        let output = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../target/qualification/inputs/ext4/candidate-xattrs.ext4");
+        fs::write(output, image).unwrap();
+    }
 
     #[test]
     fn set_get_list_replace_and_remove() {
@@ -200,5 +276,14 @@ mod tests {
         assert_eq!(get(&block, 1, b"a"), Err(XattrError::BadMagic));
         let huge = vec![0u8; 70000];
         assert_eq!(set(&[], 1, b"a", &huge, block_size, false, false), Err(XattrError::TooLarge));
+    }
+
+    #[test]
+    fn refuses_values_overlapping_the_entries() {
+        let mut block = set(&[], 1, b"foo", b"bar", 4096, false, false).unwrap();
+        assert_eq!(u32::from_le_bytes(block[8..12].try_into().unwrap()), 1);
+        assert_eq!(&block[48..51], b"foo");
+        block[34..36].copy_from_slice(&48u16.to_le_bytes());
+        assert_eq!(parse(&block), Err(XattrError::Truncated));
     }
 }
