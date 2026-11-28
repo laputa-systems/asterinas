@@ -58,6 +58,7 @@ pub enum TargetWidth {
     Bits64,
 }
 
+#[derive(Debug)]
 pub struct MetadataBlock<'a> {
     pub fs_block: u64,
     pub data: &'a [u8],
