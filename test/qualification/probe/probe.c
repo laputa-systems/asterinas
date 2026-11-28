@@ -44,6 +44,7 @@
 #define EXT4_ORPHAN_CASE_ID "ext4.orphan"
 #define EXT4_XATTR_CASE_ID "ext4.xattr"
 #define EXT4_DURABILITY_CASE_ID "ext4.durability"
+#define EXT4_ERRORS_CASE_ID "ext4.errors"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -557,7 +558,8 @@ static bool is_ext4_case(void) {
            strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0 ||
-           strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) == 0;
+           strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_ERRORS_CASE_ID) == 0;
 }
 
 static const char *expected_mount_filesystem(void) {
@@ -600,7 +602,8 @@ static void setup_storage_volume(struct storage_setup *setup) {
          strcmp(active_case_id, EXT4_DIR_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_XATTR_CASE_ID) != 0 &&
-         strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) != 0) ? MS_RDONLY : 0;
+         strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) != 0 &&
+         strcmp(active_case_id, EXT4_ERRORS_CASE_ID) != 0) ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -736,6 +739,56 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                bytes_passed && size_passed && tail_passed,
                SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
+}
+
+static void run_ext4_errors_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *path = ADAPTER_MOUNT_POINT "/errors.txt";
+    const char *content = "lc23-error\n";
+    struct storage_setup setup;
+    char roundtrip[256] = "";
+    long rejected = 0;
+    long written = -1;
+    long fsync_result = -1;
+    long size = -1;
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (fd >= 0) {
+            int directory = open(ADAPTER_MOUNT_POINT, O_RDONLY | O_DIRECTORY);
+            if (directory >= 0) {
+                if (write(directory, content, strlen(content)) < 0) {
+                    rejected = 1;
+                }
+                close(directory);
+            }
+            written = write(fd, content, strlen(content));
+            fsync_result = fsync(fd);
+            close(fd);
+            read_file_base64(path, roundtrip, sizeof(roundtrip));
+            struct stat status;
+            if (stat(path, &status) == 0) {
+                size = (long)status.st_size;
+            }
+        } else {
+            diagnostic("ext4 errors create failed: %s", strerror(errno));
+        }
+        unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    bool rejected_passed = rejected == 1;
+    bool write_passed = written == 11;
+    bool fsync_passed = fsync_result == 0;
+    bool bytes_passed = strcmp(roundtrip, "bGMyMy1lcnJvcgo=") == 0;
+    bool size_passed = size == 11;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "oversize-write-rejected", "rejected", rejected, rejected_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "post-error-write", "bytes_written", written, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "post-error-fsync", "result", fsync_result, fsync_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "post-error-read", "bytes", roundtrip, bytes_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "post-error-size", "bytes", size, size_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               rejected_passed && write_passed && fsync_passed && bytes_passed && size_passed,
+               SETUP_SUBTESTS + 5, SETUP_ASSERTIONS + 5);
 }
 
 static void run_ext4_durability_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -2034,6 +2087,8 @@ int main(void) {
         run_ext4_xattr_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) == 0) {
         run_ext4_durability_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_ERRORS_CASE_ID) == 0) {
+        run_ext4_errors_case(run_id, nonce, manifest_hash, payload_hash);
 
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);
