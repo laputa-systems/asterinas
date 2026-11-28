@@ -147,7 +147,8 @@ pub fn first_transaction(
 }
 
 /// Scans committed transactions in journal order, preserving writes and revokes for recovery.
-/// A missing or stale header ends the scan; matching malformed records return an error.
+/// A missing or stale header or the end of the scan window discards an uncommitted tail.
+/// A malformed matching record returns an error.
 ///
 /// # Errors
 /// Returns an error for unsupported or corrupt journal data or exceeded bounds.
@@ -211,7 +212,10 @@ fn parse_transaction(
     let mut saw_record = false;
     let next = |n: u32| if n + 1 == sb.max_len { sb.first } else { n + 1 };
     loop {
-        if consumed >= MAX_TRANSACTION_BLOCKS || consumed >= available {
+        if consumed == available {
+            return Ok(None);
+        }
+        if consumed >= MAX_TRANSACTION_BLOCKS {
             return Err(Error::LimitExceeded);
         }
         let current = block(journal, position, size).ok_or(Error::Truncated)?;
@@ -273,7 +277,12 @@ fn parse_transaction(
                 for (fs_block, flags, checksum) in tags {
                     position = next(position);
                     consumed += 1;
-                    if consumed > MAX_TRANSACTION_BLOCKS || consumed >= available { return Err(Error::LimitExceeded); }
+                    if consumed > available {
+                        return Ok(None);
+                    }
+                    if consumed > MAX_TRANSACTION_BLOCKS {
+                        return Err(Error::LimitExceeded);
+                    }
                     let data = block(journal, position, size).ok_or(Error::Truncated)?;
                     if flags & 1 != 0 && data[..4] != [0; 4] { return Err(Error::Invalid); }
                     if v3 {
@@ -424,6 +433,22 @@ mod edge_tests {
         assert_eq!(scan_transactions(&journal, &uuid, 4096).unwrap().len(), 1);
         put_transaction(&mut journal, &uuid, 4, 2, 1200);
         journal[4 * 4096 + 20] ^= 1;
+        assert_eq!(scan_transactions(&journal, &uuid, 4096), Err(Error::Checksum));
+    }
+
+    #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
+    fn discards_uncommitted_transaction_at_end_of_ring() {
+        let (mut journal, uuid) = v3();
+        put_transaction(&mut journal, &uuid, 4, 2, 1200);
+        journal[0x10..0x14].copy_from_slice(&6u32.to_be_bytes());
+        let checksum = checksum_block(!0, &journal[..1024], 0xfc);
+        journal[0xfc..0x100].copy_from_slice(&checksum.to_be_bytes());
+
+        let transactions = scan_transactions(&journal, &uuid, 4096).unwrap();
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(transactions[0].sequence, 1);
+        journal[5 * 4096] ^= 1;
         assert_eq!(scan_transactions(&journal, &uuid, 4096), Err(Error::Checksum));
     }
 
