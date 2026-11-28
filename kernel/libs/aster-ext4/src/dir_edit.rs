@@ -121,6 +121,32 @@ pub fn remove(data: &[u8], name: &[u8], block_size: usize) -> Result<Vec<u8>, Di
     build(&entries, block_size)
 }
 
+/// Changes the name of the entry with `ino`, preserving its file type.
+pub fn rename_entry(
+    data: &[u8],
+    ino: u32,
+    new_name: &[u8],
+    block_size: usize,
+) -> Result<Vec<u8>, DirError> {
+    let mut entries = parse(data)?;
+    if entries.iter().any(|entry| entry.name == new_name) {
+        return Err(DirError::Exists);
+    }
+    let entry = entries
+        .iter_mut()
+        .find(|entry| entry.ino == ino)
+        .ok_or(DirError::NotFound)?;
+    entry.name = new_name.to_vec();
+    build(&entries, block_size)
+}
+
+/// True when only the dot entries remain (an empty directory).
+pub fn is_empty(data: &[u8]) -> Result<bool, DirError> {
+    Ok(parse(data)?
+        .iter()
+        .all(|entry| entry.name == b"." || entry.name == b".."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +163,21 @@ mod tests {
         assert_eq!(entries[2].name, b"marker.txt");
         data = remove(&data, b"marker.txt", block).unwrap();
         assert_eq!(parse(&data).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn rename_and_empty_detection() {
+        let block = 4096usize;
+        let mut data = add(&vec![0u8; block], 2, b".", 2, block).unwrap();
+        data = add(&data, 3, b"..", 2, block).unwrap();
+        assert!(is_empty(&data).unwrap());
+        data = add(&data, 11, b"a", 1, block).unwrap();
+        assert!(!is_empty(&data).unwrap());
+        data = rename_entry(&data, 11, b"b", block).unwrap();
+        let entries = parse(&data).unwrap();
+        assert_eq!(entries[2].name, b"b");
+        data = remove(&data, b"b", block).unwrap();
+        assert!(is_empty(&data).unwrap());
     }
 
     #[test]

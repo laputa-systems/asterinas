@@ -1,0 +1,220 @@
+{
+  "cases": [
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT4_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext4",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc21-ext4-dir-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext4",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "mkdir"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 1,
+              "id": "is_dir",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "dir-type"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 9,
+              "id": "bytes_written",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "create-write"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-fsync"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "link"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "rename"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "bGMyMS1kaXIK",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "read-renamed"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 2,
+              "id": "nlink",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "link-count"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "rejected",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "rmdir-nonempty"
+        }
+      ],
+      "id": "ext4.dir",
+      "item": "LC-21",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_image": "adapter-disk.ext4",
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "filesystem": "ext4",
+        "mount_point": "/mnt/qualification",
+        "features": [
+          "ext4_rw_experimental"
+        ]
+      },
+      "procedure": "Create an ext4 directory and a file inside it, hard-link and rename the file, verify readback and link count, and confirm rmdir rejects a non-empty directory.",
+      "replay": "python3 test/qualification/run.py run --profile ext4-dir --candidate asterinas",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext4-dir-r1",
+        "upstream": "asterinas-qualification-ext4-read"
+      },
+      "validators": [
+        "reference-contract"
+      ]
+    }
+  ]
+}

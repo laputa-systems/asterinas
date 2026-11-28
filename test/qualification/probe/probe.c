@@ -39,6 +39,7 @@
 #define EXT4_SPARSE_CASE_ID "ext4.sparse"
 #define EXT4_WRITE_CASE_ID "ext4.write"
 #define EXT4_ALLOC_CASE_ID "ext4.alloc"
+#define EXT4_DIR_CASE_ID "ext4.dir"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -548,7 +549,8 @@ static bool is_ext4_case(void) {
            strcmp(active_case_id, EXT4_MULTIGROUP_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_SPARSE_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_WRITE_CASE_ID) == 0 ||
-           strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0;
+           strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0;
 }
 
 static const char *expected_mount_filesystem(void) {
@@ -587,7 +589,8 @@ static void setup_storage_volume(struct storage_setup *setup) {
     mkdir(ADAPTER_MOUNT_POINT, 0555);
     int mount_flags =
         (is_ext4_case() && strcmp(active_case_id, EXT4_WRITE_CASE_ID) != 0 &&
-         strcmp(active_case_id, EXT4_ALLOC_CASE_ID) != 0) ? MS_RDONLY : 0;
+         strcmp(active_case_id, EXT4_ALLOC_CASE_ID) != 0 &&
+         strcmp(active_case_id, EXT4_DIR_CASE_ID) != 0) ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -723,6 +726,73 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                bytes_passed && size_passed && tail_passed,
                SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
+}
+
+static void run_ext4_dir_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *dir = ADAPTER_MOUNT_POINT "/subdir";
+    const char *file = ADAPTER_MOUNT_POINT "/subdir/data.txt";
+    const char *hardlink = ADAPTER_MOUNT_POINT "/hardlink.txt";
+    const char *renamed = ADAPTER_MOUNT_POINT "/renamed.txt";
+    const char *expected = "lc21-dir\n";
+    struct storage_setup setup;
+    char roundtrip[256] = "";
+    long mkdir_result = -1;
+    long is_dir = 0;
+    long written = -1;
+    long fsync_result = -1;
+    long link_result = -1;
+    long rename_result = -1;
+    long link_count = -1;
+    long rmdir_result = 0;
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        mkdir_result = mkdir(dir, 0750);
+        struct stat dirstat;
+        if (stat(dir, &dirstat) == 0 && S_ISDIR(dirstat.st_mode)) {
+            is_dir = 1;
+        }
+        int fd = open(file, O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (fd >= 0) {
+            written = write(fd, expected, strlen(expected));
+            fsync_result = fsync(fd);
+            close(fd);
+        } else {
+            diagnostic("ext4 dir create failed: %s", strerror(errno));
+        }
+        link_result = link(file, hardlink);
+        rename_result = rename(hardlink, renamed);
+        read_file_base64(renamed, roundtrip, sizeof(roundtrip));
+        struct stat linkstat;
+        if (stat(renamed, &linkstat) == 0) {
+            link_count = (long)linkstat.st_nlink;
+        }
+        rmdir_result = rmdir(dir) == 0 ? 1 : 0;
+        unmount_adapter_volume();
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    bool mkdir_passed = mkdir_result == 0;
+    bool dir_passed = is_dir == 1;
+    bool write_passed = written == 9;
+    bool fsync_passed = fsync_result == 0;
+    bool link_passed = link_result == 0;
+    bool rename_passed = rename_result == 0;
+    bool bytes_passed = strcmp(roundtrip, "bGMyMS1kaXIK") == 0;
+    bool links_passed = link_count == 2;
+    bool rmdir_passed = rmdir_result == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "mkdir", "result", mkdir_result, mkdir_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "dir-type", "is_dir", is_dir, dir_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "create-write", "bytes_written", written, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-fsync", "result", fsync_result, fsync_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "link", "result", link_result, link_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "rename", "result", rename_result, rename_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "read-renamed", "bytes", roundtrip, bytes_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "link-count", "nlink", link_count, links_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "rmdir-nonempty", "rejected", rmdir_result, rmdir_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               mkdir_passed && dir_passed && write_passed && fsync_passed && link_passed &&
+               rename_passed && bytes_passed && links_passed && rmdir_passed,
+               SETUP_SUBTESTS + 9, SETUP_ASSERTIONS + 9);
 }
 
 static void run_ext4_alloc_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -1776,6 +1846,8 @@ int main(void) {
         run_ext4_write_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0) {
         run_ext4_alloc_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0) {
+        run_ext4_dir_case(run_id, nonce, manifest_hash, payload_hash);
 
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);
