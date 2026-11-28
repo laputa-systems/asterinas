@@ -140,6 +140,7 @@
       "payload": {
         "adapter": true,
         "disk_image": "adapter-disk.ext4",
+        "e2fsprogs_marker_base64": "bGMxOS1qb3VybmFsCg==",
         "features": "ext4_rw_experimental",
         "disk_serial": "qual-lc06-adapter",
         "disk_size_bytes": 16777216,
@@ -156,7 +157,8 @@
         "upstream": "asterinas-qualification-ext4-read"
       },
       "validators": [
-        "reference-contract"
+        "reference-contract",
+        "e2fsprogs-marker-readback"
       ]
     }
   ]

@@ -1984,7 +1984,9 @@ static void run_persistence_case(const char *run_id, const char *nonce, const ch
         if (sync_file) {
             sync_result = fsync(fd);
         }
-        close(fd);
+        if (!omit_final_sync) {
+            close(fd);
+        }
     } else {
         diagnostic("persistence open failed: %s", strerror(errno));
     }
@@ -2000,7 +2002,6 @@ static void run_persistence_case(const char *run_id, const char *nonce, const ch
                SETUP_SUBTESTS + 2, SETUP_ASSERTIONS + 2);
     diagnostic("persistence probe complete status=%s sync=%s", write_ok && sync_ok ? "pass" : "fail", sync_file ? "yes" : "no");
     if (omit_final_sync) {
-        /* Stay silent so the supervisor cuts power before any implicit flush. */
         for (;;) {
             pause();
         }
@@ -2046,7 +2047,7 @@ int main(void) {
     }
 
     emit_start(run_id, nonce, manifest_hash, payload_hash);
-    omit_final_sync = strcmp(control, "omit-sync") == 0;
+    omit_final_sync = strcmp(control, "persistence-cut") == 0;
     if (strcmp(control, "hang") == 0) {
         diagnostic("entering deliberate hang control");
         for (;;) {

@@ -4,9 +4,11 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .adapter import initialize_blklogwrites
 from .supervisor import SupervisedResult, Supervisor
 
 
@@ -103,7 +105,7 @@ def qemu_command(
             "-blockdev",
             f"node-name=adapter-log-file,driver=file,filename={write_log},cache.direct=off,cache.no-flush=off",
             "-blockdev",
-            "node-name=adapter-logged,driver=blklogwrites,file=adapter-raw,log=adapter-log-file,log-sector-size=512",
+            "node-name=adapter-logged,driver=blklogwrites,file=adapter-raw,log=adapter-log-file,log-append=on,log-super-update-interval=1",
             "-blockdev",
             f"node-name=adapter-disk,driver=blkdebug,image=adapter-logged,config={config}",
             "-device",
@@ -187,6 +189,7 @@ def run_qemu(
     inject_read_errors: bool = False,
     inject_writeback_eio: bool = False,
     kernel_kind: str = "linux",
+    power_cut_on_result: Callable[[bytes], bool] | None = None,
 ) -> QemuExecution:
     vm_dir = work_dir / label
     vm_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -197,7 +200,7 @@ def run_qemu(
         disk_image = vm_dir / "adapter-disk.img"
         shutil.copyfile(adapter_image, disk_image)
         write_log = vm_dir / "blklogwrites.log"
-        write_log.touch(mode=0o600)
+        initialize_blklogwrites(write_log)
         blkdebug_config = vm_dir / "blkdebug.conf"
         if inject_read_errors:
             blkdebug_config.write_text('[inject-error]\nevent = "none"\niotype = "read"\nerrno = "5"\n', encoding="utf-8")
@@ -227,12 +230,24 @@ def run_qemu(
         kernel_kind,
     )
     started = time.monotonic()
+
+    def should_cut_power() -> bool:
+        try:
+            with qual_log.open("rb") as stream:
+                data = stream.read(output_budget + 1)
+        except FileNotFoundError:
+            return False
+        if len(data) > output_budget:
+            raise QemuError("dedicated serial log exceeds the result budget")
+        return power_cut_on_result is not None and power_cut_on_result(data)
+
     result = Supervisor().run(
         list(command),
         timeout=deadline,
         output_budget=output_budget,
         log_path=console_log,
         silence_timeout=silence_timeout,
+        should_cut_power=should_cut_power if power_cut_on_result is not None else None,
     )
     return QemuExecution(
         label=label,

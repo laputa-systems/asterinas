@@ -16,9 +16,16 @@ MAX_LOG_BYTES = 256 * 1024 * 1024
 MAX_SECTOR_SIZE = 1 << 20
 MAX_SECTOR_INDEX = 1 << 40
 MAX_RECORD_SECTORS = 1 << 32
+WRITE_LOG_SECTOR_SIZE = 512
 
 
-def validate_blklogwrites(path: Path) -> list[str]:
+def initialize_blklogwrites(path: Path) -> None:
+    header = struct.pack("<QQQI", WRITE_LOG_MAGIC, WRITE_LOG_VERSION, 0, WRITE_LOG_SECTOR_SIZE)
+    with path.open("xb") as log:
+        log.write(header.ljust(WRITE_LOG_SECTOR_SIZE, b"\0"))
+
+
+def validate_blklogwrites(path: Path, *, expect_writes: bool | None = True) -> list[str]:
     if not path.is_file():
         return [f"blklogwrites log is missing: {path}"]
     size = path.stat().st_size
@@ -39,8 +46,6 @@ def validate_blklogwrites(path: Path) -> list[str]:
             failures.append(f"blklogwrites version mismatch: {version}")
         if sector_size < 512 or sector_size > MAX_SECTOR_SIZE or sector_size & (sector_size - 1):
             failures.append(f"blklogwrites sector size is invalid: {sector_size}")
-        if entries == 0:
-            failures.append("blklogwrites log records no writes")
         if failures:
             return failures
         if size < sector_size:
@@ -53,6 +58,7 @@ def validate_blklogwrites(path: Path) -> list[str]:
             ]
 
         data_writes = 0
+        discards = 0
         offset = sector_size
         for index in range(entries):
             if offset + WRITE_LOG_ENTRY_SIZE > size:
@@ -80,6 +86,7 @@ def validate_blklogwrites(path: Path) -> list[str]:
                 if nr_sectors == 0:
                     failures.append(f"blklogwrites record {index} discard has zero sectors")
                     break
+                discards += 1
                 offset += sector_size
             else:
                 control_only = bool(flags & (LOG_FLUSH_FLAG | LOG_MARK_FLAG)) and nr_sectors == 0
@@ -99,6 +106,10 @@ def validate_blklogwrites(path: Path) -> list[str]:
 
     if failures:
         return failures
-    if data_writes == 0:
+    if offset != size:
+        return [f"blklogwrites has {size - offset} bytes after its declared records"]
+    if expect_writes is True and data_writes == 0:
         failures.append("blklogwrites log records no data writes")
+    elif expect_writes is False and (data_writes or discards):
+        failures.append("read-only blklogwrites log records unexpected writes or discards")
     return failures

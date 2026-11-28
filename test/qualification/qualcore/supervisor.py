@@ -207,6 +207,7 @@ class Supervisor:
         log_opener: LogOpener | None = None,
         silence_timeout: float | None = None,
         process_tree_interval: float = 0.05,
+        should_cut_power: Callable[[], bool] | None = None,
     ) -> SupervisedResult:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be a finite positive number")
@@ -448,6 +449,10 @@ class Supervisor:
                 if stop_reason:
                     outcome = stop_reason[0]
                     _stop_group(process, pgid)
+                    break
+                if should_cut_power is not None and process.poll() is None and should_cut_power():
+                    if _signal_group(pgid, signal.SIGKILL):
+                        outcome = "power-cut"
                     break
                 if time.monotonic() - started >= timeout:
                     outcome = "timeout"

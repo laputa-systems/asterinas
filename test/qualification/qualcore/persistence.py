@@ -9,6 +9,7 @@ the same cut enumeration can validate both kernels and the omitted-sync
 control.
 """
 
+import shutil
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from .adapter import (
     LOG_DISCARD_FLAG,
     LOG_FLAG_MASK,
     LOG_FLUSH_FLAG,
+    LOG_FUA_FLAG,
     LOG_MARK_FLAG,
     MAX_LOG_BYTES,
     MAX_RECORD_SECTORS,
@@ -36,11 +38,13 @@ class LogRecord:
     sector: int
     nr_sectors: int
     flags: int
+    sector_size: int
+    payload_offset: int
 
 
 def parse_records(path: Path) -> list[LogRecord]:
     """Parses a validated log into bounded records."""
-    failures = validate_blklogwrites(path)
+    failures = validate_blklogwrites(path, expect_writes=None)
     if failures:
         raise ValueError("; ".join(failures))
     size = path.stat().st_size
@@ -70,7 +74,7 @@ def parse_records(path: Path) -> list[LogRecord]:
                 raise ValueError("unsupported blklogwrites record")
             if sector > MAX_SECTOR_INDEX or nr_sectors > MAX_RECORD_SECTORS:
                 raise ValueError("impossible blklogwrites geometry")
-            records.append(LogRecord(index, sector, nr_sectors, flags))
+            records.append(LogRecord(index, sector, nr_sectors, flags, sector_size, offset + sector_size))
             if flags & LOG_DISCARD_FLAG or (
                 flags & (LOG_FLUSH_FLAG | LOG_MARK_FLAG) and nr_sectors == 0
             ):
@@ -122,17 +126,27 @@ def omitted_sync_detected(records: list[LogRecord]) -> bool:
     )
 
 
-def durable_sectors(records: list[LogRecord], cut: int) -> set[int]:
-    """Returns the sectors whose data writes survived a crash at `cut`."""
-    return {record.sector for record in durable_writes(records, cut)}
-
-
-def missing_durable_sectors(
-    synced: list[LogRecord], omitted: list[LogRecord]
-) -> set[int]:
-    """Returns sectors durable in the synced run but not in the omitted run."""
-    synced_cuts = enumerate_crash_cuts(synced)
-    omitted_cuts = enumerate_crash_cuts(omitted)
-    synced_durable = durable_sectors(synced, synced_cuts[-1])
-    omitted_durable = durable_sectors(omitted, omitted_cuts[-1])
-    return synced_durable - omitted_durable
+def reconstruct_after_flush(seed: Path, path: Path, output: Path) -> int:
+    """Builds the minimum persisted image at the final completed flush."""
+    records = parse_records(path)
+    if any(record.flags & (LOG_FUA_FLAG | LOG_DISCARD_FLAG | LOG_MARK_FLAG) for record in records):
+        raise ValueError("crash model admits writes and flushes only")
+    cut = enumerate_crash_cuts(records)[-1]
+    writes = durable_writes(records, cut)
+    limit = seed.stat().st_size
+    for record in writes:
+        if (record.sector + record.nr_sectors) * record.sector_size > limit:
+            raise ValueError(f"write-log record {record.index} exceeds the seed image")
+    with seed.open("rb") as source, path.open("rb") as log, output.open("xb") as recovered:
+        shutil.copyfileobj(source, recovered)
+        for record in writes:
+            log.seek(record.payload_offset)
+            recovered.seek(record.sector * record.sector_size)
+            remaining = record.nr_sectors * record.sector_size
+            while remaining:
+                data = log.read(min(remaining, 1 << 20))
+                if not data:
+                    raise ValueError(f"write-log record {record.index} changed during replay")
+                recovered.write(data)
+                remaining -= len(data)
+    return cut

@@ -130,6 +130,7 @@
       "replay": "python3 test/qualification/run.py run --profile s0-persistence --controls",
       "payload": {
         "adapter": true,
+        "expect_writes": null,
         "disk_serial": "qual-lc06-adapter"
       }
     },
@@ -263,6 +264,7 @@
       "replay": "python3 test/qualification/run.py run --profile s0-persistence --controls",
       "payload": {
         "adapter": true,
+        "expect_writes": null,
         "disk_serial": "qual-lc06-adapter"
       }
     }

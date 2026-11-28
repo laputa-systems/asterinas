@@ -1,4 +1,6 @@
+import base64
 import json
+import signal
 import secrets
 import shlex
 import shutil
@@ -13,6 +15,7 @@ from .accounting import CaseOutcome, RoleResult, reconcile
 from .adapter import validate_blklogwrites
 from .compare import compare_value, verify_comparison_claim
 from .evidence import EvidenceBundle
+from .ext_image import inspect_ext_marker
 from .lock import (
     CACHE_DIR,
     LOCK_PATH,
@@ -23,7 +26,7 @@ from .lock import (
     write_effective_lock,
 )
 from .manifest import CaseSpec, Selection, load_case_index, load_profile
-from .persistence import missing_durable_sectors, omitted_sync_detected, parse_records
+from .persistence import reconstruct_after_flush
 from .qemu import VmExclusion, qemu_version, resolve_qemu_path, run_qemu
 from .supervisor import Supervisor
 from .results import ResultContext, ingest_result_stream, make_result_line
@@ -45,6 +48,7 @@ class BackendEvidence:
     stream_text: str
     console_text: str
     storage_diagnostics: tuple[str, ...] = ()
+    image_failures: tuple[str, ...] = ()
 
 
 class RunFailure(Exception):
@@ -361,6 +365,8 @@ def execute_backend(
     stream_run_id = f"{bundle.run_id}-{label}"
     nonce = secrets.token_hex(16)
     case = selection.cases[0] if case is None else case
+    if selection.case_map.get(case.case_id) != case:
+        raise RunFailure(f"backend case is outside the verified selection: {case.case_id}")
     expected_cases = {case.case_id: case}
     assert_selection_snapshot(selection, snapshot)
     assert_backend_snapshot(snapshot.qemu_path, snapshot)
@@ -386,6 +392,24 @@ def execute_backend(
     input_failures = verify_copied_input_hashes(used_inputs, snapshot.expected_hashes)
     if input_failures:
         raise RunFailure("backend inputs changed before use: " + "; ".join(input_failures))
+
+    def result_context() -> ResultContext:
+        return ResultContext(
+            run_id=stream_run_id, nonce=nonce, manifest_hash=selection.manifest_hash,
+            payload_hash=selection.payload_hash, cases=expected_cases,
+            max_age_seconds=300, now=time.time(),
+        )
+
+    def acknowledged(data: bytes) -> bool:
+        if not data.endswith(b"\n") or b'"kind":"final"' not in data:
+            return False
+        result = ingest_result_stream(data.decode("utf-8", errors="replace"), result_context())
+        final = result.finals.get(case.case_id)
+        return (
+            not result.diagnostics and final is not None and final.get("status") == "pass"
+            and not compare_against_contract(case, _observed_values(result, case.case_id))
+        )
+
     execution = run_qemu(
         qemu_path=snapshot.qemu_resolved_path,
         kernel=inputs[kernel_name],
@@ -414,6 +438,7 @@ def execute_backend(
         inject_read_errors=control == "failed-mount",
         inject_writeback_eio=bool(case.payload.get("inject_writeback_eio")),
         kernel_kind=backend,
+        power_cut_on_result=acknowledged if control == "persistence-cut" else None,
     )
     assert_backend_snapshot(snapshot.qemu_path, snapshot)
     if execution.adapter_disk is not None:
@@ -435,21 +460,15 @@ def execute_backend(
             storage_failures.append("adapter disk was not attached")
         else:
             bundle.register_file(f"{label}/blkdebug.conf", execution.adapter_disk.blkdebug_config)
-            bundle.register_file(f"{label}/blklogwrites.log", execution.adapter_disk.write_log)
-            if case.payload.get("expect_writes", True):
-                storage_failures.extend(validate_blklogwrites(execution.adapter_disk.write_log))
+            write_log = execution.adapter_disk.write_log
+            if write_log.is_file():
+                bundle.register_file(f"{label}/blklogwrites.log", write_log)
+            storage_failures.extend(
+                validate_blklogwrites(write_log, expect_writes=case.payload.get("expect_writes", True))
+            )
     storage_diagnostics = tuple(storage_failures)
     stream_text = stream_bytes.decode("utf-8", errors="replace")
-    context = ResultContext(
-        run_id=stream_run_id,
-        nonce=nonce,
-        manifest_hash=selection.manifest_hash,
-        payload_hash=selection.payload_hash,
-        cases=expected_cases,
-        max_age_seconds=300,
-        now=time.time(),
-    )
-    ingestion = ingest_result_stream(stream_text, context)
+    ingestion = ingest_result_stream(stream_text, result_context())
     diagnostics = tuple(ingestion.rendered())
     if not qual_exists:
         diagnostics = (*diagnostics, "missing-artifact: qemu did not create the dedicated serial log")
@@ -458,6 +477,18 @@ def execute_backend(
     final = ingestion.finals.get(case.case_id)
     if final is not None and isinstance(final.get("status"), str):
         final_status = final["status"]
+    image_failures: list[str] = []
+    if (
+        "e2fsprogs-marker-readback" in case.validators and execution.adapter_disk is not None
+        and execution.result.outcome == "exit" and execution.result.exit_code == 0
+        and execution.result.teardown_state == "verified-empty" and not storage_diagnostics
+        and not diagnostics and final_status == "pass"
+    ):
+        fsck_status, marker = inspect_ext_marker(repo, bundle, f"{label}-readback", execution.adapter_disk.image)
+        if fsck_status != 0:
+            image_failures.append(f"e2fsck -fn rejected the output image (exit {fsck_status})")
+        if base64.b64encode(marker).decode("ascii") != case.payload["e2fsprogs_marker_base64"]:
+            image_failures.append("e2fsprogs readback of /marker.txt differed from the contract")
     return BackendEvidence(
         label=label,
         stream_run_id=stream_run_id,
@@ -472,6 +503,7 @@ def execute_backend(
         stream_text=stream_text,
         console_text=execution.console_log.read_text(encoding="utf-8", errors="replace") if execution.console_log.is_file() else "",
         storage_diagnostics=storage_diagnostics,
+        image_failures=tuple(image_failures),
     )
 
 
@@ -542,9 +574,11 @@ def evaluate_case(case: CaseSpec, reference: BackendEvidence, candidate: Backend
     else:
         validator_failures = ["reference stream did not complete cleanly"]
     validator_failures.extend(reference.storage_diagnostics)
+    validator_failures.extend(reference.image_failures)
     comparable = reference_role.status == "pass" and candidate_role.status in {"pass", "fail"}
     if comparable:
         comparator_failures = compare_against_reference(case, reference_observed, candidate_observed)
+        comparator_failures.extend(candidate.image_failures)
 
     validator_role = RoleResult(
         "validator",
@@ -694,6 +728,7 @@ def _backend_json(evidence: BackendEvidence) -> dict[str, Any]:
         "ingestion_diagnostics": list(evidence.ingestion_diagnostics),
         "final_status": evidence.final_status,
         "storage_diagnostics": list(evidence.storage_diagnostics),
+        "image_failures": list(evidence.image_failures),
     }
 
 
@@ -985,15 +1020,9 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
                 internal_failures.append("adapter control baseline is not clean")
 
             case = selection.cases[0]
-            config_input = inputs["linux-config"]
-            original_config = config_input.read_text(encoding="utf-8")
-            config_input.write_text(original_config.replace("CONFIG_EXT2_FS=y", "# CONFIG_EXT2_FS is not set", 1), encoding="utf-8")
-            try:
-                missing_config_evidence = execute_backend(repo, bundle, inputs, snapshot, selection, "control-missing-reference-configuration")
-            finally:
-                config_input.write_text(original_config, encoding="utf-8")
-            control_backends["missing-reference-configuration"] = _backend_json(missing_config_evidence)
-            config_failures = [failure for failure in missing_config_evidence.storage_diagnostics if "CONFIG_EXT2_FS" in failure]
+            original_config = inputs["linux-config"].read_text(encoding="utf-8")
+            missing_config = original_config.replace("CONFIG_EXT2_FS=y", "# CONFIG_EXT2_FS is not set", 1)
+            config_failures = [failure for failure in required_config_failures(case, missing_config) if "CONFIG_EXT2_FS" in failure]
             controls["live-device:missing-reference-configuration"] = {
                 "detected": bool(config_failures),
                 "detail": "; ".join(config_failures) if config_failures else "missing ext2 config was accepted",
@@ -1172,6 +1201,20 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
         return 1
 
 
+def persistence_cut_failures(evidence: BackendEvidence, run_id: str, label: str, case: CaseSpec) -> list[str]:
+    failures = [*evidence.ingestion_diagnostics, *evidence.storage_diagnostics]
+    if evidence.label != label or evidence.stream_run_id != f"{run_id}-{label}":
+        failures.append("persistence result belongs to another run or backend")
+    if evidence.execution_outcome != "power-cut" or evidence.exit_code != -signal.SIGKILL:
+        failures.append(f"expected an acknowledged SIGKILL cut, got {evidence.execution_outcome}/{evidence.exit_code}")
+    if evidence.teardown_state != "verified-empty":
+        failures.append(f"persistence teardown is unproven: {evidence.teardown_state}")
+    if evidence.final_status != "pass":
+        failures.append(f"persistence final is {evidence.final_status!r}")
+    failures.extend(compare_against_contract(case, evidence.observed.get(case.case_id, {})))
+    return failures
+
+
 def run_persistence_controls(repo: Path, profile_name: str) -> int:
     bundle: EvidenceBundle | None = None
     controls: dict[str, dict[str, Any]] = {}
@@ -1193,39 +1236,27 @@ def run_persistence_controls(repo: Path, profile_name: str) -> int:
         _delegate_lc02_controls(repo, bundle, controls)
 
         with VmExclusion(repo / "target/qualification/vm.lock"):
-            synced = execute_backend(
-                repo, bundle, inputs, snapshot, selection, "control-synced",
-                case=selection.case_map["persistence.synced"], backend="asterinas",
-            )
-            omitted = execute_backend(
-                repo, bundle, inputs, snapshot, selection, "control-omitted-sync",
-                case=selection.case_map["persistence.omitted-sync"],
-                control="omit-sync", backend="asterinas",
-                deadline=20, silence_timeout=3,
-            )
-        control_backends["synced"] = _backend_json(synced)
-        control_backends["omitted-sync"] = _backend_json(omitted)
-
-        def log_records(label: str):
-            path = bundle.artifacts_dir / f"{label}/blklogwrites.log"
-            if not path.is_file():
-                raise ValueError(f"{label}: blklogwrites log is missing")
-            return parse_records(path)
-
-        synced_records = log_records("control-synced")
-        omitted_records = log_records("control-omitted-sync")
-        synced_omitted = omitted_sync_detected(synced_records)
-        missing = missing_durable_sectors(synced_records, omitted_records)
-        controls["persistence:synced-log-complete"] = {
-            "detected": not synced_omitted,
-            "detail": f"synced log has no volatile data tail: {not synced_omitted}",
-        }
-        controls["persistence:omitted-sync-crash-cut"] = {
-            "detected": bool(missing),
-            "detail": f"sectors durable with sync but absent without: {sorted(missing)}",
-        }
-        if synced_omitted or not missing:
-            internal_failures.append("persistence model did not separate synced and omitted-sync logs")
+            for name, expected in (("synced", b"Pc06-adapter\n"), ("omitted-sync", b"lc06-adapter\n")):
+                label = f"control-{name}"
+                case = selection.case_map[f"persistence.{name}"]
+                evidence = execute_backend(
+                    repo, bundle, inputs, snapshot, selection, label,
+                    case=case, control="persistence-cut", backend="asterinas",
+                )
+                control_backends[name] = _backend_json(evidence)
+                failures = persistence_cut_failures(evidence, bundle.run_id, label, case)
+                if failures:
+                    internal_failures.extend(f"{name}: {failure}" for failure in failures)
+                    controls[f"persistence:{name}-crash-cut"] = {"detected": False, "detail": "; ".join(failures)}
+                    continue
+                crash = bundle.work_dir / f"{name}-crash.ext2"
+                log = bundle.artifacts_dir / f"{label}/blklogwrites.log"
+                cut = reconstruct_after_flush(inputs["adapter-disk.ext2"], log, crash)
+                fsck_status, marker = inspect_ext_marker(repo, bundle, f"{name}-crash", crash)
+                controls[f"persistence:{name}-crash-cut"] = {
+                    "detected": fsck_status == 0 and marker == expected,
+                    "detail": f"cut after {cut} log records, e2fsck -fn exit {fsck_status}, /marker.txt={marker!r}",
+                }
 
         detected_count = sum(1 for item in controls.values() if item["detected"])
         report = {

@@ -22,6 +22,7 @@ from .adapter import (
     WRITE_LOG_ENTRY_SIZE,
     WRITE_LOG_MAGIC,
     WRITE_LOG_VERSION,
+    initialize_blklogwrites,
     validate_blklogwrites,
 )
 from .compare import compare_value, verify_comparison_claim
@@ -35,9 +36,9 @@ from .persistence import (
     durable_writes,
     enumerate_crash_cuts,
     is_data_write,
-    missing_durable_sectors,
     omitted_sync_detected,
     parse_records,
+    reconstruct_after_flush,
 )
 from .results import ResultContext, ingest_result_stream, make_result_line
 from .runner import (
@@ -50,6 +51,7 @@ from .runner import (
     create_snapshot,
     evaluate_case,
     finalize_run,
+    persistence_cut_failures,
     verify_backend_identity,
     verify_copied_input_hashes,
 )
@@ -1142,6 +1144,28 @@ def selftest_main() -> int:
             return (bool(failures) == want_fail), ("; ".join(failures) if failures else "log was accepted")
         return function
 
+    def read_only_log_control(
+        name: str, entries: list[tuple[int, int, int]], expected_error: str | None = None,
+        *, corrupt: bool = False, missing: bool = False,
+    ) -> tuple[bool, str]:
+        path = bundle.work_dir / f"read-only-{name}.log"
+        if corrupt:
+            path.write_bytes(b"corrupt")
+        elif entries:
+            _blklog_fixture(path, entries)
+        elif not missing:
+            initialize_blklogwrites(path)
+        failures = validate_blklogwrites(path, expect_writes=False)
+        detected = not failures if expected_error is None else any(expected_error in item for item in failures)
+        return detected, "; ".join(failures) or "valid empty storage log"
+
+    evaluate("blklog-read-only-empty", lambda: read_only_log_control("empty", []))
+    evaluate("blklog-read-only-flush", lambda: read_only_log_control("flush", [(0, 0, LOG_FLUSH_FLAG)]))
+    evaluate("blklog-read-only-corrupt", lambda: read_only_log_control("corrupt", [], "truncated", corrupt=True))
+    evaluate("blklog-read-only-missing", lambda: read_only_log_control("missing", [], "missing", missing=True))
+    evaluate("blklog-read-only-write", lambda: read_only_log_control("write", [(0, 1, 0)], "unexpected"))
+    evaluate("blklog-read-only-discard", lambda: read_only_log_control("discard", [(0, 1, LOG_DISCARD_FLAG)], "unexpected"))
+
     two_writes = [(0, 1, 0), (8, 1, 0)]
     evaluate("blklog-truncated-final-header-fields", blklog_control("final-header-fields", two_writes, cut=1552))
     evaluate("blklog-truncated-final-header-padding", blklog_control("final-header-padding", two_writes, cut=1576))
@@ -1194,15 +1218,20 @@ def selftest_main() -> int:
 
     evaluate("persistence-corrupt-log-rejected", persistence_corrupt)
 
-    def persistence_missing_sector() -> tuple[bool, str]:
-        synced_path = bundle.work_dir / "persistence-compare-synced.log"
-        omitted_path = bundle.work_dir / "persistence-compare-omitted.log"
-        _blklog_fixture(synced_path, [(0, 1, 0), (8, 1, 0), (16, 0, LOG_FLUSH_FLAG)])
-        _blklog_fixture(omitted_path, [(0, 1, 0), (8, 0, LOG_FLUSH_FLAG)])
-        missing = missing_durable_sectors(parse_records(synced_path), parse_records(omitted_path))
-        return missing == {8}, f"missing durable sectors={sorted(missing)}"
+    def persistence_reconstructs_bytes() -> tuple[bool, str]:
+        seed = bundle.work_dir / "persistence-seed.img"
+        seed.write_bytes(b"\0" * 2048)
+        log = bundle.work_dir / "persistence-reconstruct.log"
+        _blklog_fixture(log, [(0, 2, 0), (0, 1, 0), (0, 0, LOG_FLUSH_FLAG), (1, 2, 0)])
+        raw = bytearray(log.read_bytes())
+        raw[512 * 5:512 * 6] = b"P" * 512
+        log.write_bytes(raw)
+        crash = bundle.work_dir / "persistence-recovered.img"
+        cut = reconstruct_after_flush(seed, log, crash)
+        expected = b"P" * 512 + b"\xAB" * 512 + b"\0" * 1024
+        return cut == 3 and crash.read_bytes() == expected, f"cut={cut}, checked overwrite and volatile tail"
 
-    evaluate("persistence-missing-durable-sector", persistence_missing_sector)
+    evaluate("persistence-reconstructs-durable-bytes", persistence_reconstructs_bytes)
 
     def copied_input_control(name: str, original: bytes, replacement: bytes) -> tuple[bool, str]:
         path = bundle.work_dir / f"copy-{name}"
@@ -1334,6 +1363,28 @@ def selftest_main() -> int:
         return BackendEvidence(**values)
 
     reference_fixture = backend_fixture()
+
+    def persistence_cut_control(overrides: dict, expected_failure: str | None = None) -> tuple[bool, str]:
+        fields = {"execution_outcome": "power-cut", "exit_code": -signal.SIGKILL}
+        fields.update(overrides)
+        failures = persistence_cut_failures(backend_fixture(**fields), "control", "control", evidence_case)
+        ok = not failures if expected_failure is None else any(expected_failure in failure for failure in failures)
+        return ok, "; ".join(failures) or "authenticated cut accepted"
+
+    for name, overrides, expected_failure in (
+        ("valid", {"stream_run_id": "control-control"}, None),
+        ("wrong-run", {"stream_run_id": "unexpected"}, "another run"),
+        ("wrong-nonce", {"stream_run_id": "control-control", "ingestion_diagnostics": ("wrong-nonce",)}, "wrong-nonce"),
+        ("unclean-execution", {"stream_run_id": "control-control", "execution_outcome": "harness-error"}, "SIGKILL cut"),
+        ("missing-final", {"stream_run_id": "control-control", "final_status": None}, "final is None"),
+        ("failed-final", {"stream_run_id": "control-control", "final_status": "fail"}, "final is 'fail'"),
+        ("unverified-teardown", {"stream_run_id": "control-control", "teardown_state": "failed"}, "teardown is unproven"),
+        ("bad-storage", {"stream_run_id": "control-control", "storage_diagnostics": ("truncated log",)}, "truncated log"),
+    ):
+        evaluate(
+            f"persistence-cut-{name}",
+            lambda overrides=overrides, expected_failure=expected_failure: persistence_cut_control(overrides, expected_failure),
+        )
 
     def evidence_precedence(name: str, overrides: dict, expected: str) -> tuple[bool, str]:
         outcome = evaluate_case(evidence_case, reference_fixture, backend_fixture(**overrides))
