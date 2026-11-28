@@ -37,41 +37,44 @@ const SB_INODE_SIZE: usize = 0x58;
 const SB_FEATURE_COMPAT: usize = 0x5C;
 const SB_FEATURE_INCOMPAT: usize = 0x60;
 const SB_FEATURE_RO_COMPAT: usize = 0x64;
-const SB_UUID: usize = 0x6C;
+const SB_UUID: usize = 0x68;
+const SB_DESC_SIZE: usize = 0xFE;
+const SB_CHECKSUM_TYPE: usize = 0x175;
+const SB_CHECKSUM_SEED: usize = 0x270;
+const SB_CHECKSUM: usize = 0x3FC;
+const GROUP_DESC_CHECKSUM: usize = 0x1E;
 
-pub const STATE_UNCLEAN: u16 = 0x0001;
-pub const STATE_NEEDS_RECOVERY: u16 = 0x0002;
+pub const STATE_CLEAN: u16 = 0x0001;
+const STATE_ERROR: u16 = 0x0002;
+const STATE_ORPHAN_RECOVERY: u16 = 0x0004;
 
-pub const COMPAT_DIR_INDEX: u32 = 1 << 2;
 pub const COMPAT_EXT_ATTR: u32 = 1 << 3;
-pub const COMPAT_RESIZE_INODE: u32 = 1 << 5;
+pub const COMPAT_RESIZE_INODE: u32 = 1 << 4;
+pub const COMPAT_DIR_INDEX: u32 = 1 << 5;
 
-pub const INCOMPAT_FILETYPE: u32 = 1 << 0;
+pub const INCOMPAT_FILETYPE: u32 = 1 << 1;
 pub const INCOMPAT_RECOVERY: u32 = 1 << 2;
 pub const INCOMPAT_JOURNAL_DEV: u32 = 1 << 3;
 pub const INCOMPAT_META_BG: u32 = 1 << 4;
 pub const INCOMPAT_EXTENTS: u32 = 1 << 6;
 pub const INCOMPAT_64BIT: u32 = 1 << 7;
+pub const INCOMPAT_MMP: u32 = 1 << 8;
 pub const INCOMPAT_FLEX_BG: u32 = 1 << 9;
-pub const INCOMPAT_UNINIT_BG: u32 = 1 << 10;
-pub const INCOMPAT_DEV_METADATA_CSUM: u32 = 1 << 11;
-pub const INCOMPAT_MMP: u32 = 1 << 12;
 pub const INCOMPAT_CSUM_SEED: u32 = 1 << 13;
 
 pub const RO_COMPAT_SPARSE_SUPER: u32 = 1 << 0;
 pub const RO_COMPAT_LARGE_FILE: u32 = 1 << 1;
-pub const RO_COMPAT_HUGE_FILE: u32 = 1 << 5;
-pub const RO_COMPAT_GDT_CSUM: u32 = 1 << 6;
-pub const RO_COMPAT_DIR_NLINK: u32 = 1 << 7;
-pub const RO_COMPAT_EXTRA_ISIZE: u32 = 1 << 8;
+pub const RO_COMPAT_HUGE_FILE: u32 = 1 << 3;
+pub const RO_COMPAT_GDT_CSUM: u32 = 1 << 4;
+pub const RO_COMPAT_DIR_NLINK: u32 = 1 << 5;
+pub const RO_COMPAT_EXTRA_ISIZE: u32 = 1 << 6;
 pub const RO_COMPAT_METADATA_CSUM: u32 = 1 << 10;
+const RO_COMPAT_ORPHAN_PRESENT: u32 = 1 << 16;
 
 const SUPPORTED_INCOMPAT: u32 = INCOMPAT_FILETYPE
     | INCOMPAT_EXTENTS
     | INCOMPAT_64BIT
     | INCOMPAT_FLEX_BG
-    | INCOMPAT_UNINIT_BG
-    | INCOMPAT_DEV_METADATA_CSUM
     | INCOMPAT_CSUM_SEED;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +87,9 @@ pub enum Error {
     UnsupportedFeature(u32),
     NeedsRecovery,
     Unclean,
+    FilesystemError,
+    BadDescriptorSize,
+    SuperblockChecksumMismatch,
     GroupDescriptorTruncated(usize),
     GroupDescriptorChecksumMismatch(usize),
 }
@@ -124,6 +130,17 @@ fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Error> {
         .ok_or(Error::Truncated)
 }
 
+fn descriptor_size(sb: &[u8], incompat: u32, block_size: usize) -> Result<usize, Error> {
+    if incompat & INCOMPAT_64BIT == 0 {
+        return Ok(32);
+    }
+    let size = read_u16(sb, SB_DESC_SIZE)? as usize;
+    if size < GROUP_DESC_SIZE_64 || size > block_size || !size.is_power_of_two() {
+        return Err(Error::BadDescriptorSize);
+    }
+    Ok(size)
+}
+
 /// Refuses features whose semantics the reader does not implement.
 pub fn check_feature_policy(info: &Info) -> Result<(), Error> {
     let unsupported = info.features_incompat & !SUPPORTED_INCOMPAT;
@@ -161,7 +178,7 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
     }
 
     let inode_size = read_u16(&sb, SB_INODE_SIZE)? as usize;
-    if inode_size < 128 || !inode_size.is_power_of_two() {
+    if inode_size < 128 || inode_size > block_size || !inode_size.is_power_of_two() {
         return Err(Error::BadInodeSize);
     }
 
@@ -169,10 +186,17 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
     let features_incompat = read_u32(&sb, SB_FEATURE_INCOMPAT)?;
     let features_ro_compat = read_u32(&sb, SB_FEATURE_RO_COMPAT)?;
     let state = read_u16(&sb, SB_STATE)?;
-    if state & STATE_NEEDS_RECOVERY != 0 || features_incompat & INCOMPAT_RECOVERY != 0 {
+    if state & STATE_ERROR != 0 {
+        return Err(Error::FilesystemError);
+    }
+    if features_incompat & INCOMPAT_RECOVERY != 0
+        || state & STATE_ORPHAN_RECOVERY != 0
+        || features_ro_compat & RO_COMPAT_ORPHAN_PRESENT != 0
+        || read_u32(&sb, orphan::ORPHAN_HEAD_OFFSET)? != 0
+    {
         return Err(Error::NeedsRecovery);
     }
-    if state & STATE_UNCLEAN != 0 {
+    if state != STATE_CLEAN {
         return Err(Error::Unclean);
     }
 
@@ -189,12 +213,12 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
     let free_blocks_lo = read_u32(&sb, 0x0C)? as u64;
     let reserved_blocks_lo = read_u32(&sb, 0x08)? as u64;
     let free_blocks_hi = if features_incompat & INCOMPAT_64BIT != 0 {
-        read_u32(&sb, 0x1F4)? as u64
+        read_u32(&sb, 0x158)? as u64
     } else {
         0
     };
     let reserved_blocks_hi = if features_incompat & INCOMPAT_64BIT != 0 {
-        read_u32(&sb, 0x1EC)? as u64
+        read_u32(&sb, 0x154)? as u64
     } else {
         0
     };
@@ -202,11 +226,15 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
     let reserved_blocks_count = reserved_blocks_lo | (reserved_blocks_hi << 32);
     let free_inodes_count = read_u32(&sb, 0x10)?;
     let journal_inum = read_u32(&sb, 0xE0)?;
-    if blocks_per_group == 0 || inodes_per_group == 0 {
+    let first_data_block = u64::from(read_u32(&sb, 0x14)?);
+    if blocks_per_group == 0 || inodes_per_group == 0 || blocks_count <= first_data_block {
         return Err(Error::BadBlockSize);
     }
-    let group_count = blocks_count.div_ceil(blocks_per_group as u64) as usize;
-    let group_count = group_count.max(inodes_count.div_ceil(inodes_per_group as u32) as usize);
+    let group_count = (blocks_count - first_data_block).div_ceil(blocks_per_group as u64);
+    let group_count = usize::try_from(group_count).map_err(|_| Error::BadBlockSize)?;
+    if inodes_count.div_ceil(inodes_per_group as u32) as usize != group_count {
+        return Err(Error::BadInodeSize);
+    }
 
     let info = Info {
         block_size,
@@ -224,29 +252,55 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
     };
     check_feature_policy(&info)?;
 
-    let verify_group_checksums = features_ro_compat & RO_COMPAT_METADATA_CSUM != 0;
-    let uuid = sb
-        .get(SB_UUID..SB_UUID + 16)
-        .ok_or(Error::Truncated)?;
+    let desc_size = descriptor_size(&sb, features_incompat, block_size)?;
+    let uuid = sb.get(SB_UUID..SB_UUID + 16).ok_or(Error::Truncated)?;
+    let metadata_seed = if features_ro_compat & RO_COMPAT_METADATA_CSUM != 0 {
+        if sb[SB_CHECKSUM_TYPE] != 1
+            || ext4_crc32c(!0, &sb[..SB_CHECKSUM]) != read_u32(&sb, SB_CHECKSUM)?
+        {
+            return Err(Error::SuperblockChecksumMismatch);
+        }
+        Some(if features_incompat & INCOMPAT_CSUM_SEED != 0 {
+            read_u32(&sb, SB_CHECKSUM_SEED)?
+        } else {
+            ext4_crc32c(!0, uuid)
+        })
+    } else {
+        None
+    };
     let table_offset = block_size * ((SUPER_BLOCK_OFFSET + 1024 + block_size - 1) / block_size);
-    let mut groups_verified = 0usize;
     for index in 0..group_count {
         let desc_offset = index
-            .checked_mul(GROUP_DESC_SIZE_64)
+            .checked_mul(desc_size)
             .ok_or(Error::GroupDescriptorTruncated(index))?;
         let start = table_offset
             .checked_add(desc_offset)
             .ok_or(Error::GroupDescriptorTruncated(index))?;
         let desc = reader
-            .read_at(start as u64, GROUP_DESC_SIZE_64)
+            .read_at(start as u64, desc_size)
             .ok_or(Error::GroupDescriptorTruncated(index))?;
-        if !verify_group_checksums || group_descriptor_checksum_ok(uuid, index, &desc) {
-            groups_verified += 1;
+        let index_bytes = u32::try_from(index)
+            .map_err(|_| Error::BadBlockSize)?
+            .to_le_bytes();
+        let head = &desc[..GROUP_DESC_CHECKSUM];
+        let tail = &desc[GROUP_DESC_CHECKSUM + 2..];
+        let expected = read_u16(&desc, GROUP_DESC_CHECKSUM)?;
+        let actual = if let Some(seed) = metadata_seed {
+            let crc = ext4_crc32c(ext4_crc32c(seed, &index_bytes), head);
+            ext4_crc32c(ext4_crc32c(crc, &[0, 0]), tail) as u16
+        } else if features_ro_compat & RO_COMPAT_GDT_CSUM != 0 {
+            let crc = crc16(crc16(crc16(!0, uuid), &index_bytes), head);
+            crc16(crc, tail)
+        } else {
+            expected
+        };
+        if actual != expected {
+            return Err(Error::GroupDescriptorChecksumMismatch(index));
         }
     }
 
     Ok(Info {
-        groups_verified,
+        groups_verified: group_count,
         ..info
     })
 }
@@ -267,13 +321,18 @@ pub fn crc32c(seed: u32, bytes: &[u8]) -> u32 {
     !crc
 }
 
-fn group_descriptor_checksum_ok(uuid: &[u8], index: usize, desc: &[u8]) -> bool {
-    let seed = crc32c(!0, &uuid[..16]);
-    let mut crc = crc32c(seed, &(index as u32).to_le_bytes());
-    crc = crc32c(crc, &desc[0x00..0x1E]);
-    crc = crc32c(crc, &desc[0x20..0x40]);
-    let expected = u16::from_le_bytes([desc[0x1E], desc[0x1F]]);
-    crc as u16 == expected
+fn ext4_crc32c(seed: u32, bytes: &[u8]) -> u32 {
+    !crc32c(!seed, bytes)
+}
+
+fn crc16(mut crc: u16, bytes: &[u8]) -> u16 {
+    for byte in bytes {
+        crc ^= u16::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ if crc & 1 != 0 { 0xA001 } else { 0 };
+        }
+    }
+    crc
 }
 
 #[cfg(test)]
@@ -309,8 +368,13 @@ mod tests {
 
     #[test]
     fn large_address_fixture_has_64bit() {
-        let info = analyze(&fixture("large-address")).unwrap();
+        let mut image = fixture("large-address");
+        let info = analyze(&image).unwrap();
         assert!(info.features_incompat & INCOMPAT_64BIT != 0);
+        assert!(info.features_ro_compat & RO_COMPAT_METADATA_CSUM != 0);
+        let geometry = reader::geometry(&image).unwrap();
+        image[geometry.group_desc_table + GROUP_DESC_CHECKSUM] ^= 1;
+        assert_eq!(analyze(&image), Err(Error::GroupDescriptorChecksumMismatch(0)));
     }
 
     #[test]
@@ -337,8 +401,11 @@ mod tests {
     fn refuses_recovery_and_unsupported_features() {
         let mut image = fixture("basic");
         let superblock = &mut image[SUPER_BLOCK_OFFSET..SUPER_BLOCK_OFFSET + 1024];
-        superblock[SB_STATE..SB_STATE + 2].copy_from_slice(&STATE_NEEDS_RECOVERY.to_le_bytes());
+        superblock[SB_FEATURE_INCOMPAT] |= INCOMPAT_RECOVERY as u8;
         assert_eq!(analyze(&image), Err(Error::NeedsRecovery));
+
+        image[SUPER_BLOCK_OFFSET + SB_STATE] |= STATE_ERROR as u8;
+        assert_eq!(analyze(&image), Err(Error::FilesystemError));
 
         let mut image = fixture("basic");
         let superblock = &mut image[SUPER_BLOCK_OFFSET..SUPER_BLOCK_OFFSET + 1024];

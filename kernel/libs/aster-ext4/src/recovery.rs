@@ -10,7 +10,7 @@
 extern crate alloc;
 
 use crate::jbd2::{self, JournalError, JournalSuperBlock};
-use crate::{Error, SUPER_BLOCK_OFFSET, analyze, INCOMPAT_RECOVERY, STATE_NEEDS_RECOVERY, STATE_UNCLEAN};
+use crate::{Error, INCOMPAT_RECOVERY, STATE_CLEAN, SUPER_BLOCK_OFFSET, analyze};
 
 pub const SB_STATE: usize = 0x3A;
 pub const SB_FEATURE_INCOMPAT: usize = 0x60;
@@ -40,7 +40,7 @@ fn set_clean(image: &mut [u8]) -> Result<(), MountError> {
         .get_mut(SUPER_BLOCK_OFFSET..SUPER_BLOCK_OFFSET + 1024)
         .ok_or(MountError::Unrecoverable(Error::Truncated))?;
     let state = u16::from_le_bytes([sb[SB_STATE], sb[SB_STATE + 1]]);
-    let state = state & !(STATE_NEEDS_RECOVERY | STATE_UNCLEAN);
+    let state = state | STATE_CLEAN;
     sb[SB_STATE..SB_STATE + 2].copy_from_slice(&state.to_le_bytes());
     let incompat = u32::from_le_bytes(
         sb[SB_FEATURE_INCOMPAT..SB_FEATURE_INCOMPAT + 4]
@@ -105,9 +105,7 @@ mod tests {
 
     fn mark_needs_recovery(image: &mut [u8]) {
         let sb = &mut image[SUPER_BLOCK_OFFSET..SUPER_BLOCK_OFFSET + 1024];
-        let state = u16::from_le_bytes([sb[SB_STATE], sb[SB_STATE + 1]])
-            | STATE_NEEDS_RECOVERY
-            | STATE_UNCLEAN;
+        let state = u16::from_le_bytes([sb[SB_STATE], sb[SB_STATE + 1]]) & !STATE_CLEAN;
         sb[SB_STATE..SB_STATE + 2].copy_from_slice(&state.to_le_bytes());
         let incompat = u32::from_le_bytes(
             sb[SB_FEATURE_INCOMPAT..SB_FEATURE_INCOMPAT + 4]

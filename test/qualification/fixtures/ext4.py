@@ -10,7 +10,6 @@ same on-disk format policy.
 import hashlib
 import json
 import re
-import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +44,7 @@ FIXTURES: tuple[Fixture, ...] = (
     Fixture("large-address", 16, 4096, "64bit",
             "64bit feature enabled with a fixed high hash seed"),
     Fixture("malformed", 16, 4096, "^64bit,^metadata_csum,^metadata_csum_seed",
-            "one corrupted backup superblock for bounded-read tests"),
+            "primary superblock with a corrupted magic number"),
 )
 
 
@@ -74,20 +73,25 @@ def build(repo: Path) -> dict:
     """Builds every fixture in the container and returns a fresh manifest."""
     output_dir = repo / FIXTURE_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
-    scripts: list[str] = [f"mkdir -p /root/asterinas/{FIXTURE_DIR}; "]
+    scripts = [
+        "set -eu; "
+        "result=$(nix-build --no-out-link test/qualification/adapter/e2fsprogs.nix); "
+        "export SOURCE_DATE_EPOCH=0 E2FSPROGS_FAKE_TIME=0; "
+    ]
     for fixture in FIXTURES:
         image = FIXTURE_DIR / f"{fixture.name}.ext4"
         staging = f"/tmp/qual-ext4-{fixture.name}"
         scripts.append(
-            "set -eu; "
-            f"result=$(nix-build --no-out-link test/qualification/adapter/e2fsprogs.nix); "
-            "export SOURCE_DATE_EPOCH=0 E2FSPROGS_FAKE_TIME=0; "
             f"rm -rf \"{staging}\"; mkdir -p \"{staging}\"; "
         )
         if fixture.name == "multi-group":
             scripts.append(f"for i in $(seq 1 64); do printf 'group-%03d\\n' \"$i\" > \"{staging}/f$i.txt\"; done; ")
         elif fixture.name == "fragmented":
             scripts.append(f"for i in $(seq 1 180); do printf 'fragment-%03d\\n' \"$i\" > \"{staging}/f$i.txt\"; done; ")
+            scripts.append(
+                f"for i in 0 2 4 6 8; do printf '%s' \"$i\" | "
+                f"dd of=\"{staging}/extents.bin\" bs=4096 seek=\"$i\" conv=notrunc status=none; done; "
+            )
         elif fixture.name == "nearly-full":
             scripts.append(f"dd if=/dev/zero of=\"{staging}/bulk.bin\" bs=1M count=14 status=none; ")
         elif fixture.name == "sparse":
@@ -107,6 +111,8 @@ def build(repo: Path) -> dict:
             scripts.append(
                 f"printf '\\x00\\x00' | dd of=\"{image}.tmp\" bs=1 seek=1080 conv=notrunc status=none; "
             )
+        else:
+            scripts.append(f'"$result/bin/e2fsck" -fn "{image}.tmp"; ')
         scripts.append(f"mv \"{image}.tmp\" \"{image}\"; ")
     _docker(repo, "".join(scripts), "ext4 fixture build")
 
@@ -118,14 +124,6 @@ def build(repo: Path) -> dict:
     }
     for fixture in FIXTURES:
         image = repo / FIXTURE_DIR / f"{fixture.name}.ext4"
-        if fixture.name != "malformed":
-            with image.open("r+b") as stream:
-                stream.seek(1024 + 0x3A)
-                stream.write(struct.pack("<H", 0))
-                stream.seek(1024 + 0x60)
-                incompat = struct.unpack("<I", stream.read(4))[0]
-                stream.seek(1024 + 0x60)
-                stream.write(struct.pack("<I", incompat & ~0x0002))
         features = _inspect_features(repo, image)
         manifest["fixtures"].append({
             "name": fixture.name,

@@ -19,8 +19,10 @@ pub const EXTENT_ENTRY_LEN: usize = 12;
 pub const INODE_BLOCK_PTRS_OFFSET: usize = 0x28;
 pub const INODE_BLOCK_PTRS_LEN: usize = 60;
 pub const UNWRITTEN_EXTENT: u16 = 0x8000;
+pub const INODE_EXTENTS_FLAG: u32 = 0x0008_0000;
 pub const ROOT_INO: u32 = 2;
-const MAX_EXTENT_ENTRIES: usize = 256;
+const MAX_EXTENT_DEPTH: u16 = 5;
+const MAX_EXTENT_NODES: usize = 256;
 
 /// A bounded source of ext4 metadata and data bytes.
 ///
@@ -56,6 +58,8 @@ impl BlockReader for SliceReader<'_> {
 pub enum ReaderError {
     Truncated,
     BadExtentMagic,
+    BadExtentDepth,
+    BadExtentRange,
     ExtentLimitExceeded,
     InodeOutOfRange,
     BadBlockSize,
@@ -106,7 +110,8 @@ pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> 
     }
     let block_size = 1024usize << log_block_size;
     let blocks_count_lo = le_u32(&sb, 0x04).ok_or(ReaderError::Truncated)? as u64;
-    let blocks_count_hi = if le_u32(&sb, 0x60).ok_or(ReaderError::Truncated)? & (1 << 7) != 0 {
+    let incompat = le_u32(&sb, 0x60).ok_or(ReaderError::Truncated)?;
+    let blocks_count_hi = if incompat & crate::INCOMPAT_64BIT != 0 {
         le_u32(&sb, 0x150).ok_or(ReaderError::Truncated)? as u64
     } else {
         0
@@ -125,7 +130,8 @@ pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> 
         inodes_per_group,
         inode_size,
         blocks_per_group,
-        group_desc_size: 64,
+        group_desc_size: crate::descriptor_size(&sb, incompat, block_size)
+            .map_err(|_| ReaderError::BadBlockSize)?,
         group_desc_table,
     })
 }
@@ -311,15 +317,19 @@ pub struct Extent {
     pub unwritten: bool,
 }
 
-fn parse_extent_body(body: &[u8], depth: u16) -> Result<(Vec<Extent>, Vec<(u64, u64)>), ReaderError> {
+fn parse_extent_body(body: &[u8], depth: u16) -> Result<(Vec<Extent>, Vec<u64>), ReaderError> {
     if body.len() < EXTENT_HEADER_LEN {
         return Err(ReaderError::Truncated);
     }
     if le_u16(body, 0x00).ok_or(ReaderError::Truncated)? != EXTENT_MAGIC {
         return Err(ReaderError::BadExtentMagic);
     }
+    if le_u16(body, 0x06) != Some(depth) || depth > MAX_EXTENT_DEPTH {
+        return Err(ReaderError::BadExtentDepth);
+    }
     let entries = le_u16(body, 0x02).ok_or(ReaderError::Truncated)? as usize;
-    if entries > MAX_EXTENT_ENTRIES {
+    let capacity = le_u16(body, 0x04).ok_or(ReaderError::Truncated)? as usize;
+    if entries > capacity || capacity > (body.len() - EXTENT_HEADER_LEN) / EXTENT_ENTRY_LEN {
         return Err(ReaderError::ExtentLimitExceeded);
     }
     let mut extents = Vec::new();
@@ -332,7 +342,7 @@ fn parse_extent_body(body: &[u8], depth: u16) -> Result<(Vec<Extent>, Vec<(u64, 
         let logical = le_u32(entry, 0x00).ok_or(ReaderError::Truncated)? as u64;
         if depth == 0 {
             let raw_len = le_u16(entry, 0x04).ok_or(ReaderError::Truncated)?;
-            let unwritten = raw_len & UNWRITTEN_EXTENT != 0;
+            let unwritten = raw_len > UNWRITTEN_EXTENT;
             let len = if unwritten { raw_len & !UNWRITTEN_EXTENT } else { raw_len };
             let start_hi = le_u16(entry, 0x06).ok_or(ReaderError::Truncated)? as u64;
             let start_lo = le_u32(entry, 0x08).ok_or(ReaderError::Truncated)? as u64;
@@ -345,7 +355,7 @@ fn parse_extent_body(body: &[u8], depth: u16) -> Result<(Vec<Extent>, Vec<(u64, 
         } else {
             let leaf_lo = le_u32(entry, 0x04).ok_or(ReaderError::Truncated)? as u64;
             let leaf_hi = le_u16(entry, 0x08).ok_or(ReaderError::Truncated)? as u64;
-            indices.push((logical, (leaf_hi << 32) | leaf_lo));
+            indices.push((leaf_hi << 32) | leaf_lo);
         }
     }
     Ok((extents, indices))
@@ -356,15 +366,21 @@ pub fn extent_tree_from(
     geom: &Geometry,
     inode: &Inode,
 ) -> Result<Vec<Extent>, ReaderError> {
-    let mut extents = Vec::new();
-    let mut queue = Vec::new();
-    let (root_extents, root_indices) = parse_extent_body(&inode.block_ptrs, 0)?;
-    extents.extend(root_extents);
-    queue.extend(root_indices);
+    if inode.flags & INODE_EXTENTS_FLAG == 0 {
+        return Err(ReaderError::BadExtentMagic);
+    }
+    let depth = le_u16(&inode.block_ptrs, 0x06).ok_or(ReaderError::Truncated)?;
+    let (mut extents, children) = parse_extent_body(&inode.block_ptrs, depth)?;
+    let mut queue: Vec<_> = children.into_iter().map(|block| (block, depth - 1)).collect();
+    let mut nodes_read = 0;
 
-    while let Some((_logical, block)) = queue.pop() {
-        if queue.len() > MAX_EXTENT_ENTRIES {
+    while let Some((block, depth)) = queue.pop() {
+        nodes_read += 1;
+        if nodes_read + queue.len() > MAX_EXTENT_NODES {
             return Err(ReaderError::ExtentLimitExceeded);
+        }
+        if block == 0 || block >= geom.blocks_count {
+            return Err(ReaderError::BadExtentRange);
         }
         let start = block
             .checked_mul(geom.block_size as u64)
@@ -372,14 +388,21 @@ pub fn extent_tree_from(
         let node = reader
             .read_at(start, geom.block_size)
             .ok_or(ReaderError::Truncated)?;
-        let (found, deeper) = parse_extent_body(&node, 0)?;
+        let (found, deeper) = parse_extent_body(&node, depth)?;
         extents.extend(found);
-        queue.extend(deeper);
-        if queue.len() > MAX_EXTENT_ENTRIES {
-            return Err(ReaderError::ExtentLimitExceeded);
-        }
+        queue.extend(deeper.into_iter().map(|child| (child, depth - 1)));
     }
     extents.sort_by_key(|item| item.logical_block);
+    let mut end = 0;
+    for extent in &extents {
+        if extent.len == 0 || extent.logical_block < end
+            || extent.physical_block == 0
+            || extent.physical_block + u64::from(extent.len) > geom.blocks_count
+        {
+            return Err(ReaderError::BadExtentRange);
+        }
+        end = extent.logical_block + u64::from(extent.len);
+    }
     Ok(extents)
 }
 
@@ -631,6 +654,22 @@ mod tests {
         let root = read_inode(&image, &geom, ROOT_INO).unwrap();
         let data = read_file(&image, &geom, &root).unwrap();
         assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn reads_depth_one_extents_from_mkfs() {
+        let image = fixture("fragmented");
+        let geom = geometry(&image).unwrap();
+        let root = read_inode(&image, &geom, ROOT_INO).unwrap();
+        let ino = lookup(&image, &geom, &root, b"extents.bin").unwrap();
+        let inode = read_inode(&image, &geom, ino).unwrap();
+        assert_eq!(le_u16(&inode.block_ptrs, 0x06), Some(1));
+        let data = read_file(&image, &geom, &inode).unwrap();
+        let mut expected = vec![0; 8 * geom.block_size + 1];
+        for block in [0, 2, 4, 6, 8] {
+            expected[block * geom.block_size] = b'0' + block as u8;
+        }
+        assert_eq!(data, expected);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::{
     reader::{BlockReader, BlockWriter, Geometry, inode_offset_from},
 };
 
-pub const ORPHAN_HEAD_OFFSET: usize = 0x164;
+pub const ORPHAN_HEAD_OFFSET: usize = 0xE8;
 pub const ORPHAN_NEXT_OFFSET: usize = 0x14;
 const MAX_ORPHANS: usize = 1024;
 

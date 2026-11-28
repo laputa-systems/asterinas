@@ -14,7 +14,8 @@ use aster_ext4::{
     dir_edit,
     extent_edit::BlockAllocator,
     reader::{
-        BlockReader, BlockWriter, DiskEntryType, EXTENT_MAGIC, DirEntry, Inode as RawInode,
+        BlockReader, BlockWriter, DirEntry, DiskEntryType, EXTENT_MAGIC, INODE_EXTENTS_FLAG,
+        Inode as RawInode,
         block_bitmap_offset_from, fast_symlink, inode_bitmap_offset_from, inode_number_to_group,
         inode_offset_from, lookup_from, read_block_bitmap_from, read_dir_from, read_file_from,
         read_inode_bitmap_from, read_inode_from,
@@ -130,6 +131,7 @@ impl Ext4Inode {
         let encoded_mode = mode.bits() | (type_ as u16);
         raw[0..2].copy_from_slice(&encoded_mode.to_le_bytes());
         raw[0x1A..0x1C].copy_from_slice(&1u16.to_le_bytes());
+        raw[0x20..0x24].copy_from_slice(&INODE_EXTENTS_FLAG.to_le_bytes());
         let tree = &mut raw[0x28..0x28 + 60];
         tree[0..2].copy_from_slice(&EXTENT_MAGIC.to_le_bytes());
         tree[4..6].copy_from_slice(&4u16.to_le_bytes());

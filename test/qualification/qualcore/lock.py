@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -134,12 +133,15 @@ def build_adapter_fixtures(repo: Path) -> None:
         "mv target/qualification/inputs/cache/adapter-disk.ext2.tmp target/qualification/inputs/cache/adapter-disk.ext2; "
         "rm -f target/qualification/inputs/cache/adapter-disk.ext4.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-disk.ext4.tmp; "
         "\"$result/bin/mkfs.ext4\" -q -F -b 4096 -I 128 -O ^64bit,^metadata_csum,^metadata_csum_seed -d \"$staging/ext4\" -U 6c636f36-6164-4070-7465-723031323334 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-disk.ext4.tmp >/dev/null 2>&1; "
+        "\"$result/bin/e2fsck\" -fn target/qualification/inputs/cache/adapter-disk.ext4.tmp; "
         "mv target/qualification/inputs/cache/adapter-disk.ext4.tmp target/qualification/inputs/cache/adapter-disk.ext4; "
         "rm -f target/qualification/inputs/cache/adapter-multigroup.ext4.tmp; truncate -s 128M target/qualification/inputs/cache/adapter-multigroup.ext4.tmp; "
         "\"$result/bin/mkfs.ext4\" -q -F -b 1024 -I 128 -O ^64bit,^metadata_csum,^metadata_csum_seed -d \"$staging/multigroup\" -U 6c636f36-6164-4070-7465-723031323335 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-multigroup.ext4.tmp >/dev/null 2>&1; "
+        "\"$result/bin/e2fsck\" -fn target/qualification/inputs/cache/adapter-multigroup.ext4.tmp; "
         "mv target/qualification/inputs/cache/adapter-multigroup.ext4.tmp target/qualification/inputs/cache/adapter-multigroup.ext4; "
         "rm -f target/qualification/inputs/cache/adapter-sparse.ext4.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-sparse.ext4.tmp; "
         "\"$result/bin/mkfs.ext4\" -q -F -b 4096 -I 128 -O ^64bit,^metadata_csum,^metadata_csum_seed -d \"$staging/sparse\" -U 6c636f36-6164-4070-7465-723031323336 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-sparse.ext4.tmp >/dev/null 2>&1; "
+        "\"$result/bin/e2fsck\" -fn target/qualification/inputs/cache/adapter-sparse.ext4.tmp; "
         "mv target/qualification/inputs/cache/adapter-sparse.ext4.tmp target/qualification/inputs/cache/adapter-sparse.ext4; "
         "rm -f target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
         "\"$result/bin/mkfs.ext2\" -q -F -b 4096 -I 128 -d \"$staging/wrong\" -U 77726f6e-6764-4973-6b31-323334353637 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
@@ -147,15 +149,6 @@ def build_adapter_fixtures(repo: Path) -> None:
         "rm -f target/qualification/inputs/cache/adapter-wrong-filesystem.img; truncate -s 16M target/qualification/inputs/cache/adapter-wrong-filesystem.img"
     )
     _docker_build(repo, script, "adapter disk fixture build")
-    for name in ("adapter-disk.ext4", "adapter-multigroup.ext4", "adapter-sparse.ext4"):
-        ext4_disk = repo / CACHE_DIR / name
-        with ext4_disk.open("r+b") as stream:
-            stream.seek(1024 + 0x3A)
-            stream.write(struct.pack("<H", 0))
-            stream.seek(1024 + 0x60)
-            incompat = struct.unpack("<I", stream.read(4))[0]
-            stream.seek(1024 + 0x60)
-            stream.write(struct.pack("<I", incompat & ~0x0002))
 
 
 def _docker_image_digest() -> str:
