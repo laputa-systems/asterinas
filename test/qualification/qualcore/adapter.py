@@ -73,6 +73,12 @@ def validate_blklogwrites(path: Path, *, expect_writes: bool | None = True) -> l
             if flags & ~LOG_FLAG_MASK:
                 failures.append(f"blklogwrites record {index} has unsupported flags: {flags:#x}")
                 break
+            if flags & LOG_MARK_FLAG:
+                failures.append(f"blklogwrites record {index} contains an unsupported mark")
+                break
+            if flags & LOG_FLUSH_FLAG and (flags != LOG_FLUSH_FLAG or nr_sectors != 0):
+                failures.append(f"blklogwrites record {index} has an invalid flush")
+                break
             if data_len != 0:
                 failures.append(f"blklogwrites record {index} has unsupported data length: {data_len}")
                 break
@@ -89,7 +95,7 @@ def validate_blklogwrites(path: Path, *, expect_writes: bool | None = True) -> l
                 discards += 1
                 offset += sector_size
             else:
-                control_only = bool(flags & (LOG_FLUSH_FLAG | LOG_MARK_FLAG)) and nr_sectors == 0
+                control_only = flags == LOG_FLUSH_FLAG
                 if not control_only:
                     if nr_sectors == 0:
                         failures.append(f"blklogwrites record {index} data write has zero sectors")
@@ -98,8 +104,7 @@ def validate_blklogwrites(path: Path, *, expect_writes: bool | None = True) -> l
                     if offset + sector_size + payload > size:
                         failures.append(f"blklogwrites record {index} payload is truncated")
                         break
-                    if not (flags & LOG_MARK_FLAG):
-                        data_writes += 1
+                    data_writes += 1
                     offset += sector_size + payload
                 else:
                     offset += sector_size

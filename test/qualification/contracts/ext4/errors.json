@@ -30,7 +30,7 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc23-ext4-errors-r1",
+      "contract_revision": "lc23-ext4-errors-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
         {
@@ -97,7 +97,7 @@
               "type": "integer"
             }
           ],
-          "id": "oversize-write-rejected"
+          "id": "directory-fd-write-rejected"
         },
         {
           "assertions": [

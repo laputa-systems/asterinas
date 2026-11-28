@@ -39,12 +39,14 @@
 #define EXT4_MULTIGROUP_CASE_ID "ext4.multi-group"
 #define EXT4_SPARSE_CASE_ID "ext4.sparse"
 #define EXT4_WRITE_CASE_ID "ext4.write"
+#define EXT4_WRITE_READBACK_CASE_ID "ext4.write-linux-readback"
 #define EXT4_ALLOC_CASE_ID "ext4.alloc"
 #define EXT4_DIR_CASE_ID "ext4.dir"
 #define EXT4_ORPHAN_CASE_ID "ext4.orphan"
 #define EXT4_XATTR_CASE_ID "ext4.xattr"
 #define EXT4_DURABILITY_CASE_ID "ext4.durability"
 #define EXT4_ERRORS_CASE_ID "ext4.errors"
+#define EXT4_OVERSIZED_SPARSE_CASE_ID "ext4.oversized-sparse-write"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -554,12 +556,14 @@ static bool is_ext4_case(void) {
            strcmp(active_case_id, EXT4_MULTIGROUP_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_SPARSE_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_WRITE_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_WRITE_READBACK_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) == 0 ||
-           strcmp(active_case_id, EXT4_ERRORS_CASE_ID) == 0;
+           strcmp(active_case_id, EXT4_ERRORS_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_OVERSIZED_SPARSE_CASE_ID) == 0;
 }
 
 static const char *expected_mount_filesystem(void) {
@@ -603,7 +607,8 @@ static void setup_storage_volume(struct storage_setup *setup) {
          strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_XATTR_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) != 0 &&
-         strcmp(active_case_id, EXT4_ERRORS_CASE_ID) != 0) ? MS_RDONLY : 0;
+         strcmp(active_case_id, EXT4_ERRORS_CASE_ID) != 0 &&
+         strcmp(active_case_id, EXT4_OVERSIZED_SPARSE_CASE_ID) != 0) ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -781,7 +786,7 @@ static void run_ext4_errors_case(const char *run_id, const char *nonce, const ch
     bool fsync_passed = fsync_result == 0;
     bool bytes_passed = strcmp(roundtrip, "bGMyMy1lcnJvcgo=") == 0;
     bool size_passed = size == 11;
-    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "oversize-write-rejected", "rejected", rejected, rejected_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "directory-fd-write-rejected", "rejected", rejected, rejected_passed);
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "post-error-write", "bytes_written", written, write_passed);
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "post-error-fsync", "result", fsync_result, fsync_passed);
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "post-error-read", "bytes", roundtrip, bytes_passed);
@@ -789,6 +794,42 @@ static void run_ext4_errors_case(const char *run_id, const char *nonce, const ch
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                rejected_passed && write_passed && fsync_passed && bytes_passed && size_passed,
                SETUP_SUBTESTS + 5, SETUP_ASSERTIONS + 5);
+}
+
+static void run_ext4_oversized_sparse_case(const char *run_id, const char *nonce,
+                                           const char *manifest_hash, const char *payload_hash) {
+    struct storage_setup setup;
+    if (!begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    const off_t offset = 128 * 1024 * 1024;
+    int fd = open(ADAPTER_MOUNT_POINT "/oversized-sparse.txt", O_RDWR | O_CREAT | O_EXCL, 0640);
+    long written = -1;
+    long size = -1;
+    char hole[8] = "";
+    char tail[8] = "";
+    if (fd >= 0) {
+        written = pwrite(fd, "S", 1, offset);
+        struct stat status;
+        if (fstat(fd, &status) == 0) {
+            size = (long)status.st_size;
+        }
+        read_at_base64(fd, 0, 1, hole, sizeof(hole));
+        read_at_base64(fd, offset, 1, tail, sizeof(tail));
+        close(fd);
+    }
+    unmount_adapter_volume();
+    bool written_ok = written == 1;
+    bool size_ok = size == offset + 1;
+    bool hole_ok = strcmp(hole, "AA==") == 0;
+    bool tail_ok = strcmp(tail, "Uw==") == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "sparse-write", "result", written, written_ok);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "sparse-size", "bytes", size, size_ok);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "sparse-hole", "bytes", hole, hole_ok);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "sparse-tail", "bytes", tail, tail_ok);
+    emit_final(run_id, nonce, manifest_hash, payload_hash, written_ok && size_ok && hole_ok && tail_ok,
+               SETUP_SUBTESTS + 4, SETUP_ASSERTIONS + 4);
 }
 
 static void run_ext4_durability_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -2078,6 +2119,8 @@ int main(void) {
         run_ext4_sparse_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_WRITE_CASE_ID) == 0) {
         run_ext4_write_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_WRITE_READBACK_CASE_ID) == 0) {
+        run_ext4_file_case(run_id, nonce, manifest_hash, payload_hash, "marker.txt", "bGMxOS1qb3VybmFsCg==", 13, false);
     } else if (strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0) {
         run_ext4_alloc_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0) {
@@ -2090,6 +2133,8 @@ int main(void) {
         run_ext4_durability_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_ERRORS_CASE_ID) == 0) {
         run_ext4_errors_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_OVERSIZED_SPARSE_CASE_ID) == 0) {
+        run_ext4_oversized_sparse_case(run_id, nonce, manifest_hash, payload_hash);
 
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);

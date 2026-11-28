@@ -361,6 +361,7 @@ def execute_backend(
     silence_timeout: float | None = None,
     case: CaseSpec | None = None,
     backend: str = "linux",
+    producer: BackendEvidence | None = None,
 ) -> BackendEvidence:
     stream_run_id = f"{bundle.run_id}-{label}"
     nonce = secrets.token_hex(16)
@@ -390,6 +391,12 @@ def execute_backend(
         adapter_image = inputs[image_name]
         used_inputs[image_name] = adapter_image
     input_failures = verify_copied_input_hashes(used_inputs, snapshot.expected_hashes)
+    if producer is not None:
+        artifact = bundle.registry.get(f"{producer.label}/adapter-disk.img")
+        if not adapter_enabled or backend != "linux" or artifact is None:
+            raise RunFailure("Linux readback requires a captured producer image")
+        adapter_image = bundle.root / artifact["path"]
+        input_failures.extend(verify_copied_input_hashes({"producer disk": adapter_image}, {"producer disk": artifact["sha256"]}))
     if input_failures:
         raise RunFailure("backend inputs changed before use: " + "; ".join(input_failures))
 
@@ -762,6 +769,20 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str, baseline: bool 
         state.effective_lock_hash = effective_lock_hash
         with VmExclusion(repo / "target/qualification/vm.lock"):
             for case in selection.cases:
+                producer_case = case.payload.get("readback_of")
+                reference_producer = None
+                candidate_producer = None
+                if producer_case is not None:
+                    reference_producer = state.reference_evidence.get(producer_case)
+                    candidate_producer = state.candidate_evidence.get(producer_case)
+                    if any(
+                        result is None or _backend_role(result)[0] != "pass" or evidence_compromise(result)
+                        for result in (reference_producer, candidate_producer)
+                    ):
+                        state.outcomes[case.case_id] = CaseOutcome(
+                            case.case_id, "NOT_RUN", reason=f"missing usable producer evidence: {producer_case}",
+                        )
+                        continue
                 reference_evidence = execute_backend(
                     repo,
                     bundle,
@@ -771,6 +792,7 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str, baseline: bool 
                     _case_label("reference", case.case_id),
                     case=case,
                     backend="linux",
+                    producer=reference_producer,
                 )
                 state.reference_evidence[case.case_id] = reference_evidence
                 candidate_evidence = execute_backend(
@@ -781,7 +803,8 @@ def run_selfcheck(repo: Path, profile_name: str, candidate: str, baseline: bool 
                     selection,
                     _case_label("candidate", case.case_id),
                     case=case,
-                    backend=candidate,
+                    backend="linux" if candidate_producer is not None else candidate,
+                    producer=candidate_producer,
                 )
                 state.candidate_evidence[case.case_id] = candidate_evidence
                 state.outcomes[case.case_id] = evaluate_case(case, reference_evidence, candidate_evidence)

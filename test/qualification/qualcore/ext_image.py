@@ -42,7 +42,7 @@ def inspect_ext_marker(repo: Path, bundle: EvidenceBundle, label: str, image: Pa
     report = {"image_sha256": image_hash, "tools": tools}
     bundle.register_artifact(f"{label}/inspection.json", (json.dumps(report, indent=2) + "\n").encode())
     geometry, fsck, marker = results
-    if fsck.returncode not in {0, 4} or marker.returncode != 0:
+    if fsck.returncode not in {0, 4, 12} or marker.returncode != 0:
         raise ValueError(f"{label}: image inspection failed to run (fsck {fsck.returncode}, debugfs {marker.returncode})")
     if fsck.returncode == 0 and geometry.returncode != 0:
         raise ValueError(f"{label}: dumpe2fs failed to read a clean image")

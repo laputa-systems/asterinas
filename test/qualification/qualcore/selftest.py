@@ -19,6 +19,7 @@ from .accounting import CaseOutcome, RoleResult, reconcile
 from .adapter import (
     LOG_DISCARD_FLAG,
     LOG_FLUSH_FLAG,
+    LOG_MARK_FLAG,
     WRITE_LOG_ENTRY_SIZE,
     WRITE_LOG_MAGIC,
     WRITE_LOG_VERSION,
@@ -1165,6 +1166,8 @@ def selftest_main() -> int:
     evaluate("blklog-read-only-missing", lambda: read_only_log_control("missing", [], "missing", missing=True))
     evaluate("blklog-read-only-write", lambda: read_only_log_control("write", [(0, 1, 0)], "unexpected"))
     evaluate("blklog-read-only-discard", lambda: read_only_log_control("discard", [(0, 1, LOG_DISCARD_FLAG)], "unexpected"))
+    evaluate("blklog-read-only-unsupported-mark", lambda: read_only_log_control("mark", [(42, 1, LOG_MARK_FLAG)], "unsupported mark"))
+    evaluate("blklog-read-only-invalid-flush", lambda: read_only_log_control("invalid-flush", [(42, 1, LOG_FLUSH_FLAG)], "invalid flush"))
 
     two_writes = [(0, 1, 0), (8, 1, 0)]
     evaluate("blklog-truncated-final-header-fields", blklog_control("final-header-fields", two_writes, cut=1552))
