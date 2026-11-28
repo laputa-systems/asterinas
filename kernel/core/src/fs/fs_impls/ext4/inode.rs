@@ -213,7 +213,7 @@ impl Ext4Inode {
         }
     }
 
-    fn xattr_block(fs: &Ext4, ino: u32) -> Result<Option<(u32, Vec<u8>)>> {
+    fn xattr_block(fs: &Ext4, ino: u32) -> Result<Option<(u64, Vec<u8>)>> {
         let geom = fs.geometry();
         let geom = fs.geometry();
         let inode_offset = inode_offset_from(fs.reader().as_ref(), geom, ino)
@@ -222,22 +222,35 @@ impl Ext4Inode {
             .reader()
             .read_at(inode_offset, geom.inode_size)
             .ok_or_else(|| errno!(EIO, "failed to read ext4 inode"))?;
-        let block = u32::from_le_bytes(
+        let block_lo = u32::from_le_bytes(
             raw.get(0x68..0x6C)
                 .ok_or_else(|| errno!(EIO, "short ext4 inode"))?
                 .try_into()
                 .unwrap(),
         );
+        let block_hi = if geom.group_desc_size >= aster_ext4::GROUP_DESC_SIZE_64 {
+            u16::from_le_bytes(raw[0x76..0x78].try_into().unwrap())
+        } else {
+            0
+        };
+        let block = (u64::from(block_hi) << 32) | u64::from(block_lo);
         if block == 0 {
             return Ok(None);
         }
-        let offset = (block as u64)
+        if block >= geom.blocks_count {
+            return Err(errno!(EIO, "ext4 xattr block is outside the volume"));
+        }
+        let offset = block
             .checked_mul(geom.block_size as u64)
             .ok_or_else(|| errno!(EINVAL, "ext4 xattr block overflow"))?;
         let data = fs
             .reader()
             .read_at(offset, geom.block_size)
             .ok_or_else(|| errno!(EIO, "failed to read ext4 xattr block"))?;
+        if let Some(seed) = fs.metadata_checksum_seed() {
+            xattr_edit::verify_checksum(&data, block, seed)
+                .map_err(|_| errno!(EIO, "ext4 xattr checksum mismatch"))?;
+        }
         Ok(Some((block, data)))
     }
 
@@ -248,10 +261,9 @@ impl Ext4Inode {
             XattrNamespace::User => 1,
             XattrNamespace::Trusted => 4,
             XattrNamespace::Security => 6,
-            XattrNamespace::System if matches!(suffix, "posix_acl_access" | "posix_acl_default") => {
-                return Err(errno!(EOPNOTSUPP, "ext4 ACLs are unsupported"));
+            XattrNamespace::System => {
+                return Err(errno!(EOPNOTSUPP, "system ext4 xattrs are unsupported"));
             }
-            XattrNamespace::System => 7,
         };
         Ok((index, suffix.as_bytes()))
     }
@@ -260,12 +272,12 @@ impl Ext4Inode {
         &self,
         fs: &Ext4,
         ino: u32,
-        block: Option<u32>,
+        block: Option<u64>,
         data: &[u8],
     ) -> Result<()> {
         let geom = fs.geometry();
         let block = if let Some(block) = block {
-            block
+            u32::try_from(block).map_err(|_| errno!(EOPNOTSUPP, "large ext4 xattr block cannot be edited"))?
         } else {
             let bitmap = read_block_bitmap_from(fs.reader().as_ref(), geom, 0)
                 .map_err(|_| errno!(EIO, "failed to read ext4 block bitmap"))?;
@@ -273,6 +285,8 @@ impl Ext4Inode {
             let index = allocator
                 .allocate()
                 .ok_or_else(|| errno!(ENOSPC, "ext4 xattr blocks exhausted"))? as usize;
+            let block = u32::try_from(geom.first_data_block + index as u64)
+                .map_err(|_| errno!(EOPNOTSUPP, "large ext4 xattr block cannot be allocated"))?;
             let bitmap_offset = block_bitmap_offset_from(fs.reader().as_ref(), geom, 0)
                 .map_err(|_| errno!(EIO, "failed to locate ext4 block bitmap"))?;
             let mut updated = bitmap;
@@ -282,7 +296,7 @@ impl Ext4Inode {
             fs.reader()
                 .write_at(bitmap_offset, &updated)
                 .ok_or_else(|| errno!(EIO, "failed to update ext4 block bitmap"))?;
-            index as u32
+            block
         };
         let offset = (block as u64)
             .checked_mul(geom.block_size as u64)
@@ -758,6 +772,9 @@ impl Inode for Ext4Inode {
         if !fs.writable() {
             return Err(errno!(EROFS, "ext4 mounts are read-only"));
         }
+        if fs.metadata_checksum_seed().is_some() {
+            return Err(errno!(EOPNOTSUPP, "checksummed ext4 xattrs cannot be edited"));
+        }
         let mut buf = vec![0u8; value_reader.remain()];
         let mut writer = VmWriter::from(buf.as_mut_slice());
         let value_len = value_reader.read_fallible(&mut writer)?;
@@ -780,6 +797,7 @@ impl Inode for Ext4Inode {
             xattr_edit::XattrError::NotFound => errno!(ENODATA, "ext4 xattr not found"),
             xattr_edit::XattrError::Exists => errno!(EEXIST, "ext4 xattr already exists"),
             xattr_edit::XattrError::TooLarge => errno!(ENOSPC, "ext4 xattr block is full"),
+            xattr_edit::XattrError::Unsupported => errno!(EOPNOTSUPP, "ext4 xattr block cannot be edited"),
             _ => errno!(EIO, "corrupt ext4 xattr block"),
         })?;
         self.save_xattr_block(&fs, self.number, block, &updated)
@@ -819,7 +837,6 @@ impl Inode for Ext4Inode {
                     1 => "user.",
                     4 => "trusted.",
                     6 => "security.",
-                    7 => "system.",
                     _ => return None,
                 };
                 let mut full = prefix.as_bytes().to_vec();
@@ -849,8 +866,15 @@ impl Inode for Ext4Inode {
         let (index, suffix) = Self::name_parts(&name)?;
         let (block, current) = Self::xattr_block(&fs, self.number)?
             .ok_or_else(|| errno!(ENODATA, "no ext4 xattrs"))?;
+        if fs.metadata_checksum_seed().is_some() {
+            return Err(errno!(EOPNOTSUPP, "checksummed ext4 xattrs cannot be edited"));
+        }
         let updated = xattr_edit::remove(&current, index, suffix, fs.geometry().block_size)
-            .map_err(|_| errno!(ENODATA, "ext4 xattr not found"))?;
+            .map_err(|error| match error {
+                xattr_edit::XattrError::NotFound => errno!(ENODATA, "ext4 xattr not found"),
+                xattr_edit::XattrError::Unsupported => errno!(EOPNOTSUPP, "ext4 xattr block cannot be edited"),
+                _ => errno!(EIO, "invalid ext4 xattr block"),
+            })?;
         self.save_xattr_block(&fs, self.number, Some(block), &updated)
     }
 

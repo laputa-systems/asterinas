@@ -114,6 +114,7 @@ pub struct Info {
     pub features_ro_compat: u32,
     pub group_count: usize,
     pub groups_verified: usize,
+    pub metadata_checksum_seed: Option<u32>,
 }
 
 fn read_u16(buf: &[u8], offset: usize) -> Result<u16, Error> {
@@ -249,6 +250,7 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
         features_ro_compat,
         group_count,
         groups_verified: 0,
+        metadata_checksum_seed: None,
     };
     check_feature_policy(&info)?;
 
@@ -301,6 +303,7 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
 
     Ok(Info {
         groups_verified: group_count,
+        metadata_checksum_seed: metadata_seed,
         ..info
     })
 }

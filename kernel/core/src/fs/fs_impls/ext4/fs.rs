@@ -96,6 +96,10 @@ impl Ext4 {
         self.writable
     }
 
+    pub(super) fn metadata_checksum_seed(&self) -> Option<u32> {
+        self.info.metadata_checksum_seed
+    }
+
     pub(super) fn journal_start(&self) -> u64 {
         self.journal_start
     }

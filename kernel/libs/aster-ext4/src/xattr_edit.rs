@@ -31,10 +31,25 @@ pub enum XattrError {
     Exists,
     TooLarge,
     Unsupported,
+    ChecksumMismatch,
 }
 
 fn align4(value: usize) -> usize {
     (value + 3) & !3
+}
+
+pub fn verify_checksum(block: &[u8], physical_block: u64, seed: u32) -> Result<(), XattrError> {
+    if block.len() < HEADER_LEN {
+        return Err(XattrError::Truncated);
+    }
+    let expected = u32::from_le_bytes(block[16..20].try_into().unwrap());
+    let crc = crate::ext4_crc32c(seed, &physical_block.to_le_bytes());
+    let crc = crate::ext4_crc32c(crc, &block[..16]);
+    let crc = crate::ext4_crc32c(crc, &[0; 4]);
+    if crate::ext4_crc32c(crc, &block[20..]) != expected {
+        return Err(XattrError::ChecksumMismatch);
+    }
+    Ok(())
 }
 
 pub fn parse(block: &[u8]) -> Result<Vec<Entry>, XattrError> {
@@ -47,6 +62,7 @@ pub fn parse(block: &[u8]) -> Result<Vec<Entry>, XattrError> {
     let mut entries = Vec::new();
     let mut cursor = HEADER_LEN;
     let mut first_value = block.len();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
     loop {
         let end_marker = block.get(cursor..cursor + 4).ok_or(XattrError::Truncated)?;
         if end_marker == [0; 4] {
@@ -62,6 +78,9 @@ pub fn parse(block: &[u8]) -> Result<Vec<Entry>, XattrError> {
         let name_len = entry[0] as usize;
         let name_start = cursor + ENTRY_HEADER_LEN;
         let name = block.get(name_start..name_start + name_len).ok_or(XattrError::Truncated)?;
+        if name.contains(&0) || entries.iter().any(|prior: &Entry| prior.name_index == entry[1] && prior.name == name) {
+            return Err(XattrError::Truncated);
+        }
         if entry[4..8] != [0; 4] {
             return Err(XattrError::Unsupported);
         }
@@ -74,6 +93,10 @@ pub fn parse(block: &[u8]) -> Result<Vec<Entry>, XattrError> {
             if start % 4 != 0 || start < HEADER_LEN || end > block.len() {
                 return Err(XattrError::Truncated);
             }
+            if ranges.iter().any(|&(a, b)| start < b && a < end && (a, b) != (start, end)) {
+                return Err(XattrError::Truncated);
+            }
+            ranges.push((start, end));
             first_value = first_value.min(start);
             &block[start..end]
         };
@@ -104,6 +127,7 @@ fn build(entries: &mut [Entry], block_size: usize) -> Result<Vec<u8>, XattrError
     let mut cursor = HEADER_LEN;
     let mut values = block_size;
     let mut block_hash = 0u32;
+    let mut has_unhashed_entry = false;
     for entry in entries {
         if entry.name.len() > 255 || entry.value.len() > u16::MAX as usize {
             return Err(XattrError::TooLarge);
@@ -132,8 +156,11 @@ fn build(entries: &mut [Entry], block_size: usize) -> Result<Vec<u8>, XattrError
         block[name_start..name_start + entry.name.len()].copy_from_slice(&entry.name);
         cursor += entry_len;
         block_hash = block_hash.rotate_left(16) ^ hash;
+        has_unhashed_entry |= hash == 0;
     }
-    block[12..16].copy_from_slice(&block_hash.to_le_bytes());
+    if !has_unhashed_entry {
+        block[12..16].copy_from_slice(&block_hash.to_le_bytes());
+    }
     Ok(block)
 }
 
@@ -218,9 +245,10 @@ mod tests {
     use super::*;
     use std::{fs, path::Path};
 
-    fn e2fsprogs_external_attributes() -> (Vec<u8>, core::ops::Range<usize>) {
+    fn e2fsprogs_external_attributes(seed: &str) -> (Vec<u8>, core::ops::Range<usize>) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../target/qualification/inputs/ext4/external-xattrs.ext4");
+            .join("../../../target/qualification/inputs/ext4")
+            .join(format!("{seed}-external-xattrs.ext4"));
         let image = fs::read(path).unwrap();
         let geom = crate::reader::geometry(&image).unwrap();
         let root = crate::reader::read_inode(&image, &geom, crate::reader::ROOT_INO).unwrap();
@@ -234,16 +262,27 @@ mod tests {
     #[test]
     #[ignore = "requires external-xattrs.ext4 from fixtures/ext4/build-xattrs.sh"]
     fn reads_e2fsprogs_external_attributes() {
-        let (image, range) = e2fsprogs_external_attributes();
+        let (image, range) = e2fsprogs_external_attributes("basic");
         let data = &image[range];
         assert_eq!(get(data, 1, b"foo"), Ok(Some(b"bar".to_vec())));
         assert_eq!(get(data, 4, b"author"), Ok(Some(b"asterinas".to_vec())));
     }
 
     #[test]
+    #[ignore = "requires the checksummed fixture from fixtures/ext4/build-xattrs.sh"]
+    fn verifies_e2fsprogs_attribute_checksum() {
+        let (mut image, range) = e2fsprogs_external_attributes("large-address");
+        let seed = crate::analyze(&image).unwrap().metadata_checksum_seed.unwrap();
+        let block = (range.start / range.len()) as u64;
+        assert_eq!(verify_checksum(&image[range.clone()], block, seed), Ok(()));
+        image[range.start + 16] ^= 1;
+        assert_eq!(verify_checksum(&image[range], block, seed), Err(XattrError::ChecksumMismatch));
+    }
+
+    #[test]
     #[ignore = "produces a clone for pinned e2fsprogs validation"]
     fn writes_external_attributes_for_e2fsprogs() {
-        let (mut image, range) = e2fsprogs_external_attributes();
+        let (mut image, range) = e2fsprogs_external_attributes("basic");
         let modified = set(&image[range.clone()], 1, b"foo", b"candidate-value", range.len(), true, false).unwrap();
         image[range].copy_from_slice(&modified);
         let output = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -285,5 +324,18 @@ mod tests {
         assert_eq!(&block[48..51], b"foo");
         block[34..36].copy_from_slice(&48u16.to_le_bytes());
         assert_eq!(parse(&block), Err(XattrError::Truncated));
+    }
+
+    #[test]
+    fn refuses_ambiguous_entries_and_partially_overlapping_values() {
+        let original = set(&[], 1, b"aaa", b"value1", 4096, false, false).unwrap();
+        let original = set(&original, 1, b"bbb", b"value2", 4096, false, false).unwrap();
+        let mut duplicate = original.clone();
+        duplicate[68..71].copy_from_slice(b"aaa");
+        assert_eq!(parse(&duplicate), Err(XattrError::Truncated));
+
+        let mut overlap = original;
+        overlap[54..56].copy_from_slice(&4084u16.to_le_bytes());
+        assert_eq!(parse(&overlap), Err(XattrError::Truncated));
     }
 }

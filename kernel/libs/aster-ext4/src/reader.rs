@@ -538,41 +538,6 @@ pub fn fast_symlink(inode: &Inode) -> Option<Vec<u8>> {
     Some(inode.block_ptrs[..inode.size as usize].to_vec())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct XattrEntry {
-    pub name_index: u8,
-    pub name_len: u8,
-    pub value_len: u16,
-}
-
-pub fn xattr_entries(block: &[u8]) -> Result<Vec<XattrEntry>, ReaderError> {
-    if block.len() < 32 {
-        return Err(ReaderError::Truncated);
-    }
-    let magic = le_u32(block, 0x00).ok_or(ReaderError::Truncated)?;
-    if magic != 0xEA02_0000 {
-        return Err(ReaderError::BadExtentMagic);
-    }
-    let mut cursor = 32usize;
-    let mut entries = Vec::new();
-    while cursor + 8 <= block.len() {
-        let name_len = block[cursor] as usize;
-        let name_index = block[cursor + 1];
-        let value_len = le_u16(block, cursor + 2).ok_or(ReaderError::Truncated)? as usize;
-        let entry_len = 8 + ((name_len + 3) & !3) + ((value_len + 3) & !3);
-        if entry_len < 8 || cursor + entry_len > block.len() {
-            return Err(ReaderError::Truncated);
-        }
-        entries.push(XattrEntry {
-            name_index,
-            name_len: name_len as u8,
-            value_len: value_len as u16,
-        });
-        cursor += entry_len;
-    }
-    Ok(entries)
-}
-
 // Slice convenience wrappers retained for host tests and simple callers.
 pub fn geometry(image: &[u8]) -> Result<Geometry, ReaderError> {
     geometry_from(&SliceReader::new(image))
@@ -713,11 +678,4 @@ mod tests {
         assert_eq!(data, b"lc14-basic\n");
     }
 
-    #[test]
-    fn xattr_parser_rejects_bad_magic() {
-        let mut block = vec![0u8; 64];
-        assert_eq!(xattr_entries(&block), Err(ReaderError::BadExtentMagic));
-        block[0..4].copy_from_slice(&0xEA02_0000u32.to_le_bytes());
-        assert!(xattr_entries(&block).is_ok());
-    }
 }
