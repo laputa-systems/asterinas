@@ -7,6 +7,9 @@ directory=target/qualification/inputs/ext4
 mkdir -p .work/tmp
 scratch=$(mktemp -d .work/tmp/ext4-xattrs.XXXXXX)
 trap 'rm -rf "$scratch"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 export E2FSPROGS_FAKE_TIME=0 SOURCE_DATE_EPOCH=0
 
 printf 'ea_set /marker.txt user.foo bar\nea_set /marker.txt trusted.author asterinas\n' > "$scratch/commands"

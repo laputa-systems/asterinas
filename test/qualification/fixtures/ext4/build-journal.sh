@@ -6,7 +6,10 @@ tools=$(nix-build --no-out-link test/qualification/adapter/e2fsprogs.nix)
 directory=target/qualification/inputs/ext4
 mkdir -p .work/tmp
 scratch=$(mktemp -d .work/tmp/ext4-journal.XXXXXX)
-trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+trap 'rm -rf "$scratch"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 export E2FSPROGS_FAKE_TIME=0 SOURCE_DATE_EPOCH=0
 
 for version in 1 3; do
