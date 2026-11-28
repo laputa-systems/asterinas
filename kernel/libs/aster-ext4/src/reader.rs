@@ -69,6 +69,8 @@ pub enum ReaderError {
 pub struct Geometry {
     pub block_size: usize,
     pub blocks_count: u64,
+    pub first_data_block: u64,
+    pub inodes_count: u32,
     pub inodes_per_group: usize,
     pub inode_size: usize,
     pub blocks_per_group: usize,
@@ -80,7 +82,9 @@ impl Geometry {
     /// Number of blocks that actually exist in a group, excluding the
     /// unused tail of the on-disk bitmap beyond the device capacity.
     pub fn usable_blocks(&self, group: usize) -> usize {
-        let start = (group as u64).saturating_mul(self.blocks_per_group as u64);
+        let start = (group as u64)
+            .saturating_mul(self.blocks_per_group as u64)
+            .saturating_add(self.first_data_block);
         let available = self.blocks_count.saturating_sub(start);
         usize::try_from(available)
             .unwrap_or(usize::MAX)
@@ -117,16 +121,22 @@ pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> 
         0
     };
     let blocks_count = blocks_count_lo | (blocks_count_hi << 32);
+    let first_data_block = u64::from(le_u32(&sb, 0x14).ok_or(ReaderError::Truncated)?);
+    let inodes_count = le_u32(&sb, 0).ok_or(ReaderError::Truncated)?;
     let inodes_per_group = le_u32(&sb, 0x28).ok_or(ReaderError::Truncated)? as usize;
     let inode_size = le_u16(&sb, 0x58).ok_or(ReaderError::Truncated)? as usize;
     let blocks_per_group = le_u32(&sb, 0x20).ok_or(ReaderError::Truncated)? as usize;
-    if block_size == 0 || inodes_per_group == 0 || inode_size < 128 || blocks_per_group == 0 {
+    if inodes_per_group == 0 || inode_size < 128 || inode_size > block_size
+        || blocks_per_group == 0 || first_data_block >= blocks_count
+    {
         return Err(ReaderError::BadBlockSize);
     }
     let group_desc_table = block_size * ((1024 + 1024 + block_size - 1) / block_size);
     Ok(Geometry {
         block_size,
         blocks_count,
+        first_data_block,
+        inodes_count,
         inodes_per_group,
         inode_size,
         blocks_per_group,
@@ -164,25 +174,13 @@ pub fn inode_offset_from(
     geom: &Geometry,
     ino: u32,
 ) -> Result<u64, ReaderError> {
-    if ino == 0 {
+    if ino == 0 || ino > geom.inodes_count {
         return Err(ReaderError::InodeOutOfRange);
     }
     let (group, index) = inode_number_to_group(geom, ino);
-    let desc_start = geom
-        .group_desc_table
-        .checked_add(
-            group
-                .checked_mul(geom.group_desc_size)
-                .ok_or(ReaderError::Truncated)?,
-        )
-        .ok_or(ReaderError::Truncated)?;
-    let desc = reader
-        .read_at(desc_start as u64, geom.group_desc_size)
-        .ok_or(ReaderError::Truncated)?;
-    let table = le_u32(&desc, 0x08).ok_or(ReaderError::Truncated)? as u64;
-    table
-        .checked_mul(geom.block_size as u64)
-        .and_then(|base| base.checked_add((index * geom.inode_size) as u64))
+    let within_table = index.checked_mul(geom.inode_size).ok_or(ReaderError::Truncated)?;
+    group_metadata_offset(reader, geom, group, 0x08)?
+        .checked_add(within_table as u64)
         .ok_or(ReaderError::Truncated)
 }
 
@@ -191,27 +189,9 @@ pub fn read_inode_from(
     geom: &Geometry,
     ino: u32,
 ) -> Result<Inode, ReaderError> {
-    if ino == 0 {
-        return Err(ReaderError::InodeOutOfRange);
-    }
-    let (group, index) = inode_number_to_group(geom, ino);
-    let desc_offset = group
-        .checked_mul(geom.group_desc_size)
-        .ok_or(ReaderError::Truncated)?;
-    let desc_start = geom
-        .group_desc_table
-        .checked_add(desc_offset)
-        .ok_or(ReaderError::Truncated)?;
-    let desc = reader
-        .read_at(desc_start as u64, geom.group_desc_size)
-        .ok_or(ReaderError::Truncated)?;
-    let inode_table = le_u32(&desc, 0x08).ok_or(ReaderError::Truncated)? as usize;
-    let offset = inode_table
-        .checked_mul(geom.block_size)
-        .and_then(|base| base.checked_add(index.checked_mul(geom.inode_size)?))
-        .ok_or(ReaderError::Truncated)?;
+    let offset = inode_offset_from(reader, geom, ino)?;
     let raw = reader
-        .read_at(offset as u64, geom.inode_size)
+        .read_at(offset, geom.inode_size)
         .ok_or(ReaderError::Truncated)?;
     let mut block_ptrs = [0u8; INODE_BLOCK_PTRS_LEN];
     block_ptrs.copy_from_slice(
@@ -242,20 +222,7 @@ pub fn block_bitmap_offset_from(
     geom: &Geometry,
     group: usize,
 ) -> Result<u64, ReaderError> {
-    let desc_offset = group
-        .checked_mul(geom.group_desc_size)
-        .ok_or(ReaderError::Truncated)?;
-    let desc_start = geom
-        .group_desc_table
-        .checked_add(desc_offset)
-        .ok_or(ReaderError::Truncated)?;
-    let desc = reader
-        .read_at(desc_start as u64, geom.group_desc_size)
-        .ok_or(ReaderError::Truncated)?;
-    let bitmap_block = le_u32(&desc, 0x00).ok_or(ReaderError::Truncated)? as u64;
-    bitmap_block
-        .checked_mul(geom.block_size as u64)
-        .ok_or(ReaderError::Truncated)
+    group_metadata_offset(reader, geom, group, 0x00)
 }
 
 /// Byte offset of a group's inode-allocation bitmap.
@@ -264,6 +231,18 @@ pub fn inode_bitmap_offset_from(
     geom: &Geometry,
     group: usize,
 ) -> Result<u64, ReaderError> {
+    group_metadata_offset(reader, geom, group, 0x04)
+}
+
+fn group_metadata_offset(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    group: usize,
+    field_offset: usize,
+) -> Result<u64, ReaderError> {
+    if geom.usable_blocks(group) == 0 {
+        return Err(ReaderError::Truncated);
+    }
     let desc_start = geom
         .group_desc_table
         .checked_add(
@@ -275,8 +254,17 @@ pub fn inode_bitmap_offset_from(
     let desc = reader
         .read_at(desc_start as u64, geom.group_desc_size)
         .ok_or(ReaderError::Truncated)?;
-    let bitmap_block = le_u32(&desc, 0x04).ok_or(ReaderError::Truncated)? as u64;
-    bitmap_block
+    let lo = u64::from(le_u32(&desc, field_offset).ok_or(ReaderError::Truncated)?);
+    let hi = if geom.group_desc_size >= crate::GROUP_DESC_SIZE_64 {
+        u64::from(le_u32(&desc, field_offset + 0x20).ok_or(ReaderError::Truncated)?)
+    } else {
+        0
+    };
+    let block = lo | (hi << 32);
+    if block <= geom.first_data_block || block >= geom.blocks_count {
+        return Err(ReaderError::Truncated);
+    }
+    block
         .checked_mul(geom.block_size as u64)
         .ok_or(ReaderError::Truncated)
 }
@@ -670,6 +658,22 @@ mod tests {
             expected[block * geom.block_size] = b'0' + block as u8;
         }
         assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn descriptor_addresses_keep_their_high_word() {
+        let mut image = fixture("large-address");
+        let mut geom = geometry(&image).unwrap();
+        geom.blocks_count = 1 << 33;
+        let table = geom.group_desc_table;
+        image[table + 0x20..table + 0x24].copy_from_slice(&1u32.to_le_bytes());
+        image[table + 0x28..table + 0x2C].copy_from_slice(&1u32.to_le_bytes());
+        let bitmap_lo = u64::from(le_u32(&image, table).unwrap());
+        let inode_table_lo = u64::from(le_u32(&image, table + 8).unwrap());
+        let reader = SliceReader::new(&image);
+        assert_eq!(block_bitmap_offset_from(&reader, &geom, 0), Ok((bitmap_lo + (1 << 32)) * 4096));
+        assert_eq!(inode_offset_from(&reader, &geom, 1), Ok((inode_table_lo + (1 << 32)) * 4096));
+        assert_eq!(inode_offset_from(&reader, &geom, geom.inodes_count + 1), Err(ReaderError::InodeOutOfRange));
     }
 
     #[test]
