@@ -710,7 +710,8 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
     char marker_b64[256] = "";
     char tail_b64[64] = "";
     long size = -1;
-    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+    bool mounted = begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup);
+    if (mounted) {
         read_file_base64(path, marker_b64, sizeof(marker_b64));
         struct stat status;
         if (stat(path, &status) == 0) {
@@ -726,9 +727,6 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
             }
         }
         unmount_adapter_volume();
-    } else {
-        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
-        return;
     }
     bool bytes_passed = strcmp(marker_b64, expected_b64) == 0;
     bool size_passed = size == expected_size;
@@ -742,7 +740,7 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
         extra += 1;
     }
     emit_final(run_id, nonce, manifest_hash, payload_hash,
-               bytes_passed && size_passed && tail_passed,
+               mounted && bytes_passed && size_passed && tail_passed,
                SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
 }
 

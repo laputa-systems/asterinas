@@ -1127,7 +1127,7 @@ def selftest_main() -> int:
     evaluate("probe-cache-container-identity", probe_cache_container_identity)
 
     valid_log = bundle.work_dir / "blklog-valid.log"
-    _blklog_fixture(valid_log, [(0, 1, 0), (8, 1, LOG_FLUSH_FLAG)])
+    _blklog_fixture(valid_log, [(0, 1, 0), (0, 0, LOG_FLUSH_FLAG)])
     valid_failures = validate_blklogwrites(valid_log)
     if not valid_failures:
         checks.append("complete blklogwrites log with a flush record is accepted")
