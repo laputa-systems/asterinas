@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "ext4-read-extra",
+  "inherits": [],
+  "cases": [
+    "ext4.multi-group",
+    "ext4.sparse"
+  ],
+  "excludes": []
+}

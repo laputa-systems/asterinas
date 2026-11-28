@@ -2,7 +2,7 @@
 
 //! Filesystem-level state and VFS `FileSystem` implementation for ext4.
 
-use aster_block::{BLOCK_SIZE, BlockDevice, bio::BioStatus};
+use aster_block::{BlockDevice, bio::BioStatus};
 use aster_ext4::{
     MAGIC as EXT4_MAGIC,
     reader::{BlockReader, geometry_from},
@@ -42,19 +42,9 @@ impl Ext4 {
             error!("ext4: invalid geometry: {:?}", error);
             errno!(EINVAL, "invalid ext4 geometry")
         })?;
-        if geometry.block_size != BLOCK_SIZE {
-            return Err(errno!(
-                EINVAL,
-                "ext4 block sizes other than 4096 bytes are not supported"
-            ));
-        }
-        if reader
-            .read_at(1024, 1024)
-            .ok_or_else(|| errno!(EIO, "cannot read ext4 superblock"))?
-            .len()
-            != 1024
-        {
-            return Err(errno!(EIO, "short ext4 superblock read"));
+        let block_size = geometry.block_size;
+        if !matches!(block_size, 1024 | 2048 | 4096) {
+            return Err(errno!(EINVAL, "unsupported ext4 block size"));
         }
 
         Ok(Arc::new_cyclic(|self_ref| Self {
@@ -122,7 +112,7 @@ impl FileSystem for Ext4 {
         let info = &self.info;
         SuperBlock {
             magic: EXT4_MAGIC as u64,
-            bsize: BLOCK_SIZE,
+            bsize: info.block_size,
             blocks: info.blocks_count as usize,
             bfree: info.free_blocks_count as usize,
             bavail: info

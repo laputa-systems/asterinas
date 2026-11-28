@@ -117,30 +117,40 @@ def build_adapter_fixtures(repo: Path) -> None:
         "export SOURCE_DATE_EPOCH=0 E2FSPROGS_FAKE_TIME=0; "
         "staging=/tmp/qual-adapter-mkfs; "
         "rm -rf \"$staging\"; "
-        "mkdir -p \"$staging/good\" \"$staging/wrong\" \"$staging/ext4\"; "
+        "mkdir -p \"$staging/good\" \"$staging/wrong\" \"$staging/ext4\" \"$staging/multigroup\" \"$staging/sparse\"; "
         "printf 'lc06-adapter\\n' > \"$staging/good/marker.txt\"; "
         "printf 'lc06-adapter\\n' > \"$staging/wrong/marker.txt\"; "
         "printf 'lc14-basic\\n' > \"$staging/ext4/marker.txt\"; "
+        "for i in $(seq 1 64); do printf 'group-%03d\\n' \"$i\" > \"$staging/multigroup/f$i.txt\"; done; "
+        "printf 'lc14-sparse\\n' > \"$staging/sparse/marker.txt\"; "
+        "truncate -s 12M \"$staging/sparse/sparse.bin\"; printf 'tail\\n' >> \"$staging/sparse/sparse.bin\"; "
         "rm -f target/qualification/inputs/cache/adapter-disk.ext2.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
         "\"$result/bin/mkfs.ext2\" -q -F -b 4096 -I 128 -d \"$staging/good\" -U 6c636f36-6164-4070-7465-723031323334 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-disk.ext2.tmp; "
         "mv target/qualification/inputs/cache/adapter-disk.ext2.tmp target/qualification/inputs/cache/adapter-disk.ext2; "
         "rm -f target/qualification/inputs/cache/adapter-disk.ext4.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-disk.ext4.tmp; "
         "\"$result/bin/mkfs.ext4\" -q -F -b 4096 -I 128 -O ^64bit,^metadata_csum,^metadata_csum_seed -d \"$staging/ext4\" -U 6c636f36-6164-4070-7465-723031323334 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-disk.ext4.tmp >/dev/null 2>&1; "
         "mv target/qualification/inputs/cache/adapter-disk.ext4.tmp target/qualification/inputs/cache/adapter-disk.ext4; "
+        "rm -f target/qualification/inputs/cache/adapter-multigroup.ext4.tmp; truncate -s 128M target/qualification/inputs/cache/adapter-multigroup.ext4.tmp; "
+        "\"$result/bin/mkfs.ext4\" -q -F -b 1024 -I 128 -O ^64bit,^metadata_csum,^metadata_csum_seed -d \"$staging/multigroup\" -U 6c636f36-6164-4070-7465-723031323335 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-multigroup.ext4.tmp >/dev/null 2>&1; "
+        "mv target/qualification/inputs/cache/adapter-multigroup.ext4.tmp target/qualification/inputs/cache/adapter-multigroup.ext4; "
+        "rm -f target/qualification/inputs/cache/adapter-sparse.ext4.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-sparse.ext4.tmp; "
+        "\"$result/bin/mkfs.ext4\" -q -F -b 4096 -I 128 -O ^64bit,^metadata_csum,^metadata_csum_seed -d \"$staging/sparse\" -U 6c636f36-6164-4070-7465-723031323336 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-sparse.ext4.tmp >/dev/null 2>&1; "
+        "mv target/qualification/inputs/cache/adapter-sparse.ext4.tmp target/qualification/inputs/cache/adapter-sparse.ext4; "
         "rm -f target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; truncate -s 16M target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
         "\"$result/bin/mkfs.ext2\" -q -F -b 4096 -I 128 -d \"$staging/wrong\" -U 77726f6e-6764-4973-6b31-323334353637 -E hash_seed=11111111-2222-3333-4444-555555555555 target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp; "
         "mv target/qualification/inputs/cache/adapter-wrong-disk.ext2.tmp target/qualification/inputs/cache/adapter-wrong-disk.ext2; "
         "rm -f target/qualification/inputs/cache/adapter-wrong-filesystem.img; truncate -s 16M target/qualification/inputs/cache/adapter-wrong-filesystem.img"
     )
     _docker_build(repo, script, "adapter disk fixture build")
-    ext4_disk = repo / CACHE_DIR / "adapter-disk.ext4"
-    with ext4_disk.open("r+b") as stream:
-        stream.seek(1024 + 0x3A)
-        stream.write(struct.pack("<H", 0))
-        stream.seek(1024 + 0x60)
-        incompat = struct.unpack("<I", stream.read(4))[0]
-        stream.seek(1024 + 0x60)
-        stream.write(struct.pack("<I", incompat & ~0x0002))
+    for name in ("adapter-disk.ext4", "adapter-multigroup.ext4", "adapter-sparse.ext4"):
+        ext4_disk = repo / CACHE_DIR / name
+        with ext4_disk.open("r+b") as stream:
+            stream.seek(1024 + 0x3A)
+            stream.write(struct.pack("<H", 0))
+            stream.seek(1024 + 0x60)
+            incompat = struct.unpack("<I", stream.read(4))[0]
+            stream.seek(1024 + 0x60)
+            stream.write(struct.pack("<I", incompat & ~0x0002))
 
 
 def _docker_image_digest() -> str:
@@ -377,6 +387,8 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     adapter_wrong_disk = repo / CACHE_DIR / "adapter-wrong-disk.ext2"
     adapter_wrong_filesystem = repo / CACHE_DIR / "adapter-wrong-filesystem.img"
     adapter_ext4_disk = repo / CACHE_DIR / "adapter-disk.ext4"
+    adapter_multigroup_disk = repo / CACHE_DIR / "adapter-multigroup.ext4"
+    adapter_sparse_disk = repo / CACHE_DIR / "adapter-sparse.ext4"
     selection = _load_selection(repo, "selfcheck")
     control_selection = _load_selection(repo, "lc02-selftest")
     adapter_selection = _load_selection(repo, "adapter")
@@ -385,6 +397,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     errors_selection = _load_selection(repo, "s0-errors")
     persistence_selection = _load_selection(repo, "s0-persistence")
     ext4_read_selection = _load_selection(repo, "ext4-read")
+    ext4_extra_selection = _load_selection(repo, "ext4-read-extra")
     return {
         "schema": 1,
         "lock_revision": "lc07-r1",
@@ -419,6 +432,10 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "disk_sha256": _sha256_file(adapter_disk),
             "ext4_disk_path": str(CACHE_DIR / "adapter-disk.ext4"),
             "ext4_disk_sha256": _sha256_file(adapter_ext4_disk),
+            "multigroup_disk_path": str(CACHE_DIR / "adapter-multigroup.ext4"),
+            "multigroup_disk_sha256": _sha256_file(adapter_multigroup_disk),
+            "sparse_disk_path": str(CACHE_DIR / "adapter-sparse.ext4"),
+            "sparse_disk_sha256": _sha256_file(adapter_sparse_disk),
             "wrong_disk_path": str(CACHE_DIR / "adapter-wrong-disk.ext2"),
             "wrong_disk_sha256": _sha256_file(adapter_wrong_disk),
             "wrong_filesystem_path": str(CACHE_DIR / "adapter-wrong-filesystem.img"),
@@ -458,6 +475,7 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "s0-errors": _selection_lock(errors_selection),
             "s0-persistence": _selection_lock(persistence_selection),
             "ext4-read": _selection_lock(ext4_read_selection),
+            "ext4-read-extra": _selection_lock(ext4_extra_selection),
         },
     }
 
@@ -562,6 +580,10 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("adapter", "disk_sha256"),
         ("adapter", "ext4_disk_path"),
         ("adapter", "ext4_disk_sha256"),
+        ("adapter", "multigroup_disk_path"),
+        ("adapter", "multigroup_disk_sha256"),
+        ("adapter", "sparse_disk_path"),
+        ("adapter", "sparse_disk_sha256"),
         ("adapter", "wrong_disk_path"),
         ("adapter", "wrong_disk_sha256"),
         ("adapter", "wrong_filesystem_path"),
@@ -741,6 +763,8 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
     for path_key, hash_key, label in (
         ("disk_path", "disk_sha256", "adapter disk"),
         ("ext4_disk_path", "ext4_disk_sha256", "adapter ext4 disk"),
+        ("multigroup_disk_path", "multigroup_disk_sha256", "adapter multi-group ext4 disk"),
+        ("sparse_disk_path", "sparse_disk_sha256", "adapter sparse ext4 disk"),
         ("wrong_disk_path", "wrong_disk_sha256", "adapter wrong-disk fixture"),
         ("wrong_filesystem_path", "wrong_filesystem_sha256", "adapter wrong-filesystem fixture"),
     ):
@@ -761,7 +785,7 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         build_asterinas(repo)
     _check_file_hash(repo, asterinas_build["kernel_path"], asterinas_build["kernel_sha256"], "Asterinas kernel", failures, checked)
 
-    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read"):
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)

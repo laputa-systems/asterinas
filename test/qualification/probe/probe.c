@@ -35,6 +35,8 @@
 #define EXT2_REMOUNT_CASE_ID "ext2.sync-remount"
 #define EXT2_ENOSPC_CASE_ID "ext2.enospc-fill"
 #define EXT4_READ_CASE_ID "ext4.read"
+#define EXT4_MULTIGROUP_CASE_ID "ext4.multi-group"
+#define EXT4_SPARSE_CASE_ID "ext4.sparse"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -539,8 +541,14 @@ static void read_mount_filesystem(char *output, size_t output_size) {
     }
 }
 
+static bool is_ext4_case(void) {
+    return strcmp(active_case_id, EXT4_READ_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_MULTIGROUP_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_SPARSE_CASE_ID) == 0;
+}
+
 static const char *expected_mount_filesystem(void) {
-    return strcmp(active_case_id, EXT4_READ_CASE_ID) == 0 ? "ext4" : "ext2";
+    return is_ext4_case() ? "ext4" : "ext2";
 }
 
 static void setup_storage_volume(struct storage_setup *setup) {
@@ -573,7 +581,7 @@ static void setup_storage_volume(struct storage_setup *setup) {
     }
     mkdir("/mnt", 0555);
     mkdir(ADAPTER_MOUNT_POINT, 0555);
-    int mount_flags = strcmp(active_case_id, EXT4_READ_CASE_ID) == 0 ? MS_RDONLY : 0;
+    int mount_flags = is_ext4_case() ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -666,10 +674,14 @@ static void make_case_directory(const char *path) {
     }
 }
 
-static void run_ext4_read_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
-    const char *path = ADAPTER_MOUNT_POINT "/marker.txt";
+static void run_ext4_file_case(const char *run_id, const char *nonce, const char *manifest_hash,
+                               const char *payload_hash, const char *name, const char *expected_b64,
+                               long expected_size, bool check_sparse_tail) {
+    char path[256];
+    snprintf(path, sizeof(path), "%s/%s", ADAPTER_MOUNT_POINT, name);
     struct storage_setup setup;
     char marker_b64[256] = "";
+    char tail_b64[64] = "";
     long size = -1;
     if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         read_file_base64(path, marker_b64, sizeof(marker_b64));
@@ -677,18 +689,49 @@ static void run_ext4_read_case(const char *run_id, const char *nonce, const char
         if (stat(path, &status) == 0) {
             size = (long)status.st_size;
         }
+        if (check_sparse_tail) {
+            char sparse_path[256];
+            snprintf(sparse_path, sizeof(sparse_path), "%s/sparse.bin", ADAPTER_MOUNT_POINT);
+            int fd = open(sparse_path, O_RDONLY);
+            if (fd >= 0) {
+                read_at_base64(fd, 12 * 1024 * 1024, 5, tail_b64, sizeof(tail_b64));
+                close(fd);
+            }
+        }
         unmount_adapter_volume();
     } else {
         emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
         return;
     }
-    bool bytes_passed = strcmp(marker_b64, "bGMxNC1iYXNpYwo=") == 0;
-    bool size_passed = size == 11;
+    bool bytes_passed = strcmp(marker_b64, expected_b64) == 0;
+    bool size_passed = size == expected_size;
     emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "marker-read", "bytes", marker_b64, bytes_passed);
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-size", "bytes", size, size_passed);
+    int extra = 2;
+    bool tail_passed = true;
+    if (check_sparse_tail) {
+        tail_passed = strcmp(tail_b64, "dGFpbAo=") == 0;
+        emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "sparse-tail", "bytes", tail_b64, tail_passed);
+        extra += 1;
+    }
     emit_final(run_id, nonce, manifest_hash, payload_hash,
-               bytes_passed && size_passed,
-               SETUP_SUBTESTS + 2, SETUP_ASSERTIONS + 2);
+               bytes_passed && size_passed && tail_passed,
+               SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
+}
+
+static void run_ext4_read_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    run_ext4_file_case(run_id, nonce, manifest_hash, payload_hash,
+                       "marker.txt", "bGMxNC1iYXNpYwo=", 11, false);
+}
+
+static void run_ext4_multigroup_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    run_ext4_file_case(run_id, nonce, manifest_hash, payload_hash,
+                       "f64.txt", "Z3JvdXAtMDY0Cg==", 10, false);
+}
+
+static void run_ext4_sparse_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    run_ext4_file_case(run_id, nonce, manifest_hash, payload_hash,
+                       "marker.txt", "bGMxNC1zcGFyc2UK", 12, true);
 }
 
 static void run_ext2_create_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -1630,6 +1673,10 @@ int main(void) {
         run_adapter_probe(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_READ_CASE_ID) == 0) {
         run_ext4_read_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_MULTIGROUP_CASE_ID) == 0) {
+        run_ext4_multigroup_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_SPARSE_CASE_ID) == 0) {
+        run_ext4_sparse_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT2_SPARSE_CASE_ID) == 0) {

@@ -1,0 +1,289 @@
+{
+  "cases": [
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT4_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext4",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc16-ext4-multigroup-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext4",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "Z3JvdXAtMDY0Cg==",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "marker-read"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 10,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-size"
+        }
+      ],
+      "id": "ext4.multi-group",
+      "item": "LC-16",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_image": "adapter-multigroup.ext4",
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 134217728,
+        "expect_writes": false,
+        "filesystem": "ext4",
+        "mount_point": "/mnt/qualification"
+      },
+      "procedure": "Mount a pinned multi-group ext4 image with 1 KiB blocks read-only and verify a file in the last block group.",
+      "replay": "python3 test/qualification/run.py run --profile ext4-read-extra --candidate asterinas",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext4-multigroup-r1",
+        "upstream": "asterinas-qualification-ext4-read"
+      },
+      "validators": [
+        "reference-contract"
+      ]
+    },
+    {
+      "applicability": {
+        "architectures": [
+          "x86_64"
+        ],
+        "backends": [
+          "qemu-tcg"
+        ],
+        "privileges": [
+          "guest-root"
+        ],
+        "required_config": {
+          "CONFIG_BLK_DEV_INITRD": "y",
+          "CONFIG_DEVTMPFS": "y",
+          "CONFIG_DEVTMPFS_MOUNT": "y",
+          "CONFIG_EXT4_FS": "y",
+          "CONFIG_MAGIC_SYSRQ": "y",
+          "CONFIG_SERIAL_8250": "y",
+          "CONFIG_SERIAL_8250_CONSOLE": "y",
+          "CONFIG_VIRTIO_BLK": "y",
+          "CONFIG_VIRTIO_PCI": "y"
+        }
+      },
+      "area": "ext4",
+      "artifacts": [],
+      "budget_bytes": 131072,
+      "comparison": {
+        "ignored_fields": [],
+        "mode": "exact"
+      },
+      "contract_revision": "lc16-ext4-sparse-r1",
+      "deadline_seconds": 60,
+      "expected_subtests": [
+        {
+          "assertions": [
+            {
+              "expected": "qual-lc06-adapter",
+              "id": "serial",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-disk-identity"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "write back",
+              "id": "mode",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-write-cache"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "ext4",
+              "id": "filesystem",
+              "mode": "exact",
+              "type": "text"
+            }
+          ],
+          "id": "setup-filesystem"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-mount"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "uid",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "setup-privilege"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "bGMxNC1zcGFyc2UK",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "marker-read"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 12,
+              "id": "bytes",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "file-size"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "dGFpbAo=",
+              "id": "bytes",
+              "mode": "exact",
+              "type": "bytes"
+            }
+          ],
+          "id": "sparse-tail"
+        }
+      ],
+      "id": "ext4.sparse",
+      "item": "LC-16",
+      "iterations": 1,
+      "membership": "required",
+      "payload": {
+        "adapter": true,
+        "disk_image": "adapter-sparse.ext4",
+        "disk_serial": "qual-lc06-adapter",
+        "disk_size_bytes": 16777216,
+        "expect_writes": false,
+        "filesystem": "ext4",
+        "mount_point": "/mnt/qualification"
+      },
+      "procedure": "Mount a pinned ext4 image with a 12 MiB sparse file read-only and verify marker bytes and data after the hole.",
+      "replay": "python3 test/qualification/run.py run --profile ext4-read-extra --candidate asterinas",
+      "seed": 0,
+      "source": {
+        "license": "MPL-2.0",
+        "patch_hash": "0",
+        "revision": "ext4-sparse-r1",
+        "upstream": "asterinas-qualification-ext4-read"
+      },
+      "validators": [
+        "reference-contract"
+      ]
+    }
+  ]
+}

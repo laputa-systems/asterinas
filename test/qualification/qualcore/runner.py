@@ -115,6 +115,8 @@ def create_snapshot(verification: LockVerification, selection: Selection) -> Run
         "inputs.lock.json": verification.lock_hash,
         "adapter-disk.ext2": document["adapter"]["disk_sha256"],
         "adapter-disk.ext4": document["adapter"]["ext4_disk_sha256"],
+        "adapter-multigroup.ext4": document["adapter"]["multigroup_disk_sha256"],
+        "adapter-sparse.ext4": document["adapter"]["sparse_disk_sha256"],
         "adapter-wrong-disk.ext2": document["adapter"]["wrong_disk_sha256"],
         "adapter-wrong-filesystem.img": document["adapter"]["wrong_filesystem_sha256"],
     }
@@ -214,6 +216,8 @@ def copy_run_inputs(
             {
                 "adapter-disk.ext2": repo / CACHE_DIR / "adapter-disk.ext2",
                 "adapter-disk.ext4": repo / CACHE_DIR / "adapter-disk.ext4",
+                "adapter-multigroup.ext4": repo / CACHE_DIR / "adapter-multigroup.ext4",
+                "adapter-sparse.ext4": repo / CACHE_DIR / "adapter-sparse.ext4",
                 "adapter-wrong-disk.ext2": repo / CACHE_DIR / "adapter-wrong-disk.ext2",
                 "adapter-wrong-filesystem.img": repo / CACHE_DIR / "adapter-wrong-filesystem.img",
             }
