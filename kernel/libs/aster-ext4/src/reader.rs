@@ -179,9 +179,15 @@ pub fn inode_offset_from(
     }
     let (group, index) = inode_number_to_group(geom, ino);
     let within_table = index.checked_mul(geom.inode_size).ok_or(ReaderError::Truncated)?;
-    group_metadata_offset(reader, geom, group, 0x08)?
+    let offset = group_metadata_offset(reader, geom, group, 0x08)?
         .checked_add(within_table as u64)
-        .ok_or(ReaderError::Truncated)
+        .ok_or(ReaderError::Truncated)?;
+    let device_len = geom.blocks_count.checked_mul(geom.block_size as u64)
+        .ok_or(ReaderError::Truncated)?;
+    if offset.checked_add(geom.inode_size as u64).is_none_or(|end| end > device_len) {
+        return Err(ReaderError::InodeOutOfRange);
+    }
+    Ok(offset)
 }
 
 pub fn read_inode_from(
@@ -674,6 +680,16 @@ mod tests {
         assert_eq!(block_bitmap_offset_from(&reader, &geom, 0), Ok((bitmap_lo + (1 << 32)) * 4096));
         assert_eq!(inode_offset_from(&reader, &geom, 1), Ok((inode_table_lo + (1 << 32)) * 4096));
         assert_eq!(inode_offset_from(&reader, &geom, geom.inodes_count + 1), Err(ReaderError::InodeOutOfRange));
+    }
+
+    #[test]
+    fn inode_record_cannot_extend_past_the_volume() {
+        let mut image = fixture("basic");
+        let geom = geometry(&image).unwrap();
+        let field = geom.group_desc_table + 8;
+        image[field..field + 4].copy_from_slice(&((geom.blocks_count - 1) as u32).to_le_bytes());
+        let ino = u32::try_from(geom.block_size / geom.inode_size + 1).unwrap();
+        assert_eq!(inode_offset_from(&SliceReader::new(&image), &geom, ino), Err(ReaderError::InodeOutOfRange));
     }
 
     #[test]

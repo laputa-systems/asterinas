@@ -1280,11 +1280,16 @@ def run_persistence_controls(repo: Path, profile_name: str) -> int:
                 log = bundle.artifacts_dir / f"{label}/blklogwrites.log"
                 seed = inputs["adapter-disk.ext2"]
                 cut = reconstruct_after_flush(seed, log, crash)
-                replays_agree = verify_pinned_replay(repo, bundle, label, seed=seed, log=log, expected=crash, cut=cut)
+                if cut == 0:
+                    reconstruction_ok = sha256_bytes(crash.read_bytes()) == snapshot.expected_hashes["adapter-disk.ext2"]
+                    reconstruction_check = f"unchanged seed={reconstruction_ok}"
+                else:
+                    reconstruction_ok = verify_pinned_replay(repo, bundle, label, seed=seed, log=log, expected=crash, cut=cut)
+                    reconstruction_check = f"pinned replay match={reconstruction_ok}"
                 fsck_status, marker = inspect_ext_marker(repo, bundle, f"{name}-crash", crash)
                 controls[f"persistence:{name}-crash-cut"] = {
-                    "detected": replays_agree and fsck_status == 0 and marker == expected,
-                    "detail": f"cut after {cut} log records, replay match={replays_agree}, e2fsck -fn exit {fsck_status}, /marker.txt={marker!r}",
+                    "detected": reconstruction_ok and fsck_status == 0 and marker == expected,
+                    "detail": f"cut after {cut} log records, {reconstruction_check}, e2fsck -fn exit {fsck_status}, /marker.txt={marker!r}",
                 }
 
         detected_count = sum(1 for item in controls.values() if item["detected"])

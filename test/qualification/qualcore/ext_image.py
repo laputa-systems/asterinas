@@ -53,6 +53,8 @@ def inspect_ext_marker(repo: Path, bundle: EvidenceBundle, label: str, image: Pa
 def verify_pinned_replay(
     repo: Path, bundle: EvidenceBundle, label: str, *, seed: Path, log: Path, expected: Path, cut: int,
 ) -> bool:
+    if cut < 1:
+        raise ValueError("replay-log requires at least one record in the cut")
     replay = bundle.work_dir / f"{label}-pinned-replay.img"
     shutil.copyfile(seed, replay)
     command = [
@@ -61,7 +63,7 @@ def verify_pinned_replay(
         "sh", "-ceu",
         'result=$(nix-build --no-out-link test/qualification/adapter/replay-log.nix); '
         'printf "replay-log=%s\\n" "$result" >&2; '
-        'if [ "$2" -gt 0 ]; then exec "$result/bin/replay-log" --log "$1" --limit "$2" --replay /replay.img; fi',
+        'exec "$result/bin/replay-log" --log "$1" --limit "$2" --replay /replay.img',
         "replay", str(log.relative_to(repo)), str(cut),
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)
