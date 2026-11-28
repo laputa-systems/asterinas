@@ -10,7 +10,7 @@ from typing import Any
 from .initramfs import write_selfcheck_initramfs
 from .manifest import Selection, load_case_index, load_profile
 from .qemu import BASE_CMDLINE, qemu_version, resolve_qemu_path
-from .util import atomic_write_bytes, read_json_file, sha256_bytes, sha256_canonical
+from .util import atomic_write_bytes, parse_json, read_json_file, sha256_bytes, sha256_canonical
 
 
 LOCK_PATH = Path("test/qualification/inputs.lock.json")
@@ -527,7 +527,7 @@ def _load_lock(repo: Path) -> tuple[dict[str, Any], str]:
         raise LockError(f"input lock is missing: {LOCK_PATH}")
     try:
         lock_bytes = path.read_bytes()
-        document = json.loads(lock_bytes)
+        document = parse_json(lock_bytes)
     except (OSError, ValueError) as error:
         raise LockError(f"cannot read input policy {LOCK_PATH}: {error}") from error
     if not isinstance(document, dict):

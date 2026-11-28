@@ -91,11 +91,6 @@ class RunState:
     effective_lock_hash: str = ""
 
 
-PENDING_CONTROLS = {
-    "persistence:omitted-sync-crash-cut": "LC-11",
-}
-
-
 def load_selection(repo: Path, profile_name: str) -> Selection:
     contracts = sorted((repo / "test/qualification/contracts").glob("*/*.json"))
     if not contracts:
@@ -1179,10 +1174,7 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
             "replay": replay_index(selection),
             "control_backends": control_backends,
             "controls": controls,
-            "pending_controls": {
-                name: {"status": "pending", "blocked_by": item, "passed": False}
-                for name, item in sorted(PENDING_CONTROLS.items())
-            },
+            "pending_controls": {},
             "controls_detected": detected_count,
             "controls_total": len(controls),
             "internal_failures": internal_failures,
@@ -1195,8 +1187,6 @@ def run_adapter_controls(repo: Path, profile_name: str) -> int:
         for name, item in sorted(controls.items()):
             state = "DETECTED" if item["detected"] else "NOT-DETECTED"
             print(f"{state} {name}: {item['detail']}")
-        for name, blocked_by in sorted(PENDING_CONTROLS.items()):
-            print(f"PENDING {name}: blocked by {blocked_by}")
         for failure in internal_failures:
             print(f"INTERNAL-FAIL {failure}")
         for error in teardown_errors:
@@ -1483,10 +1473,7 @@ def run_controls(repo: Path, profile_name: str) -> int:
             "replay": replay_index(selection),
             "control_backends": control_backends,
             "controls": controls,
-            "pending_controls": {
-                name: {"status": "pending", "blocked_by": item, "passed": False}
-                for name, item in sorted(PENDING_CONTROLS.items())
-            },
+            "pending_controls": {},
             "controls_detected": detected_count,
             "controls_total": len(controls),
             "internal_failures": internal_failures,
@@ -1499,8 +1486,6 @@ def run_controls(repo: Path, profile_name: str) -> int:
         for name, item in sorted(controls.items()):
             state = "DETECTED" if item["detected"] else "NOT-DETECTED"
             print(f"{state} {name}: {item['detail']}")
-        for name, blocked_by in sorted(PENDING_CONTROLS.items()):
-            print(f"PENDING {name}: blocked by {blocked_by}")
         for failure in internal_failures:
             print(f"INTERNAL-FAIL {failure}")
         for error in teardown_errors:

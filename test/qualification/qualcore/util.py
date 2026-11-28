@@ -46,10 +46,13 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"nonstandard JSON constant {value}")
 
 
+def parse_json(data: str | bytes) -> Any:
+    return json.loads(data, parse_constant=_reject_json_constant)
+
+
 def read_json_file(path: Path) -> Any:
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle, parse_constant=_reject_json_constant)
+        return parse_json(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise ValueError(f"{path}: invalid JSON at line {error.lineno}: {error.msg}") from error
     except ValueError as error:
