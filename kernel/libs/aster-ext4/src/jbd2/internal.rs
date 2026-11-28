@@ -400,9 +400,9 @@ mod encoder_tests {
         assert_eq!(read_u32(&blocks[0], 16), Some(1));
         assert_eq!(read_u32(&blocks[0], 48), Some(11));
         assert_eq!(read_u32(&blocks[0], 52), Some(1));
-        let entry = MetadataBlock { fs_block: 4, data: &data };
-        assert_eq!(encode_v3_transaction(1000, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
-        assert!(encode_v3_transaction(1024, &[0; 16], 9, 10, TargetWidth::Bits32, &[entry]).is_ok());
+        let entries = [MetadataBlock { fs_block: 4, data: &data }];
+        assert_eq!(encode_v3_transaction(1000, &uuid, 9, 10, TargetWidth::Bits32, &entries).unwrap_err(), Error::Invalid);
+        assert!(encode_v3_transaction(1024, &[0; 16], 9, 10, TargetWidth::Bits32, &entries).is_ok());
         assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[]).unwrap_err(), Error::Invalid);
         let entry = MetadataBlock { fs_block: 10, data: &data };
         assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
