@@ -38,3 +38,12 @@ for version in 1 3; do
     mv "$scratch/dirty.ext4" "$directory/journal-v$version.ext4"
     sha256sum "$directory/journal-v$version.ext4"
 done
+
+cargo test -p aster-ext4 jbd2::internal::encoder_tests::emit_v3_fixture_for_independent_replay -- --exact --ignored
+encoded="$directory/encoded-journal-v3.ext4"
+sha256sum "$encoded"
+cp "$encoded" "$scratch/encoder-recovery.ext4"
+"$tools/bin/e2fsck" -p -E journal_only "$scratch/encoder-recovery.ext4"
+cp "$scratch/encoder-recovery.ext4" "$scratch/encoder-check.ext4"
+"$tools/bin/e2fsck" -fn "$scratch/encoder-check.ext4"
+test "$("$tools/bin/debugfs" -R 'cat /marker.txt' "$scratch/encoder-recovery.ext4")" = Qc14-large-address

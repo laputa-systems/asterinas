@@ -77,7 +77,7 @@ pub fn encode_v3_transaction(
     metadata: &[MetadataBlock<'_>],
 ) -> Result<Vec<Vec<u8>>, Error> {
     if !(1024..=crate::MAX_BLOCK_SIZE).contains(&block_size) || !block_size.is_power_of_two()
-        || *uuid == [0; 16] || metadata.is_empty()
+        || metadata.is_empty()
     {
         return Err(Error::Invalid);
     }
@@ -402,7 +402,8 @@ mod encoder_tests {
         assert_eq!(read_u32(&blocks[0], 52), Some(1));
         let entry = MetadataBlock { fs_block: 4, data: &data };
         assert_eq!(encode_v3_transaction(1000, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
-        assert_eq!(encode_v3_transaction(1024, &[0; 16], 9, 10, TargetWidth::Bits32, &[]).unwrap_err(), Error::Invalid);
+        assert!(encode_v3_transaction(1024, &[0; 16], 9, 10, TargetWidth::Bits32, &[entry]).is_ok());
+        assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[]).unwrap_err(), Error::Invalid);
         let entry = MetadataBlock { fs_block: 10, data: &data };
         assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
         let entry = MetadataBlock { fs_block: 1 << 32, data: &data };
@@ -417,9 +418,7 @@ mod encoder_tests {
     #[ignore = "requires the checked journal-v3.ext4 fixture"]
     fn emit_v3_fixture_for_independent_replay() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let input = std::env::var_os("ASTER_EXT4_FIXTURE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| root.join("target/qualification/inputs/ext4"));
+        let input = root.join("target/qualification/inputs/ext4");
         let mut image = fs::read(input.join("journal-v3.ext4")).unwrap();
         let uuid: [u8; 16] = image[0x468..0x478].try_into().unwrap();
         let geometry = crate::reader::geometry(&image).unwrap();
@@ -450,8 +449,6 @@ mod encoder_tests {
             let offset = physical as usize * size;
             image[offset..offset + size].copy_from_slice(data);
         }
-        let result = root.join("target/qualification/inputs/ext4/encoded-journal-v3.ext4");
-        fs::create_dir_all(result.parent().unwrap()).unwrap();
-        fs::write(result, image).unwrap();
+        fs::write(input.join("encoded-journal-v3.ext4"), image).unwrap();
     }
 }
