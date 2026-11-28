@@ -339,6 +339,23 @@ mod tests {
 
     #[test]
     #[ignore = "requires the independently generated fixtures from build-journal.sh"]
+    fn scans_two_transactions_produced_by_debugfs() {
+        let (journal, uuid) = journal(&fixture("journal-v3-stream.ext4"));
+        let transactions = scan_transactions(&journal, &uuid, 4096).unwrap();
+        assert_eq!(transactions.len(), 2);
+        for (transaction, sequence, journal_block, marker) in [
+            (&transactions[0], 1, 2, b'P'),
+            (&transactions[1], 2, 5, b'R'),
+        ] {
+            assert_eq!(transaction.sequence, sequence);
+            assert_eq!(transaction.writes, [Write { journal_block, fs_block: 1195, escaped: false }]);
+            assert!(transaction.revokes.is_empty());
+            assert_eq!(block(&journal, journal_block, 4096).unwrap()[0], marker);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
     fn genuine_committed_transactions_and_corruption() {
         for (dirty, clean, target) in [("journal-v1.ext4", "basic.ext4", 1194), ("journal-v3.ext4", "large-address.ext4", 1195)] {
             let image = fixture(dirty);
