@@ -2,7 +2,7 @@
 
 use super::Vec;
 
-use super::{block, parse_internal_superblock, read_u32, InternalSuperblockError, JBD2_MAGIC, MAX_REVOKES, MAX_TAGS, MAX_TRANSACTION_BLOCKS};
+use super::{block, parse_internal_superblock, read_u32, InternalJournalSuperblock, InternalSuperblockError, JBD2_MAGIC, MAX_REVOKES, MAX_TAGS, MAX_TRANSACTION_BLOCKS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -139,31 +139,92 @@ pub fn first_transaction(
     uuid: &[u8; 16],
     filesystem_blocks: u64,
 ) -> Result<Transaction, Error> {
+    let sb = checked_superblock(journal, uuid)?;
+    let mut transaction = parse_transaction(journal, uuid, filesystem_blocks, &sb, sb.start, sb.sequence,
+        (sb.max_len - sb.first) as usize)?.ok_or(Error::Invalid)?.0;
+    transaction.writes.retain(|write| !transaction.revokes.contains(&write.fs_block));
+    Ok(transaction)
+}
+
+/// Scans committed transactions in journal order, preserving writes and revokes for recovery.
+/// A missing or stale header ends the scan; matching malformed records return an error.
+///
+/// # Errors
+/// Returns an error for unsupported or corrupt journal data or exceeded bounds.
+pub fn scan_transactions(
+    journal: &[u8],
+    uuid: &[u8; 16],
+    filesystem_blocks: u64,
+) -> Result<Vec<Transaction>, Error> {
+    let sb = checked_superblock(journal, uuid)?;
+    let mut position = sb.start;
+    let mut sequence = sb.sequence;
+    let ring_blocks = (sb.max_len - sb.first) as usize;
+    let mut remaining = ring_blocks.min(MAX_TRANSACTION_BLOCKS);
+    let mut writes = 0usize;
+    let mut revokes = 0usize;
+    let mut transactions = Vec::new();
+    while remaining > 0 {
+        let Some((transaction, next_position, consumed)) = parse_transaction(
+            journal, uuid, filesystem_blocks, &sb, position, sequence, remaining,
+        )? else { return Ok(transactions) };
+        writes += transaction.writes.len();
+        revokes += transaction.revokes.len();
+        if writes > MAX_TAGS || revokes > MAX_REVOKES { return Err(Error::LimitExceeded); }
+        transactions.push(transaction);
+        remaining -= consumed;
+        position = next_position;
+        sequence = sequence.wrapping_add(1);
+    }
+    if ring_blocks > MAX_TRANSACTION_BLOCKS { return Err(Error::LimitExceeded); }
+    Ok(transactions)
+}
+
+fn checked_superblock(journal: &[u8], uuid: &[u8; 16]) -> Result<InternalJournalSuperblock, Error> {
     let sb = parse_internal_superblock(journal, journal.len() as u64, uuid).map_err(Error::Superblock)?;
     if sb.errno != 0 || sb.start == 0 || sb.feature_incompat & 8 != 0
         || (sb.feature_compat & 1 == 0 && sb.feature_incompat & 16 == 0)
     {
         return Err(Error::Unsupported);
     }
+    Ok(sb)
+}
+
+fn parse_transaction(
+    journal: &[u8],
+    uuid: &[u8; 16],
+    filesystem_blocks: u64,
+    sb: &InternalJournalSuperblock,
+    start: u32,
+    sequence: u32,
+    available: usize,
+) -> Result<Option<(Transaction, u32, usize)>, Error> {
     let size = sb.block_size as usize;
     let v3 = sb.feature_incompat & 16 != 0;
     let wide = sb.feature_incompat & 2 != 0;
     let seed = crate::ext4_crc32c(!0, uuid);
     let mut old_crc = !0;
-    let mut position = sb.start;
+    let mut position = start;
     let mut consumed = 0usize;
     let mut writes = Vec::new();
     let mut revokes = Vec::new();
     let mut saw_record = false;
     let next = |n: u32| if n + 1 == sb.max_len { sb.first } else { n + 1 };
     loop {
-        if consumed >= MAX_TRANSACTION_BLOCKS || consumed >= (sb.max_len - sb.first) as usize {
+        if consumed >= MAX_TRANSACTION_BLOCKS || consumed >= available {
             return Err(Error::LimitExceeded);
         }
         let current = block(journal, position, size).ok_or(Error::Truncated)?;
         consumed += 1;
-        if read_u32(current, 0) != Some(JBD2_MAGIC) || read_u32(current, 8) != Some(sb.sequence) {
-            return Err(Error::Invalid);
+        let magic = read_u32(current, 0);
+        let record_sequence = read_u32(current, 8);
+        if magic != Some(JBD2_MAGIC) || record_sequence != Some(sequence) {
+            if magic != Some(JBD2_MAGIC) && record_sequence == Some(sequence)
+                && current.iter().any(|byte| *byte != 0)
+            {
+                return Err(Error::Invalid);
+            }
+            return Ok(None);
         }
         match read_u32(current, 4).ok_or(Error::Truncated)? {
             1 => {
@@ -212,11 +273,11 @@ pub fn first_transaction(
                 for (fs_block, flags, checksum) in tags {
                     position = next(position);
                     consumed += 1;
-                    if consumed > MAX_TRANSACTION_BLOCKS || consumed >= (sb.max_len - sb.first) as usize { return Err(Error::LimitExceeded); }
+                    if consumed > MAX_TRANSACTION_BLOCKS || consumed >= available { return Err(Error::LimitExceeded); }
                     let data = block(journal, position, size).ok_or(Error::Truncated)?;
                     if flags & 1 != 0 && data[..4] != [0; 4] { return Err(Error::Invalid); }
                     if v3 {
-                        let crc = crate::ext4_crc32c(seed, &sb.sequence.to_be_bytes());
+                        let crc = crate::ext4_crc32c(seed, &sequence.to_be_bytes());
                         if checksum != crate::ext4_crc32c(crc, data) { return Err(Error::Checksum); }
                     } else { old_crc = crc32_be(old_crc, data); }
                     writes.push(Write { journal_block: position, fs_block, escaped: flags & 1 != 0 });
@@ -245,8 +306,7 @@ pub fn first_transaction(
                 if v3 {
                     if current[12] != 0 || current[13] != 0 || expected != checksum_block(seed, current, 16) { return Err(Error::Checksum); }
                 } else if current[12] != 1 || current[13] != 4 || expected != old_crc { return Err(Error::Checksum); }
-                writes.retain(|write| !revokes.contains(&write.fs_block));
-                return Ok(Transaction { sequence: sb.sequence, writes, revokes });
+                return Ok(Some((Transaction { sequence, writes, revokes }, next(position), consumed)));
             }
             _ => return Err(Error::Invalid),
         }
@@ -260,9 +320,12 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     fn fixture(name: &str) -> Vec<u8> {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        for _ in 0..3 { path.pop(); }
-        path.push("target/qualification/inputs/ext4");
+        let mut path = std::env::var_os("ASTER_EXT4_FIXTURES").map(PathBuf::from).unwrap_or_else(|| {
+            let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            for _ in 0..3 { path.pop(); }
+            path.push("target/qualification/inputs/ext4");
+            path
+        });
         path.push(name);
         fs::read(path).unwrap()
     }
@@ -304,14 +367,60 @@ mod edge_tests {
     use std::{fs, path::PathBuf};
 
     fn v3() -> (Vec<u8>, [u8; 16]) {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        for _ in 0..3 { path.pop(); }
-        path.push("target/qualification/inputs/ext4/journal-v3.ext4");
+        let mut path = std::env::var_os("ASTER_EXT4_FIXTURES").map(PathBuf::from).unwrap_or_else(|| {
+            let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            for _ in 0..3 { path.pop(); }
+            path.push("target/qualification/inputs/ext4");
+            path
+        });
+        path.push("journal-v3.ext4");
         let image = fs::read(path).unwrap();
         let uuid = image[0x468..0x478].try_into().unwrap();
         let geometry = crate::reader::geometry(&image).unwrap();
         let inode = crate::reader::read_inode(&image, &geometry, 8).unwrap();
         (crate::reader::read_file(&image, &geometry, &inode).unwrap(), uuid)
+    }
+
+    fn put_transaction(journal: &mut [u8], uuid: &[u8; 16], position: usize, sequence: u32, target: u64) {
+        let payload = [7; 4096];
+        let blocks = encode_v3_transaction(4096, uuid, sequence, 4096, TargetWidth::Bits64,
+            &[MetadataBlock { fs_block: target, data: &payload }]).unwrap();
+        for (index, block) in blocks.iter().enumerate() {
+            let offset = (position + index) * 4096;
+            journal[offset..offset + 4096].copy_from_slice(block);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
+    fn scans_committed_transactions_and_stops_at_incomplete_or_stale_tail() {
+        let (mut journal, uuid) = v3();
+        put_transaction(&mut journal, &uuid, 4, 2, 1200);
+        let transactions = scan_transactions(&journal, &uuid, 4096).unwrap();
+        assert_eq!(transactions.len(), 2);
+        assert_eq!(transactions[0].sequence, 1);
+        assert_eq!(transactions[1].sequence, 2);
+        assert_eq!(transactions[1].writes[0].fs_block, 1200);
+        journal[6 * 4096..7 * 4096].fill(0);
+        assert_eq!(scan_transactions(&journal, &uuid, 4096).unwrap().len(), 1);
+        put_transaction(&mut journal, &uuid, 4, 7, 1200);
+        assert_eq!(scan_transactions(&journal, &uuid, 4096).unwrap().len(), 1);
+        put_transaction(&mut journal, &uuid, 4, 2, 1200);
+        journal[4 * 4096 + 20] ^= 1;
+        assert_eq!(scan_transactions(&journal, &uuid, 4096), Err(Error::Checksum));
+    }
+
+    #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
+    fn scans_sequence_wrap() {
+        let (mut journal, uuid) = v3();
+        journal[0x18..0x1c].copy_from_slice(&u32::MAX.to_be_bytes());
+        let checksum = checksum_block(!0, &journal[..1024], 0xfc);
+        journal[0xfc..0x100].copy_from_slice(&checksum.to_be_bytes());
+        put_transaction(&mut journal, &uuid, 1, u32::MAX, 1195);
+        put_transaction(&mut journal, &uuid, 4, 0, 1200);
+        let transactions = scan_transactions(&journal, &uuid, 4096).unwrap();
+        assert_eq!(transactions.iter().map(|tx| tx.sequence).collect::<Vec<_>>(), [u32::MAX, 0]);
     }
 
     fn tail(data: &mut [u8], seed: u32) {
@@ -340,6 +449,7 @@ mod edge_tests {
         tail(desc, seed);
         let tx = first_transaction(&journal, &uuid, 4096).unwrap();
         assert_eq!(tx.writes, [Write { journal_block: 1, fs_block: 1195, escaped: true }]);
+        assert_eq!(scan_transactions(&journal, &uuid, 4096).unwrap(), [tx]);
         let desc = &mut journal[1023 * size..1024 * size];
         desc[28] = 1;
         tail(desc, seed);
@@ -372,6 +482,9 @@ mod edge_tests {
         let tx = first_transaction(&journal, &uuid, 4096).unwrap();
         assert!(tx.writes.is_empty());
         assert_eq!(tx.revokes, [1195]);
+        let transactions = scan_transactions(&journal, &uuid, 4096).unwrap();
+        assert_eq!(transactions[0].writes[0].fs_block, 1195);
+        assert_eq!(transactions[0].revokes, [1195]);
         let revoke = &mut journal[3 * size..4 * size];
         revoke[12..16].copy_from_slice(&23u32.to_be_bytes());
         tail(revoke, seed);
