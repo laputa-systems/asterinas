@@ -15,7 +15,7 @@ from .accounting import CaseOutcome, RoleResult, reconcile
 from .adapter import validate_blklogwrites
 from .compare import compare_value, verify_comparison_claim
 from .evidence import EvidenceBundle
-from .ext_image import inspect_ext_marker
+from .ext_image import inspect_ext_marker, verify_pinned_replay
 from .lock import (
     CACHE_DIR,
     LOCK_PATH,
@@ -397,6 +397,10 @@ def execute_backend(
             raise RunFailure("Linux readback requires a captured producer image")
         adapter_image = bundle.root / artifact["path"]
         input_failures.extend(verify_copied_input_hashes({"producer disk": adapter_image}, {"producer disk": artifact["sha256"]}))
+        bundle.register_artifact(
+            f"{label}/producer-image.json",
+            (json.dumps({"producer_run_id": producer.stream_run_id, **artifact}, indent=2) + "\n").encode(),
+        )
     if input_failures:
         raise RunFailure("backend inputs changed before use: " + "; ".join(input_failures))
 
@@ -484,7 +488,7 @@ def execute_backend(
     final = ingestion.finals.get(case.case_id)
     if final is not None and isinstance(final.get("status"), str):
         final_status = final["status"]
-    image_failures: list[str] = []
+    image_failures = [f"producer image: {failure}" for failure in producer.image_failures] if producer else []
     if (
         "e2fsprogs-marker-readback" in case.validators and execution.adapter_disk is not None
         and execution.result.outcome == "exit" and execution.result.exit_code == 0
@@ -1274,11 +1278,13 @@ def run_persistence_controls(repo: Path, profile_name: str) -> int:
                     continue
                 crash = bundle.work_dir / f"{name}-crash.ext2"
                 log = bundle.artifacts_dir / f"{label}/blklogwrites.log"
-                cut = reconstruct_after_flush(inputs["adapter-disk.ext2"], log, crash)
+                seed = inputs["adapter-disk.ext2"]
+                cut = reconstruct_after_flush(seed, log, crash)
+                replays_agree = verify_pinned_replay(repo, bundle, label, seed=seed, log=log, expected=crash, cut=cut)
                 fsck_status, marker = inspect_ext_marker(repo, bundle, f"{name}-crash", crash)
                 controls[f"persistence:{name}-crash-cut"] = {
-                    "detected": fsck_status == 0 and marker == expected,
-                    "detail": f"cut after {cut} log records, e2fsck -fn exit {fsck_status}, /marker.txt={marker!r}",
+                    "detected": replays_agree and fsck_status == 0 and marker == expected,
+                    "detail": f"cut after {cut} log records, replay match={replays_agree}, e2fsck -fn exit {fsck_status}, /marker.txt={marker!r}",
                 }
 
         detected_count = sum(1 for item in controls.values() if item["detected"])
