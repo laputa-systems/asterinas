@@ -64,11 +64,24 @@ pub enum ReaderError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Geometry {
     pub block_size: usize,
+    pub blocks_count: u64,
     pub inodes_per_group: usize,
     pub inode_size: usize,
     pub blocks_per_group: usize,
     pub group_desc_size: usize,
     pub group_desc_table: usize,
+}
+
+impl Geometry {
+    /// Number of blocks that actually exist in a group, excluding the
+    /// unused tail of the on-disk bitmap beyond the device capacity.
+    pub fn usable_blocks(&self, group: usize) -> usize {
+        let start = (group as u64).saturating_mul(self.blocks_per_group as u64);
+        let available = self.blocks_count.saturating_sub(start);
+        usize::try_from(available)
+            .unwrap_or(usize::MAX)
+            .min(self.blocks_per_group)
+    }
 }
 
 fn le_u16(buf: &[u8], offset: usize) -> Option<u16> {
@@ -92,6 +105,13 @@ pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> 
         return Err(ReaderError::BadBlockSize);
     }
     let block_size = 1024usize << log_block_size;
+    let blocks_count_lo = le_u32(&sb, 0x04).ok_or(ReaderError::Truncated)? as u64;
+    let blocks_count_hi = if le_u32(&sb, 0x60).ok_or(ReaderError::Truncated)? & (1 << 7) != 0 {
+        le_u32(&sb, 0x150).ok_or(ReaderError::Truncated)? as u64
+    } else {
+        0
+    };
+    let blocks_count = blocks_count_lo | (blocks_count_hi << 32);
     let inodes_per_group = le_u32(&sb, 0x28).ok_or(ReaderError::Truncated)? as usize;
     let inode_size = le_u16(&sb, 0x58).ok_or(ReaderError::Truncated)? as usize;
     let blocks_per_group = le_u32(&sb, 0x20).ok_or(ReaderError::Truncated)? as usize;
@@ -101,6 +121,7 @@ pub fn geometry_from(reader: &dyn BlockReader) -> Result<Geometry, ReaderError> 
     let group_desc_table = block_size * ((1024 + 1024 + block_size - 1) / block_size);
     Ok(Geometry {
         block_size,
+        blocks_count,
         inodes_per_group,
         inode_size,
         blocks_per_group,
@@ -228,6 +249,41 @@ pub fn block_bitmap_offset_from(
     let bitmap_block = le_u32(&desc, 0x00).ok_or(ReaderError::Truncated)? as u64;
     bitmap_block
         .checked_mul(geom.block_size as u64)
+        .ok_or(ReaderError::Truncated)
+}
+
+/// Byte offset of a group's inode-allocation bitmap.
+pub fn inode_bitmap_offset_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    group: usize,
+) -> Result<u64, ReaderError> {
+    let desc_start = geom
+        .group_desc_table
+        .checked_add(
+            group
+                .checked_mul(geom.group_desc_size)
+                .ok_or(ReaderError::Truncated)?,
+        )
+        .ok_or(ReaderError::Truncated)?;
+    let desc = reader
+        .read_at(desc_start as u64, geom.group_desc_size)
+        .ok_or(ReaderError::Truncated)?;
+    let bitmap_block = le_u32(&desc, 0x04).ok_or(ReaderError::Truncated)? as u64;
+    bitmap_block
+        .checked_mul(geom.block_size as u64)
+        .ok_or(ReaderError::Truncated)
+}
+
+/// Reads the inode-allocation bitmap for a group.
+pub fn read_inode_bitmap_from(
+    reader: &dyn BlockReader,
+    geom: &Geometry,
+    group: usize,
+) -> Result<Vec<u8>, ReaderError> {
+    let start = inode_bitmap_offset_from(reader, geom, group)?;
+    reader
+        .read_at(start, geom.block_size)
         .ok_or(ReaderError::Truncated)
 }
 

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "name": "ext4-alloc",
+  "inherits": [],
+  "cases": [
+    "ext4.alloc"
+  ],
+  "excludes": []
+}

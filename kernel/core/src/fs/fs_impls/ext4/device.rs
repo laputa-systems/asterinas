@@ -68,11 +68,17 @@ impl BlockWriter for DeviceReader {
         let last = end.div_ceil(BLOCK_SIZE);
         let nblocks = last.checked_sub(first)?;
 
+        let inner = offset - first * BLOCK_SIZE;
+        let total = nblocks * BLOCK_SIZE;
+        let mut buffer = self.read_at(first as u64 * BLOCK_SIZE as u64, total)?;
+        buffer
+            .get_mut(inner..inner.checked_add(data.len())?)
+            .map(|slot| slot.copy_from_slice(data))?;
+
         let segment = BioSegment::alloc(nblocks, BioDirection::ToDevice);
         {
             let mut writer = segment.writer().ok()?;
-            writer.skip(offset - first * BLOCK_SIZE);
-            let mut reader = VmReader::from(data).to_fallible();
+            let mut reader = VmReader::from(buffer.as_slice()).to_fallible();
             writer.write_fallible(&mut reader).ok()?;
         }
         let status = self

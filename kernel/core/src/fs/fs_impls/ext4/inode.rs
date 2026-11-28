@@ -11,9 +11,12 @@ use core::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 use aster_ext4::{
     jbd2::JOURNAL_BLOCK_SIZE,
+    dir_edit,
+    extent_edit::BlockAllocator,
     reader::{
-        DiskEntryType, DirEntry, Inode as RawInode, fast_symlink, inode_number_to_group,
-        lookup_from, read_dir_from, read_file_from, read_inode_from,
+        BlockWriter, DiskEntryType, EXTENT_MAGIC, DirEntry, Inode as RawInode, fast_symlink,
+        inode_bitmap_offset_from, inode_number_to_group, inode_offset_from, lookup_from,
+        read_dir_from, read_file_from, read_inode_bitmap_from, read_inode_from,
     },
     write::{WriteEngine, WriteError},
 };
@@ -102,6 +105,63 @@ impl Ext4Inode {
 
     fn fs(&self) -> Result<Arc<Ext4>> {
         self.fs.upgrade().ok_or_else(|| errno!(EIO, "ext4 filesystem is gone"))
+    }
+
+    fn allocate_inode(&self, fs: &Ext4, type_: InodeType, mode: InodeMode) -> Result<u32> {
+        let geom = fs.geometry();
+        let group = 0usize;
+        let bitmap = read_inode_bitmap_from(fs.reader().as_ref(), geom, group)
+            .map_err(|_| errno!(EIO, "failed to read ext4 inode bitmap"))?;
+        let mut allocator = BlockAllocator::from_bitmap(&bitmap, geom.inodes_per_group);
+        let index = allocator
+            .allocate()
+            .ok_or_else(|| errno!(ENOSPC, "ext4 inodes exhausted"))?;
+        let ino = (group as u32)
+            .saturating_mul(geom.inodes_per_group as u32)
+            .saturating_add(index as u32)
+            .saturating_add(1);
+
+        let offset = inode_offset_from(fs.reader().as_ref(), geom, ino)
+            .map_err(|_| errno!(EIO, "new ext4 inode is out of range"))?;
+        let mut raw = vec![0u8; geom.inode_size];
+        let encoded_mode = mode.bits() | (type_ as u16);
+        raw[0..2].copy_from_slice(&encoded_mode.to_le_bytes());
+        raw[0x1A..0x1C].copy_from_slice(&1u16.to_le_bytes());
+        let tree = &mut raw[0x28..0x28 + 60];
+        tree[0..2].copy_from_slice(&EXTENT_MAGIC.to_le_bytes());
+        tree[4..6].copy_from_slice(&4u16.to_le_bytes());
+        fs.reader()
+            .write_at(offset, &raw)
+            .ok_or_else(|| errno!(EIO, "failed to write ext4 inode"))?;
+
+        let bitmap_offset = inode_bitmap_offset_from(fs.reader().as_ref(), geom, group)
+            .map_err(|_| errno!(EIO, "failed to locate ext4 inode bitmap"))?;
+        let mut updated = bitmap;
+        let index = index as usize;
+        if let Some(byte) = updated.get_mut(index / 8) {
+            *byte |= 1 << (index % 8);
+        }
+        fs.reader()
+            .write_at(bitmap_offset, &updated)
+            .ok_or_else(|| errno!(EIO, "failed to update ext4 inode bitmap"))?;
+        Ok(ino)
+    }
+
+    fn rewrite_dir(&self, fs: &Ext4, data: &[u8]) -> Result<()> {
+        let raw = Self::read_raw(fs, self.number)?;
+        let (group, _) = inode_number_to_group(fs.geometry(), self.number);
+        let engine = WriteEngine::new(
+            fs.reader().as_ref(),
+            fs.reader().as_ref(),
+            fs.geometry(),
+            &raw,
+            group,
+        );
+        engine
+            .write_at(0, data)
+            .map_err(|_| errno!(EIO, "failed to write ext4 directory"))?;
+        self.refresh(&Self::read_raw(fs, self.number)?);
+        Ok(())
     }
 
     fn read_all(&self) -> Result<Vec<u8>> {
@@ -293,6 +353,52 @@ impl Inode for Ext4Inode {
     }
 
     fn set_ctime(&self, _self_dentry: &Dentry, _time: FileTime) {}
+
+    fn create(
+        &self,
+        _self_dentry: &Dentry,
+        name: &str,
+        type_: InodeType,
+        mode: InodeMode,
+    ) -> Result<Arc<dyn Inode>> {
+        self.create_bytes(_self_dentry, name.as_bytes(), type_, mode)
+    }
+
+    fn create_bytes(
+        &self,
+        _self_dentry: &Dentry,
+        name: &[u8],
+        type_: InodeType,
+        mode: InodeMode,
+    ) -> Result<Arc<dyn Inode>> {
+        if self.type_() != InodeType::Dir {
+            return Err(errno!(ENOTDIR));
+        }
+        let fs = self.fs()?;
+        if !fs.writable() {
+            return Err(errno!(EROFS, "ext4 mounts are read-only"));
+        }
+        let ino = self.allocate_inode(&fs, type_, mode)?;
+        let data = self.read_all()?;
+        let updated = dir_edit::add(&data, ino, name, type_ as u8, fs.geometry().block_size)
+            .map_err(|_| errno!(EIO, "failed to add ext4 directory entry"))?;
+        self.rewrite_dir(&fs, &updated)?;
+        Ext4Inode::try_new(fs, ino)
+    }
+
+    fn unlink(&self, child_dentry: &Dentry) -> Result<()> {
+        if self.type_() != InodeType::Dir {
+            return Err(errno!(ENOTDIR));
+        }
+        let fs = self.fs()?;
+        if !fs.writable() {
+            return Err(errno!(EROFS, "ext4 mounts are read-only"));
+        }
+        let data = self.read_all()?;
+        let updated = dir_edit::remove(&data, &child_dentry.name_bytes(), fs.geometry().block_size)
+            .map_err(|_| errno!(ENOENT, "ext4 directory entry not found"))?;
+        self.rewrite_dir(&fs, &updated)
+    }
 
     fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         self.lookup_bytes(name.as_bytes())

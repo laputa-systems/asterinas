@@ -78,7 +78,7 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
 
         let bitmap = read_block_bitmap_from(self.reader, self.geom, self.group)
             .map_err(|_| WriteError::Io)?;
-        let mut allocator = BlockAllocator::from_bitmap(&bitmap, self.geom.blocks_per_group);
+        let mut allocator = BlockAllocator::from_bitmap(&bitmap, self.geom.usable_blocks(self.group));
         let mut physical = Vec::with_capacity(nr_blocks);
         for _ in 0..nr_blocks {
             physical.push(allocator.allocate().ok_or(WriteError::NoSpace)?);
