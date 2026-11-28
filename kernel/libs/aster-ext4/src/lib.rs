@@ -99,6 +99,7 @@ pub struct Info {
     pub free_blocks_count: u64,
     pub free_inodes_count: u32,
     pub reserved_blocks_count: u64,
+    pub journal_inum: u32,
     pub features_compat: u32,
     pub features_incompat: u32,
     pub features_ro_compat: u32,
@@ -197,6 +198,7 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
     let free_blocks_count = free_blocks_lo | (free_blocks_hi << 32);
     let reserved_blocks_count = reserved_blocks_lo | (reserved_blocks_hi << 32);
     let free_inodes_count = read_u32(&sb, 0x10)?;
+    let journal_inum = read_u32(&sb, 0xE0)?;
     if blocks_per_group == 0 || inodes_per_group == 0 {
         return Err(Error::BadBlockSize);
     }
@@ -210,6 +212,7 @@ pub fn analyze_from(reader: &dyn BlockReader) -> Result<Info, Error> {
         free_blocks_count,
         free_inodes_count,
         reserved_blocks_count,
+        journal_inum,
         features_compat,
         features_incompat,
         features_ro_compat,
@@ -310,6 +313,16 @@ mod tests {
     #[test]
     fn crc32c_matches_known_vector() {
         assert_eq!(crc32c(0, b"123456789"), 0xE306_9283);
+    }
+
+    #[test]
+    fn locates_internal_journal_inode() {
+        let image = fixture("basic");
+        let info = analyze(&image).unwrap();
+        assert_eq!(info.journal_inum, 8);
+        let geom = reader::geometry(&image).unwrap();
+        let inode = reader::read_inode(&image, &geom, info.journal_inum).unwrap();
+        assert!(!reader::extent_tree(&image, &geom, &inode).unwrap().is_empty());
     }
 
     #[test]

@@ -5,7 +5,7 @@
 use aster_block::{BlockDevice, bio::BioStatus};
 use aster_ext4::{
     MAGIC as EXT4_MAGIC,
-    reader::geometry_from,
+    reader::{extent_tree_from, geometry_from, read_inode_from},
 };
 
 use super::{device::DeviceReader, inode::Ext4Inode};
@@ -27,6 +27,7 @@ pub(super) struct Ext4 {
     geometry: aster_ext4::reader::Geometry,
     flags: FsFlags,
     writable: bool,
+    journal_start: u64,
     fs_event_subscriber_stats: FsEventSubscriberStats,
     self_ref: Weak<Self>,
 }
@@ -48,6 +49,19 @@ impl Ext4 {
         if !matches!(block_size, 1024 | 2048 | 4096) {
             return Err(errno!(EINVAL, "unsupported ext4 block size"));
         }
+        let journal_start = if writable {
+            let journal_inode = read_inode_from(reader.as_ref(), &geometry, info.journal_inum)
+                .map_err(|_| errno!(EINVAL, "cannot read ext4 journal inode"))?;
+            let extents = extent_tree_from(reader.as_ref(), &geometry, &journal_inode)
+                .map_err(|_| errno!(EINVAL, "cannot read ext4 journal extents"))?;
+            let first = extents.first().ok_or_else(|| errno!(EINVAL, "ext4 journal has no extents"))?;
+            first
+                .physical_block
+                .checked_mul(block_size as u64)
+                .ok_or_else(|| errno!(EINVAL, "ext4 journal offset overflow"))?
+        } else {
+            0
+        };
 
         Ok(Arc::new_cyclic(|self_ref| Self {
             device,
@@ -60,6 +74,7 @@ impl Ext4 {
                 FsFlags::RDONLY
             },
             writable,
+            journal_start,
             fs_event_subscriber_stats: FsEventSubscriberStats::new(),
             self_ref: self_ref.clone(),
         }))
@@ -79,6 +94,10 @@ impl Ext4 {
 
     pub(super) fn writable(&self) -> bool {
         self.writable
+    }
+
+    pub(super) fn journal_start(&self) -> u64 {
+        self.journal_start
     }
 
     pub(super) fn upgrade(&self) -> Option<Arc<Self>> {

@@ -7,6 +7,7 @@ use aster_ext4::{
         DiskEntryType, DirEntry, Inode as RawInode, fast_symlink, inode_number_to_group,
         lookup_from, read_dir_from, read_file_from, read_inode_from,
     },
+    jbd2::JOURNAL_BLOCK_SIZE,
     write::{WriteEngine, WriteError},
 };
 use super::fs::Ext4;
@@ -106,7 +107,14 @@ impl FileOps for Ext4Inode {
             &self.raw,
             group,
         );
-        match engine.write_at(offset, &data) {
+        let mut journal = vec![0u8; 8 * JOURNAL_BLOCK_SIZE];
+        match engine.write_at_journaled_to(
+            offset,
+            &data,
+            &mut journal,
+            fs.reader().as_ref(),
+            fs.journal_start(),
+        ) {
             Ok(()) => Ok(written),
             Err(WriteError::NoSpace) => Err(errno!(ENOSPC, "ext4 journal or data space exhausted")),
             Err(WriteError::TooLarge) => Err(errno!(EINVAL, "ext4 write exceeds the supported size")),

@@ -159,13 +159,7 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
     /// records are emitted into `journal`. The journal record is parseable by
     /// `jbd2::recovery_plan`, giving the write path one on-disk contract with
     /// recovery.
-    pub fn write_at_journaled(
-        &self,
-        offset: usize,
-        data: &[u8],
-        journal: &mut [u8],
-    ) -> Result<(), WriteError> {
-        let prepared = self.prepare(offset, data)?;
+    fn journal_prepared(&self, prepared: &Prepared, journal: &mut [u8]) -> Result<(), WriteError> {
         let total = journal.len() / JOURNAL_BLOCK_SIZE;
         let mut tx = Transaction::begin(self.inode.generation, total);
         tx.reserve_credits(prepared.physical.len() as u32 + 2)
@@ -173,14 +167,42 @@ impl<'a, R: BlockReader, W: BlockWriter> WriteEngine<'a, R, W> {
         let block_size = self.geom.block_size;
         for (index, block) in prepared.physical.iter().enumerate() {
             let mut buffer = vec![0u8; block_size];
-            let start = index * block_size;
-            let stop = (start + block_size).min(prepared.content.len());
-            buffer[..stop - start].copy_from_slice(&prepared.content[start..stop]);
+            let begin = index * block_size;
+            let stop = (begin + block_size).min(prepared.content.len());
+            buffer[..stop - begin].copy_from_slice(&prepared.content[begin..stop]);
             tx.add_ordered_data(*block, buffer)
                 .map_err(|_| WriteError::NoSpace)?;
-            let _ = index;
         }
         tx.commit(journal).map_err(|_| WriteError::NoSpace)?;
+        Ok(())
+    }
+
+    pub fn write_at_journaled(
+        &self,
+        offset: usize,
+        data: &[u8],
+        journal: &mut [u8],
+    ) -> Result<(), WriteError> {
+        let prepared = self.prepare(offset, data)?;
+        self.journal_prepared(&prepared, journal)?;
+        self.apply(&prepared)
+    }
+
+    /// Emits the journal record and writes it to a journal region before
+    /// applying the data and metadata updates.
+    pub fn write_at_journaled_to(
+        &self,
+        offset: usize,
+        data: &[u8],
+        journal: &mut [u8],
+        journal_writer: &dyn BlockWriter,
+        journal_start: u64,
+    ) -> Result<(), WriteError> {
+        let prepared = self.prepare(offset, data)?;
+        self.journal_prepared(&prepared, journal)?;
+        journal_writer
+            .write_at(journal_start, journal)
+            .ok_or(WriteError::Io)?;
         self.apply(&prepared)
     }
 }
