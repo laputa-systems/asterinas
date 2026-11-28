@@ -1677,6 +1677,7 @@ int main(void) {
         run_ext4_multigroup_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_SPARSE_CASE_ID) == 0) {
         run_ext4_sparse_case(run_id, nonce, manifest_hash, payload_hash);
+
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT2_SPARSE_CASE_ID) == 0) {

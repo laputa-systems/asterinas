@@ -23,12 +23,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "c8b635349c06953c5a4c1aeeeab5a41710679e2eaa766ce173358ff9e2e00d85",
+    "kernel_sha256": "7ca942400b139da047ade7ca43145840e3ce53c2083b15b8a22efe542744f359",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "9bfb6460803f782719d5f921b590413751520711631d3d360c87c3ce5ed2ac49"
+    "source_tree_sha256": "a97c5f54e87f0e90f17e18a4733e0f93b95a632d3a1ad71d116adabba522af0e"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -80,7 +80,7 @@
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "b319a4615bac82628b7f882b61e9cac073ed3f5d4ad943445c48588c4f2c8f92"
+    "source_sha256": "c30d52aed6e0091dc19672dfcdc76862a8348ed320d0fbf78c763205b99014ea"
   },
   "python": {
     "minimum_version": "3.11"
