@@ -329,12 +329,9 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     fn fixture(name: &str) -> Vec<u8> {
-        let mut path = std::env::var_os("ASTER_EXT4_FIXTURES").map(PathBuf::from).unwrap_or_else(|| {
-            let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            for _ in 0..3 { path.pop(); }
-            path.push("target/qualification/inputs/ext4");
-            path
-        });
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for _ in 0..3 { path.pop(); }
+        path.push("target/qualification/inputs/ext4");
         path.push(name);
         fs::read(path).unwrap()
     }
@@ -393,12 +390,9 @@ mod edge_tests {
     use std::{fs, path::PathBuf};
 
     fn v3() -> (Vec<u8>, [u8; 16]) {
-        let mut path = std::env::var_os("ASTER_EXT4_FIXTURES").map(PathBuf::from).unwrap_or_else(|| {
-            let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            for _ in 0..3 { path.pop(); }
-            path.push("target/qualification/inputs/ext4");
-            path
-        });
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for _ in 0..3 { path.pop(); }
+        path.push("target/qualification/inputs/ext4");
         path.push("journal-v3.ext4");
         let image = fs::read(path).unwrap();
         let uuid = image[0x468..0x478].try_into().unwrap();

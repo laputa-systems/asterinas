@@ -23,14 +23,14 @@ for profile in v1 v3 v3-stream; do
     "$tools/bin/e2fsck" -fn "$fixture"
     data_block=$("$tools/bin/debugfs" -R 'bmap /marker.txt 0' "$fixture")
     test "$data_block" -gt 0
-    dd if="$fixture" of="$scratch/payload" bs=4096 skip="$data_block" count=1 status=none
-    printf P | dd of="$scratch/payload" conv=notrunc status=none
+    dd if="$fixture" of="$scratch/payload" bs=4096 skip="$data_block" count=1
+    printf P | dd of="$scratch/payload" conv=notrunc
     cp "$fixture" "$scratch/dirty.ext4"
     {
         printf 'journal_open -c -v 3\njournal_write -b %s %s/payload\n' "$data_block" "$scratch"
         if [ "$profile" = v3-stream ]; then
             cp "$scratch/payload" "$scratch/next-payload"
-            printf R | dd of="$scratch/next-payload" conv=notrunc status=none
+            printf R | dd of="$scratch/next-payload" conv=notrunc
             printf 'journal_write -b %s %s/next-payload\n' "$data_block" "$scratch"
             marker=Rc14-large-address
         fi
