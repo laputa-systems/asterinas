@@ -23,14 +23,14 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "1bcb9232fb7cd8a5706063f018a55e93e6a80f414a8e94af02eed68fa9426ca0",
+    "kernel_sha256": "c09f68ecc9aab0f72ffa54568ad2d0bfc268645851f620e2ab890a2506c60edd",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
     "rw_kernel_path": "target/qualification/inputs/cache/asterinas-kernel-rw",
-    "rw_kernel_sha256": "1c62327f708d076c315d157f5f07c5d66a21b371199b6b9880c2ab832140cb1b",
-    "source_tree_sha256": "a07cbe5fe49cb636b46e985dc7bee1de5030106d95edbfb9fa8b388e71ab31aa"
+    "rw_kernel_sha256": "78e436b3f015452c77d0ba2ee822c880f36e5eda1037d70ab21383b76282f562",
+    "source_tree_sha256": "b0e9db18450366b2f5120365160851b721a021051fd62090cf72389e611c3c36"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
