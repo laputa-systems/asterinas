@@ -33,4 +33,5 @@ for version in 1 3; do
     "$tools/bin/e2fsck" -fn "$scratch/reference.ext4"
     test "$("$tools/bin/debugfs" -R 'cat /marker.txt' "$scratch/reference.ext4")" = "$marker"
     mv "$scratch/dirty.ext4" "$directory/journal-v$version.ext4"
+    sha256sum "$directory/journal-v$version.ext4"
 done

@@ -58,7 +58,11 @@ fn checksum_block(seed: u32, data: &[u8], offset: usize) -> u32 {
 ///
 /// # Errors
 /// Returns an error for unsupported, incomplete, or corrupt journal data.
-pub fn first_transaction(journal: &[u8], uuid: &[u8; 16]) -> Result<Transaction, Error> {
+pub fn first_transaction(
+    journal: &[u8],
+    uuid: &[u8; 16],
+    filesystem_blocks: u64,
+) -> Result<Transaction, Error> {
     let sb = parse_internal_superblock(journal, journal.len() as u64, uuid).map_err(Error::Superblock)?;
     if sb.errno != 0 || sb.start == 0 || sb.feature_incompat & 8 != 0
         || (sb.feature_compat & 1 == 0 && sb.feature_incompat & 16 == 0)
@@ -95,6 +99,7 @@ pub fn first_transaction(journal: &[u8], uuid: &[u8; 16]) -> Result<Transaction,
                 let end = size - if v3 { 4 } else { 0 };
                 let mut cursor = 12;
                 let mut tags = Vec::new();
+                let mut have_uuid = false;
                 loop {
                     let tag_size = if v3 { 16 } else if wide { 12 } else { 8 };
                     if cursor + tag_size > end { return Err(Error::Invalid); }
@@ -108,10 +113,23 @@ pub fn first_transaction(journal: &[u8], uuid: &[u8; 16]) -> Result<Transaction,
                     let checksum = if v3 { read_u32(current, cursor + 12).ok_or(Error::Truncated)? } else { 0 };
                     cursor += tag_size;
                     if flags & 2 == 0 {
-                        if cursor + 16 > end { return Err(Error::Invalid); }
+                        if cursor + 16 > end {
+                            return Err(Error::Invalid);
+                        }
+                        let tag_uuid = &current[cursor..cursor + 16];
+                        if tag_uuid != uuid && tag_uuid != [0; 16] {
+                            return Err(Error::Invalid);
+                        }
+                        have_uuid = true;
                         cursor += 16;
+                    } else if !have_uuid {
+                        return Err(Error::Invalid);
                     }
-                    tags.push((u64::from(low) | (u64::from(high) << 32), flags, checksum));
+                    let target = u64::from(low) | (u64::from(high) << 32);
+                    if target >= filesystem_blocks {
+                        return Err(Error::Invalid);
+                    }
+                    tags.push((target, flags, checksum));
                     if writes.len() + tags.len() > MAX_TAGS { return Err(Error::LimitExceeded); }
                     if flags & 8 != 0 { break; }
                 }
@@ -138,6 +156,9 @@ pub fn first_transaction(journal: &[u8], uuid: &[u8; 16]) -> Result<Transaction,
                 for offset in (16..count).step_by(width) {
                     let first = u64::from(read_u32(current, offset).ok_or(Error::Truncated)?);
                     let target = if wide { (first << 32) | u64::from(read_u32(current, offset + 4).ok_or(Error::Truncated)?) } else { first };
+                    if target >= filesystem_blocks {
+                        return Err(Error::Invalid);
+                    }
                     revokes.push(target);
                     if revokes.len() > MAX_REVOKES { return Err(Error::LimitExceeded); }
                 }
@@ -178,11 +199,12 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
     fn genuine_committed_transactions_and_corruption() {
         for (dirty, clean, target) in [("journal-v1.ext4", "basic.ext4", 1194), ("journal-v3.ext4", "large-address.ext4", 1195)] {
             let image = fixture(dirty);
             let (mut data, uuid) = journal(&image);
-            let transaction = first_transaction(&data, &uuid).unwrap();
+            let transaction = first_transaction(&data, &uuid, 4096).unwrap();
             assert_eq!(transaction.sequence, 1);
             assert_eq!(transaction.writes, [Write { journal_block: 2, fs_block: target, escaped: false }]);
             let clean_image = fixture(clean);
@@ -191,10 +213,11 @@ mod tests {
             assert_eq!(&data[8192..12288], expected);
             for offset in [4096, 4096 + 12, 8192, 12288 + 16] {
                 data[offset] ^= 1;
-                assert!(first_transaction(&data, &uuid).is_err(), "{dirty} offset {offset}");
+                assert!(first_transaction(&data, &uuid, 4096).is_err(), "{dirty} offset {offset}");
                 data[offset] ^= 1;
             }
-            assert!(first_transaction(&data[..12288], &uuid).is_err());
+            assert!(first_transaction(&data[..12288], &uuid, 4096).is_err());
+            assert_eq!(first_transaction(&data, &uuid, target), Err(Error::Invalid));
         }
     }
 }
@@ -222,6 +245,7 @@ mod edge_tests {
     }
 
     #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
     fn wraps_and_restores_escaped_payload() {
         let (mut journal, uuid) = v3();
         let size = 4096;
@@ -238,13 +262,21 @@ mod edge_tests {
         desc[16..20].copy_from_slice(&9u32.to_be_bytes());
         desc[24..28].copy_from_slice(&crc.to_be_bytes());
         tail(desc, seed);
-        let tx = first_transaction(&journal, &uuid).unwrap();
+        let tx = first_transaction(&journal, &uuid, 4096).unwrap();
         assert_eq!(tx.writes, [Write { journal_block: 1, fs_block: 1195, escaped: true }]);
+        let desc = &mut journal[1023 * size..1024 * size];
+        desc[28] = 1;
+        tail(desc, seed);
+        assert_eq!(first_transaction(&journal, &uuid, 4096), Err(Error::Invalid));
+        let desc = &mut journal[1023 * size..1024 * size];
+        desc[28] = 0;
+        tail(desc, seed);
         journal[size] = 1;
-        assert!(first_transaction(&journal, &uuid).is_err());
+        assert!(first_transaction(&journal, &uuid, 4096).is_err());
     }
 
     #[test]
+    #[ignore = "requires the independently generated fixtures from build-journal.sh"]
     fn decodes_wide_revokes_and_rejects_invalid_counts() {
         let (mut journal, uuid) = v3();
         let size = 4096;
@@ -261,12 +293,12 @@ mod edge_tests {
         revoke[12..16].copy_from_slice(&24u32.to_be_bytes());
         revoke[16..24].copy_from_slice(&1195u64.to_be_bytes());
         tail(revoke, seed);
-        let tx = first_transaction(&journal, &uuid).unwrap();
+        let tx = first_transaction(&journal, &uuid, 4096).unwrap();
         assert!(tx.writes.is_empty());
         assert_eq!(tx.revokes, [1195]);
         let revoke = &mut journal[3 * size..4 * size];
         revoke[12..16].copy_from_slice(&23u32.to_be_bytes());
         tail(revoke, seed);
-        assert_eq!(first_transaction(&journal, &uuid), Err(Error::Invalid));
+        assert_eq!(first_transaction(&journal, &uuid, 4096), Err(Error::Invalid));
     }
 }
