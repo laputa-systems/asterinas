@@ -52,6 +52,81 @@ fn checksum_block(seed: u32, data: &[u8], offset: usize) -> u32 {
     crate::ext4_crc32c(crc, &data[offset + 4..])
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetWidth {
+    Bits32,
+    Bits64,
+}
+
+pub struct MetadataBlock<'a> {
+    pub fs_block: u64,
+    pub data: &'a [u8],
+}
+
+/// Encodes one v3 transaction as a descriptor, payload blocks, and commit.
+///
+/// # Errors
+/// Returns an error if the blocks, targets, or descriptor exceed the supported bounds.
+pub fn encode_v3_transaction(
+    block_size: usize,
+    uuid: &[u8; 16],
+    sequence: u32,
+    filesystem_blocks: u64,
+    target_width: TargetWidth,
+    metadata: &[MetadataBlock<'_>],
+) -> Result<Vec<Vec<u8>>, Error> {
+    if !(1024..=crate::MAX_BLOCK_SIZE).contains(&block_size) || !block_size.is_power_of_two()
+        || *uuid == [0; 16] || metadata.is_empty()
+    {
+        return Err(Error::Invalid);
+    }
+    if metadata.len() > MAX_TAGS || metadata.len() + 2 > MAX_TRANSACTION_BLOCKS
+        || metadata.len() > (block_size - 32) / 16
+    {
+        return Err(Error::LimitExceeded);
+    }
+    for entry in metadata {
+        if entry.data.len() != block_size || entry.fs_block >= filesystem_blocks
+            || (target_width == TargetWidth::Bits32 && entry.fs_block > u64::from(u32::MAX))
+        {
+            return Err(Error::Invalid);
+        }
+    }
+    let seed = crate::ext4_crc32c(!0, uuid);
+    let payload_seed = crate::ext4_crc32c(seed, &sequence.to_be_bytes());
+    let mut descriptor = super::alloc::vec![0; block_size];
+    descriptor[..4].copy_from_slice(&JBD2_MAGIC.to_be_bytes());
+    descriptor[4..8].copy_from_slice(&1u32.to_be_bytes());
+    descriptor[8..12].copy_from_slice(&sequence.to_be_bytes());
+    let mut blocks = Vec::with_capacity(metadata.len() + 2);
+    for (index, entry) in metadata.iter().enumerate() {
+        let mut payload = entry.data.to_vec();
+        let escaped = payload[..4] == JBD2_MAGIC.to_be_bytes();
+        if escaped { payload[..4].fill(0); }
+        let flags = u32::from(escaped) | if index == 0 { 0 } else { 2 }
+            | if index + 1 == metadata.len() { 8 } else { 0 };
+        let offset = 12 + index * 16 + if index == 0 { 0 } else { 16 };
+        descriptor[offset..offset + 4].copy_from_slice(&(entry.fs_block as u32).to_be_bytes());
+        descriptor[offset + 4..offset + 8].copy_from_slice(&flags.to_be_bytes());
+        descriptor[offset + 8..offset + 12].copy_from_slice(&((entry.fs_block >> 32) as u32).to_be_bytes());
+        let checksum = crate::ext4_crc32c(payload_seed, &payload);
+        descriptor[offset + 12..offset + 16].copy_from_slice(&checksum.to_be_bytes());
+        if index == 0 { descriptor[offset + 16..offset + 32].copy_from_slice(uuid); }
+        blocks.push(payload);
+    }
+    let checksum = checksum_block(seed, &descriptor, block_size - 4);
+    descriptor[block_size - 4..].copy_from_slice(&checksum.to_be_bytes());
+    blocks.insert(0, descriptor);
+    let mut commit = super::alloc::vec![0; block_size];
+    commit[..4].copy_from_slice(&JBD2_MAGIC.to_be_bytes());
+    commit[4..8].copy_from_slice(&2u32.to_be_bytes());
+    commit[8..12].copy_from_slice(&sequence.to_be_bytes());
+    let checksum = checksum_block(seed, &commit, 16);
+    commit[16..20].copy_from_slice(&checksum.to_be_bytes());
+    blocks.push(commit);
+    Ok(blocks)
+}
+
 /// Validates and returns the first committed transaction in an internal journal.
 /// The caller must account for later transactions and revokes before replaying writes.
 /// Escaped writes require restoring the JBD2 magic at the start of the payload.
@@ -300,5 +375,82 @@ mod edge_tests {
         revoke[12..16].copy_from_slice(&23u32.to_be_bytes());
         tail(revoke, seed);
         assert_eq!(first_transaction(&journal, &uuid, 4096), Err(Error::Invalid));
+    }
+}
+
+#[cfg(test)]
+mod encoder_tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+
+    #[test]
+    fn rejects_invalid_inputs_and_encodes_escaped_blocks() {
+        let uuid = [1; 16];
+        let mut data = super::super::alloc::vec![7; 1024];
+        data[..4].copy_from_slice(&JBD2_MAGIC.to_be_bytes());
+        let entry = MetadataBlock { fs_block: 4, data: &data };
+        let blocks = encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap();
+        assert_eq!(&blocks[1][..4], &[0; 4]);
+        assert_eq!(read_u32(&blocks[0], 16), Some(9));
+        let checksum_seed = crate::ext4_crc32c(crate::ext4_crc32c(!0, &uuid), &9u32.to_be_bytes());
+        assert_eq!(read_u32(&blocks[0], 24), Some(crate::ext4_crc32c(checksum_seed, &blocks[1])));
+        let entries = [MetadataBlock { fs_block: 4, data: &data }, MetadataBlock { fs_block: (1 << 32) + 5, data: &data }];
+        let blocks = encode_v3_transaction(1024, &uuid, 9, u64::MAX, TargetWidth::Bits64, &entries).unwrap();
+        assert_eq!(read_u32(&blocks[0], 16), Some(1));
+        assert_eq!(read_u32(&blocks[0], 48), Some(11));
+        assert_eq!(read_u32(&blocks[0], 52), Some(1));
+        let entry = MetadataBlock { fs_block: 4, data: &data };
+        assert_eq!(encode_v3_transaction(1000, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
+        assert_eq!(encode_v3_transaction(1024, &[0; 16], 9, 10, TargetWidth::Bits32, &[]).unwrap_err(), Error::Invalid);
+        let entry = MetadataBlock { fs_block: 10, data: &data };
+        assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
+        let entry = MetadataBlock { fs_block: 1 << 32, data: &data };
+        assert_eq!(encode_v3_transaction(1024, &uuid, 9, u64::MAX, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
+        let entry = MetadataBlock { fs_block: 1, data: &data[..1023] };
+        assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &[entry]).unwrap_err(), Error::Invalid);
+        let entries: Vec<_> = (0..63).map(|_| MetadataBlock { fs_block: 1, data: &data }).collect();
+        assert_eq!(encode_v3_transaction(1024, &uuid, 9, 10, TargetWidth::Bits32, &entries).unwrap_err(), Error::LimitExceeded);
+    }
+
+    #[test]
+    #[ignore = "requires the checked journal-v3.ext4 fixture"]
+    fn emit_v3_fixture_for_independent_replay() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let input = std::env::var_os("ASTER_EXT4_FIXTURE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.join("target/qualification/inputs/ext4"));
+        let mut image = fs::read(input.join("journal-v3.ext4")).unwrap();
+        let uuid: [u8; 16] = image[0x468..0x478].try_into().unwrap();
+        let geometry = crate::reader::geometry(&image).unwrap();
+        let inode = crate::reader::read_inode(&image, &geometry, 8).unwrap();
+        let journal = crate::reader::read_file(&image, &geometry, &inode).unwrap();
+        let sb = parse_internal_superblock(&journal, journal.len() as u64, &uuid).unwrap();
+        assert_eq!(sb.feature_incompat & 0x12, 0x12);
+        let old = first_transaction(&journal, &uuid, geometry.blocks_count).unwrap();
+        assert_eq!(old.writes.len(), 1);
+        let target = old.writes[0].fs_block;
+        let size = geometry.block_size;
+        let mut payload = image[target as usize * size..(target as usize + 1) * size].to_vec();
+        payload[0] = b'Q';
+        let blocks = encode_v3_transaction(size, &uuid, sb.sequence, geometry.blocks_count,
+            TargetWidth::Bits64, &[MetadataBlock { fs_block: target, data: &payload }]).unwrap();
+        let mut encoded_journal = journal.clone();
+        for (index, data) in blocks.iter().enumerate() {
+            let offset = (sb.start as usize + index) * size;
+            encoded_journal[offset..offset + size].copy_from_slice(data);
+        }
+        assert_eq!(first_transaction(&encoded_journal, &uuid, geometry.blocks_count).unwrap(), old);
+        let extents = crate::reader::extent_tree(&image, &geometry, &inode).unwrap();
+        for (index, data) in blocks.iter().enumerate() {
+            let logical = u64::from(sb.start) + index as u64;
+            let extent = extents.iter().find(|extent| !extent.unwritten && logical >= extent.logical_block
+                && logical < extent.logical_block + u64::from(extent.len)).unwrap();
+            let physical = extent.physical_block + logical - extent.logical_block;
+            let offset = physical as usize * size;
+            image[offset..offset + size].copy_from_slice(data);
+        }
+        let result = root.join("target/qualification/inputs/ext4/encoded-journal-v3.ext4");
+        fs::create_dir_all(result.parent().unwrap()).unwrap();
+        fs::write(result, image).unwrap();
     }
 }
