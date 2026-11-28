@@ -2,11 +2,13 @@
 
 //! VFS `Inode` and `FileOps` implementations for read-only ext4 inodes.
 
-use aster_ext4::reader::{
-    DiskEntryType, DirEntry, Inode as RawInode, fast_symlink, lookup_from, read_dir_from,
-    read_file_from, read_inode_from,
+use aster_ext4::{
+    reader::{
+        DiskEntryType, DirEntry, Inode as RawInode, fast_symlink, inode_number_to_group,
+        lookup_from, read_dir_from, read_file_from, read_inode_from,
+    },
+    write::{WriteEngine, WriteError},
 };
-
 use super::fs::Ext4;
 use crate::{
     fs::{
@@ -84,11 +86,32 @@ impl FileOps for Ext4Inode {
 
     fn write_at(
         &self,
-        _offset: usize,
-        _reader: &mut VmReader,
+        offset: usize,
+        reader: &mut VmReader,
         _status_flags: StatusFlags,
     ) -> Result<usize> {
-        Err(errno!(EROFS, "ext4 mounts are read-only"))
+        let fs = self.fs()?;
+        if !fs.writable() {
+            return Err(errno!(EROFS, "ext4 mounts are read-only"));
+        }
+        let mut data = vec![0u8; reader.remain()];
+        let mut writer = VmWriter::from(data.as_mut_slice());
+        let written = reader.read_fallible(&mut writer)?;
+        data.truncate(written);
+        let (group, _) = inode_number_to_group(fs.geometry(), self.raw.number);
+        let engine = WriteEngine::new(
+            fs.reader().as_ref(),
+            fs.reader().as_ref(),
+            fs.geometry(),
+            &self.raw,
+            group,
+        );
+        match engine.write_at(offset, &data) {
+            Ok(()) => Ok(written),
+            Err(WriteError::NoSpace) => Err(errno!(ENOSPC, "ext4 journal or data space exhausted")),
+            Err(WriteError::TooLarge) => Err(errno!(EINVAL, "ext4 write exceeds the supported size")),
+            Err(_) => Err(errno!(EIO, "ext4 write failed")),
+        }
     }
 
     fn readdir_at(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {

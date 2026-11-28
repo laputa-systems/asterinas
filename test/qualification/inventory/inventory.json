@@ -39689,6 +39689,13 @@
    "path": "kernel/core/src/vm/page_cache/mod.rs",
    "snippet": "writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)",
    "source": "kernel/core/src/vm/page_cache/mod.rs:810"
+  },
+  {
+   "kind": "comment",
+   "line": 247,
+   "path": "kernel/libs/aster-ext4/src/extent_edit.rs",
+   "snippet": "blocks are considered; bits beyond the group's block count are ignored.",
+   "source": "kernel/libs/aster-ext4/src/extent_edit.rs:247"
   }
  ]
 }

@@ -40,7 +40,7 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 
 ## Unsupported-success paths
 
-- recorded sites: 110
+- recorded sites: 111
 
 - `kernel/comps/i8042/src/controller.rs:267` (comment): before the acknowledgment is ignored.
 - `kernel/core/comps/cmdline/src/dispatch.rs:158` (comment): Unrecognized module arguments are ignored.
@@ -152,6 +152,7 @@ Statuses are shallow handler-resolution evidence, not Linux-compatibility claims
 - `kernel/core/src/syscall/rt_sigtimedwait.rs:121` (comment): If the signal is ignored and not blocked, the signal will be directly dropped.
 - `kernel/core/src/syscall/sendmmsg.rs:28` (warn): warn!("sendmmsg flags {:?} are not supported", flags);
 - `kernel/core/src/vm/page_cache/mod.rs:810` (annotation): writeback I/O errors are dropped instead of being recorded, so a later fsync/fdatasync/msync/syncfs reports success for data that was never written; cited in docs/roadmap.md Reference (writeback errors)
+- `kernel/libs/aster-ext4/src/extent_edit.rs:247` (comment): blocks are considered; bits beyond the group's block count are ignored.
 
 ## Conformance blocklists
 

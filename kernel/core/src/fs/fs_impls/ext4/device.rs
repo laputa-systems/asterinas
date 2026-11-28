@@ -7,7 +7,7 @@ use aster_block::{
     bio::{BioDirection, BioSegment, BioStatus},
     id::Bid,
 };
-use aster_ext4::reader::BlockReader;
+use aster_ext4::reader::{BlockReader, BlockWriter};
 use ostd::mm::io::util::HasVmReaderWriter;
 
 use crate::prelude::*;
@@ -54,5 +54,34 @@ impl BlockReader for DeviceReader {
 
         let inner = offset - first * BLOCK_SIZE;
         buffer.get(inner..inner.checked_add(len)?).map(|s| s.to_vec())
+    }
+}
+
+impl BlockWriter for DeviceReader {
+    fn write_at(&self, offset: u64, data: &[u8]) -> Option<()> {
+        let offset = usize::try_from(offset).ok()?;
+        let end = offset.checked_add(data.len())?;
+        if data.is_empty() {
+            return Some(());
+        }
+        let first = offset / BLOCK_SIZE;
+        let last = end.div_ceil(BLOCK_SIZE);
+        let nblocks = last.checked_sub(first)?;
+
+        let segment = BioSegment::alloc(nblocks, BioDirection::ToDevice);
+        {
+            let mut writer = segment.writer().ok()?;
+            writer.skip(offset - first * BLOCK_SIZE);
+            let mut reader = VmReader::from(data).to_fallible();
+            writer.write_fallible(&mut reader).ok()?;
+        }
+        let status = self
+            .device
+            .write_blocks(Bid::new(first as u64), vec![segment])
+            .ok()?;
+        if status != BioStatus::Complete {
+            return None;
+        }
+        Some(())
     }
 }

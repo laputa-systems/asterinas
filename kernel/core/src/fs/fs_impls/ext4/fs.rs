@@ -5,7 +5,7 @@
 use aster_block::{BlockDevice, bio::BioStatus};
 use aster_ext4::{
     MAGIC as EXT4_MAGIC,
-    reader::{BlockReader, geometry_from},
+    reader::geometry_from,
 };
 
 use super::{device::DeviceReader, inode::Ext4Inode};
@@ -26,6 +26,7 @@ pub(super) struct Ext4 {
     info: aster_ext4::Info,
     geometry: aster_ext4::reader::Geometry,
     flags: FsFlags,
+    writable: bool,
     fs_event_subscriber_stats: FsEventSubscriberStats,
     self_ref: Weak<Self>,
 }
@@ -33,9 +34,10 @@ pub(super) struct Ext4 {
 impl Ext4 {
     pub(super) fn open(
         device: Arc<dyn BlockDevice>,
-        _flags: FsFlags,
+        flags: FsFlags,
         _data: Option<&str>,
     ) -> Result<Arc<Self>> {
+        let writable = cfg!(feature = "ext4_rw_experimental") && !flags.contains(FsFlags::RDONLY);
         let reader = Arc::new(DeviceReader::new(device.clone()));
         let info = analyze_device(&reader)?;
         let geometry = geometry_from(reader.as_ref()).map_err(|error| {
@@ -52,7 +54,12 @@ impl Ext4 {
             reader,
             info,
             geometry,
-            flags: FsFlags::RDONLY,
+            flags: if writable {
+                FsFlags::empty()
+            } else {
+                FsFlags::RDONLY
+            },
+            writable,
             fs_event_subscriber_stats: FsEventSubscriberStats::new(),
             self_ref: self_ref.clone(),
         }))
@@ -68,6 +75,10 @@ impl Ext4 {
 
     pub(super) fn device(&self) -> &Arc<dyn BlockDevice> {
         &self.device
+    }
+
+    pub(super) fn writable(&self) -> bool {
+        self.writable
     }
 
     pub(super) fn upgrade(&self) -> Option<Arc<Self>> {
