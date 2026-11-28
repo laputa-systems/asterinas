@@ -11,7 +11,9 @@ from .lock import DEV_IMAGE
 from .util import sha256_bytes
 
 
-def inspect_ext_marker(repo: Path, bundle: EvidenceBundle, label: str, image: Path) -> tuple[int, bytes]:
+def inspect_ext_image(
+    repo: Path, bundle: EvidenceBundle, label: str, image: Path, *, debugfs_command: str = "cat /marker.txt",
+) -> tuple[int, bytes]:
     inspection = bundle.work_dir / label
     inspection.mkdir()
     image_hash = bundle.register_file(f"{label}/image.img", image)["sha256"]
@@ -20,7 +22,7 @@ def inspect_ext_marker(repo: Path, bundle: EvidenceBundle, label: str, image: Pa
     for tool, args in (
         ("dumpe2fs", ["-h"]),
         ("e2fsck", ["-fn"]),
-        ("debugfs", ["-R", "cat /marker.txt"]),
+        ("debugfs", ["-R", debugfs_command]),
     ):
         clone = inspection / f"{tool}.img"
         shutil.copyfile(image, clone)
@@ -42,12 +44,12 @@ def inspect_ext_marker(repo: Path, bundle: EvidenceBundle, label: str, image: Pa
         results.append(result)
     report = {"image_sha256": image_hash, "tools": tools}
     bundle.register_artifact(f"{label}/inspection.json", (json.dumps(report, indent=2) + "\n").encode())
-    geometry, fsck, marker = results
-    if fsck.returncode not in {0, 4, 12} or marker.returncode != 0:
-        raise ValueError(f"{label}: image inspection failed to run (fsck {fsck.returncode}, debugfs {marker.returncode})")
+    geometry, fsck, readback = results
+    if fsck.returncode not in {0, 4, 12} or readback.returncode != 0:
+        raise ValueError(f"{label}: image inspection failed to run (fsck {fsck.returncode}, debugfs {readback.returncode})")
     if fsck.returncode == 0 and geometry.returncode != 0:
         raise ValueError(f"{label}: dumpe2fs failed to read a clean image")
-    return fsck.returncode, marker.stdout
+    return fsck.returncode, readback.stdout
 
 
 def verify_pinned_replay(

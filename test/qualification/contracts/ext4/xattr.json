@@ -30,7 +30,7 @@
         "ignored_fields": [],
         "mode": "exact"
       },
-      "contract_revision": "lc23-ext4-xattr-r1",
+      "contract_revision": "lc23-ext4-xattr-r2",
       "deadline_seconds": 60,
       "expected_subtests": [
         {
@@ -175,6 +175,28 @@
             }
           ],
           "id": "after-remove"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "retain-xattr"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "id": "result",
+              "mode": "exact",
+              "type": "integer"
+            }
+          ],
+          "id": "unmount"
         }
       ],
       "id": "ext4.xattr",
@@ -190,17 +212,18 @@
         "filesystem": "ext4",
         "mount_point": "/mnt/qualification"
       },
-      "procedure": "Create an ext4 file, set, get, list and remove a user xattr, and verify ENODATA after removal.",
+      "procedure": "Create an ext4 file, set, get, list and remove a user xattr, verify ENODATA, then retain a live attribute for offline readback after clean unmount.",
       "replay": "python3 test/qualification/run.py run --profile ext4-xattr --candidate asterinas",
       "seed": 0,
       "source": {
         "license": "MPL-2.0",
         "patch_hash": "0",
-        "revision": "ext4-xattr-r1",
+        "revision": "ext4-xattr-r2",
         "upstream": "asterinas-qualification-ext4-read"
       },
       "validators": [
-        "reference-contract"
+        "reference-contract",
+        "e2fsprogs-xattr-readback"
       ]
     }
   ]

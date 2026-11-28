@@ -15,7 +15,7 @@ from .accounting import CaseOutcome, RoleResult, reconcile
 from .adapter import validate_blklogwrites
 from .compare import compare_value, verify_comparison_claim
 from .evidence import EvidenceBundle
-from .ext_image import inspect_ext_marker, verify_pinned_replay
+from .ext_image import inspect_ext_image, verify_pinned_replay
 from .lock import (
     CACHE_DIR,
     LOCK_PATH,
@@ -484,17 +484,24 @@ def execute_backend(
     if final is not None and isinstance(final.get("status"), str):
         final_status = final["status"]
     image_failures = [f"producer image: {failure}" for failure in producer.image_failures] if producer else []
+    read_marker = "e2fsprogs-marker-readback" in case.validators
+    read_xattr = "e2fsprogs-xattr-readback" in case.validators
     if (
-        "e2fsprogs-marker-readback" in case.validators and execution.adapter_disk is not None
+        (read_marker or read_xattr) and execution.adapter_disk is not None
         and execution.result.outcome == "exit" and execution.result.exit_code == 0
         and execution.result.teardown_state == "verified-empty" and not storage_diagnostics
         and not diagnostics and final_status == "pass"
     ):
-        fsck_status, marker = inspect_ext_marker(repo, bundle, f"{label}-readback", execution.adapter_disk.image)
+        readback_command = "ea_get -f /dev/stdout /xattr.txt user.test" if read_xattr else "cat /marker.txt"
+        fsck_status, data = inspect_ext_image(
+            repo, bundle, f"{label}-readback", execution.adapter_disk.image, debugfs_command=readback_command,
+        )
         if fsck_status != 0:
             image_failures.append(f"e2fsck -fn rejected the output image (exit {fsck_status})")
-        if base64.b64encode(marker).decode("ascii") != case.payload["e2fsprogs_marker_base64"]:
+        if read_marker and base64.b64encode(data).decode("ascii") != case.payload["e2fsprogs_marker_base64"]:
             image_failures.append("e2fsprogs readback of /marker.txt differed from the contract")
+        if read_xattr and data != b"retained":
+            image_failures.append("e2fsprogs readback of user.test on /xattr.txt differed from the contract")
     return BackendEvidence(
         label=label,
         stream_run_id=stream_run_id,
@@ -1276,7 +1283,7 @@ def run_persistence_controls(repo: Path, profile_name: str) -> int:
                 else:
                     reconstruction_ok = verify_pinned_replay(repo, bundle, label, seed=seed, log=log, expected=crash, cut=cut)
                     reconstruction_check = f"pinned replay match={reconstruction_ok}"
-                fsck_status, marker = inspect_ext_marker(repo, bundle, f"{name}-crash", crash)
+                fsck_status, marker = inspect_ext_image(repo, bundle, f"{name}-crash", crash)
                 controls[f"persistence:{name}-crash-cut"] = {
                     "detected": reconstruction_ok and fsck_status == 0 and marker == expected,
                     "detail": f"cut after {cut} log records, {reconstruction_check}, e2fsck -fn exit {fsck_status}, /marker.txt={marker!r}",

@@ -916,6 +916,8 @@ static void run_ext4_xattr_case(const char *run_id, const char *nonce, const cha
     long list_size = -1;
     long remove_result = -1;
     long after_remove_errno = 0;
+    long retained_result = -1;
+    long unmount_result = -1;
     if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
         int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
         if (fd >= 0) {
@@ -927,10 +929,11 @@ static void run_ext4_xattr_case(const char *run_id, const char *nonce, const cha
             remove_result = removexattr(path, "user.test");
             char probe[64];
             after_remove_errno = getxattr(path, "user.test", probe, sizeof(probe)) < 0 ? errno : 0;
+            retained_result = setxattr(path, "user.test", "retained", 8, XATTR_CREATE);
         } else {
             diagnostic("ext4 xattr create failed: %s", strerror(errno));
         }
-        unmount_adapter_volume();
+        unmount_result = umount(ADAPTER_MOUNT_POINT);
     } else {
         emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
         return;
@@ -949,9 +952,12 @@ static void run_ext4_xattr_case(const char *run_id, const char *nonce, const cha
     emit_text_named(run_id, nonce, manifest_hash, payload_hash, "listxattr-names", "names", listing, strcmp(listing, "user.test") == 0);
     emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "removexattr", "result", remove_result, remove_passed);
     emit_errno_named(run_id, nonce, manifest_hash, payload_hash, "after-remove", "errno", after_remove_errno, gone_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "retain-xattr", "result", retained_result, retained_result == 0);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "unmount", "result", unmount_result, unmount_result == 0);
     emit_final(run_id, nonce, manifest_hash, payload_hash,
-               write_passed && set_passed && get_passed && list_passed && remove_passed && gone_passed,
-               SETUP_SUBTESTS + 8, SETUP_ASSERTIONS + 8);
+               write_passed && set_passed && get_passed && list_passed && remove_passed && gone_passed &&
+               retained_result == 0 && unmount_result == 0,
+               SETUP_SUBTESTS + 10, SETUP_ASSERTIONS + 10);
 }
 
 static void run_ext4_orphan_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
