@@ -24,7 +24,7 @@ use aster_ext4::{
     write::{WriteEngine, WriteError},
 };
 
-use super::fs::Ext4;
+use super::fs::{EXPERIMENTAL_JOURNAL_BLOCKS, Ext4};
 use crate::{
     fs::{
         file::{InodeMode, InodeType, StatusFlags, SyncMode},
@@ -372,7 +372,7 @@ impl FileOps for Ext4Inode {
             &raw,
             group,
         );
-        let mut journal = vec![0u8; 8 * JOURNAL_BLOCK_SIZE];
+        let mut journal = vec![0u8; EXPERIMENTAL_JOURNAL_BLOCKS * JOURNAL_BLOCK_SIZE];
         let result = engine.write_at_journaled_to(
             offset,
             &data,

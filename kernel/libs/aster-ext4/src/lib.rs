@@ -48,9 +48,11 @@ pub const STATE_CLEAN: u16 = 0x0001;
 const STATE_ERROR: u16 = 0x0002;
 const STATE_ORPHAN_RECOVERY: u16 = 0x0004;
 
+const COMPAT_HAS_JOURNAL: u32 = 1 << 2;
 pub const COMPAT_EXT_ATTR: u32 = 1 << 3;
 pub const COMPAT_RESIZE_INODE: u32 = 1 << 4;
 pub const COMPAT_DIR_INDEX: u32 = 1 << 5;
+const COMPAT_ORPHAN_FILE: u32 = 1 << 12;
 
 pub const INCOMPAT_FILETYPE: u32 = 1 << 1;
 pub const INCOMPAT_RECOVERY: u32 = 1 << 2;
@@ -85,6 +87,7 @@ pub enum Error {
     BadBlockSize,
     BadInodeSize,
     UnsupportedFeature(u32),
+    UnsupportedWritableFeatures,
     NeedsRecovery,
     Unclean,
     FilesystemError,
@@ -147,6 +150,26 @@ pub fn check_feature_policy(info: &Info) -> Result<(), Error> {
     let unsupported = info.features_incompat & !SUPPORTED_INCOMPAT;
     if unsupported != 0 {
         return Err(Error::UnsupportedFeature(unsupported));
+    }
+    Ok(())
+}
+
+/// Refuses feature combinations outside the experimental writer's format subset.
+pub fn check_writable_feature_policy(info: &Info) -> Result<(), Error> {
+    let required_incompat = INCOMPAT_FILETYPE | INCOMPAT_EXTENTS;
+    let allowed_incompat = required_incompat | INCOMPAT_FLEX_BG;
+    let allowed_compat = COMPAT_HAS_JOURNAL | COMPAT_EXT_ATTR | COMPAT_RESIZE_INODE
+        | COMPAT_DIR_INDEX | COMPAT_ORPHAN_FILE;
+    let allowed_ro_compat = RO_COMPAT_SPARSE_SUPER | RO_COMPAT_LARGE_FILE | RO_COMPAT_HUGE_FILE
+        | RO_COMPAT_DIR_NLINK | RO_COMPAT_EXTRA_ISIZE;
+    if info.block_size != jbd2::JOURNAL_BLOCK_SIZE
+        || info.features_compat & COMPAT_HAS_JOURNAL == 0
+        || info.features_compat & !allowed_compat != 0
+        || info.features_incompat & required_incompat != required_incompat
+        || info.features_incompat & !allowed_incompat != 0
+        || info.features_ro_compat & !allowed_ro_compat != 0
+    {
+        return Err(Error::UnsupportedWritableFeatures);
     }
     Ok(())
 }
@@ -367,6 +390,15 @@ mod tests {
         let info = analyze(&fixture("multi-group")).unwrap();
         assert_eq!(info.block_size, 1024);
         assert!(info.group_count > 1);
+    }
+
+    #[test]
+    fn experimental_writes_refuse_unsupported_metadata_layouts() {
+        assert_eq!(check_writable_feature_policy(&analyze(&fixture("basic")).unwrap()), Ok(()));
+        for name in ["large-address", "multi-group"] {
+            let info = analyze(&fixture(name)).unwrap();
+            assert_eq!(check_writable_feature_policy(&info), Err(Error::UnsupportedWritableFeatures));
+        }
     }
 
     #[test]

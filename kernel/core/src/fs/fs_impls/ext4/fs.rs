@@ -4,9 +4,11 @@
 
 use aster_block::{BlockDevice, bio::BioStatus};
 use aster_ext4::{
-    MAGIC as EXT4_MAGIC,
+    MAGIC as EXT4_MAGIC, check_writable_feature_policy,
     reader::{extent_tree_from, geometry_from, read_inode_from},
 };
+
+pub(super) const EXPERIMENTAL_JOURNAL_BLOCKS: usize = 8;
 
 use super::{device::DeviceReader, inode::Ext4Inode};
 use crate::{
@@ -50,11 +52,16 @@ impl Ext4 {
             return Err(errno!(EINVAL, "unsupported ext4 block size"));
         }
         let journal_start = if writable {
+            check_writable_feature_policy(&info)
+                .map_err(|_| errno!(EOPNOTSUPP, "unsupported experimental ext4 writable features"))?;
             let journal_inode = read_inode_from(reader.as_ref(), &geometry, info.journal_inum)
                 .map_err(|_| errno!(EINVAL, "cannot read ext4 journal inode"))?;
             let extents = extent_tree_from(reader.as_ref(), &geometry, &journal_inode)
                 .map_err(|_| errno!(EINVAL, "cannot read ext4 journal extents"))?;
-            let first = extents.first().ok_or_else(|| errno!(EINVAL, "ext4 journal has no extents"))?;
+            let first = extents.first().filter(|extent| {
+                extent.logical_block == 0 && !extent.unwritten
+                    && usize::from(extent.len) >= EXPERIMENTAL_JOURNAL_BLOCKS
+            }).ok_or_else(|| errno!(EINVAL, "ext4 journal prefix is not contiguous"))?;
             first
                 .physical_block
                 .checked_mul(block_size as u64)
