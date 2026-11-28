@@ -92,12 +92,17 @@ def build_asterinas(repo: Path) -> None:
         "osdk=target/qualification/inputs/cache/cargo-osdk; "
         "OSDK_LOCAL_DEV=1 cargo install cargo-osdk --path osdk --root \"$osdk_root\" --force >/dev/null; "
         "cp \"$osdk_root/bin/cargo-osdk\" \"$osdk\"; "
+        "for suffix in '' '-rw'; do "
+        "features=pvh_boot; "
+        "if [ -n \"$suffix\" ]; then features=$features,ext4_rw_experimental; fi; "
         "cd kernel; "
-        "OSDK_TARGET_ARCH=x86_64 /root/asterinas/$osdk osdk build --boot-method=vmm-direct --strip-elf --features=pvh_boot "
+        "OSDK_TARGET_ARCH=x86_64 /root/asterinas/$osdk osdk build --boot-method=vmm-direct --strip-elf --features=\"$features\" "
         "--kcmd-args=loglevel=error --kcmd-args=earlycon --kcmd-args=console=ttyS0 >/dev/null; "
         "cd ..; "
-        "cp target/osdk/asterinas/asterinas-osdk-bin.elf target/qualification/inputs/cache/asterinas-kernel.tmp; "
-        "mv target/qualification/inputs/cache/asterinas-kernel.tmp target/qualification/inputs/cache/asterinas-kernel"
+        "output=target/qualification/inputs/cache/asterinas-kernel$suffix; "
+        "cp target/osdk/asterinas/asterinas-osdk-bin.elf \"$output.tmp\"; "
+        "mv \"$output.tmp\" \"$output\"; "
+        "done"
     )
     _docker_build(repo, script, "Asterinas qualification kernel build")
 
@@ -471,6 +476,8 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "nixpkgs_sha256": _sha256_file(repo / "distro/nixpkgs.nix"),
             "kernel_path": str(CACHE_DIR / "asterinas-kernel"),
             "kernel_sha256": _sha256_file(repo / CACHE_DIR / "asterinas-kernel"),
+            "rw_kernel_path": str(CACHE_DIR / "asterinas-kernel-rw"),
+            "rw_kernel_sha256": _sha256_file(repo / CACHE_DIR / "asterinas-kernel-rw"),
             "source_tree_sha256": asterinas_source_tree_hash(repo),
         },
         "selections": {
@@ -521,16 +528,20 @@ def _check_file_hash(repo: Path, relative: str, expected: str, label: str, failu
         checked.append(label)
 
 
-def _load_lock(repo: Path) -> dict[str, Any]:
+def _load_lock(repo: Path) -> tuple[dict[str, Any], str]:
     path = repo / LOCK_PATH
     if not path.exists():
         raise LockError(f"input lock is missing: {LOCK_PATH}")
-    document = read_json_file(path)
+    try:
+        lock_bytes = path.read_bytes()
+        document = json.loads(lock_bytes)
+    except (OSError, ValueError) as error:
+        raise LockError(f"cannot read input policy {LOCK_PATH}: {error}") from error
     if not isinstance(document, dict):
         raise LockError("input lock root is not an object")
     if document.get("schema") != 1:
         raise LockError("input lock schema is not 1")
-    return document
+    return document, sha256_bytes(lock_bytes)
 
 
 def _verify_version(version: str) -> bool:
@@ -565,6 +576,8 @@ def _verify_selection(repo: Path, lock: dict[str, Any], profile_name: str, failu
         (item["case"], item["reason"]) for item in expected["excluded"]
     ):
         failures.append(f"{profile_name} exclusion drift")
+    if _selection_lock(selection)["cases"] != expected["cases"]:
+        failures.append(f"{profile_name} case policy drift")
     checked.append(f"{profile_name} selection")
 
 
@@ -574,6 +587,7 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("harness", "files"),
         ("dev_container", "digest"),
         ("qemu", "path"),
+        ("qemu", "resolved_path"),
         ("qemu", "version"),
         ("qemu", "sha256"),
         ("linux", "version"),
@@ -622,6 +636,8 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         ("asterinas_build", "nixpkgs_sha256"),
         ("asterinas_build", "kernel_path"),
         ("asterinas_build", "kernel_sha256"),
+        ("asterinas_build", "rw_kernel_path"),
+        ("asterinas_build", "rw_kernel_sha256"),
         ("asterinas_build", "source_tree_sha256"),
         ("selections", "selfcheck", "manifest_hash"),
         ("selections", "selfcheck", "payload_hash"),
@@ -678,7 +694,7 @@ def _require_lock_shape(lock: dict[str, Any]) -> None:
         raise LockError("input lock is missing required fields: " + ", ".join(missing))
 
 
-def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool = True) -> LockVerification:
+def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool = True) -> tuple[str, ...]:
     _require_lock_shape(lock)
     failures: list[str] = []
     checked: list[str] = []
@@ -712,6 +728,8 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         failures.append(f"qemu binary is missing: {qemu_path}")
     else:
         resolved = resolve_qemu_path(qemu_path)
+        if str(resolved) != qemu_lock["resolved_path"]:
+            failures.append(f"qemu resolved path drift: got {resolved} expected {qemu_lock['resolved_path']}")
         actual_hash = _sha256_file(resolved)
         if actual_hash != qemu_lock["sha256"]:
             failures.append(f"qemu binary hash drift: got {actual_hash} expected {qemu_lock['sha256']}")
@@ -795,28 +813,33 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         checked.append("Asterinas source tree")
 
     asterinas_kernel = repo / asterinas_build["kernel_path"]
-    if not asterinas_kernel.exists() and build_missing and not failures:
+    rw_kernel = repo / asterinas_build["rw_kernel_path"]
+    if (not asterinas_kernel.exists() or not rw_kernel.exists()) and build_missing and not failures:
         build_asterinas(repo)
     _check_file_hash(repo, asterinas_build["kernel_path"], asterinas_build["kernel_sha256"], "Asterinas kernel", failures, checked)
+    _check_file_hash(repo, asterinas_build["rw_kernel_path"], asterinas_build["rw_kernel_sha256"], "Asterinas experimental ext4 kernel", failures, checked)
+    if asterinas_build["kernel_sha256"] == asterinas_build["rw_kernel_sha256"]:
+        failures.append("default and experimental Asterinas kernels have identical hashes")
 
     for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra", "ext4-journal", "ext4-alloc", "ext4-dir", "ext4-orphan", "ext4-xattr", "ext4-durability", "ext4-errors"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
-    repository = repository_provenance(repo)
     if failures:
         raise LockError("; ".join(failures))
-    lock_bytes = (repo / LOCK_PATH).read_bytes()
-    document_at_verification = json.loads(lock_bytes)
-    return LockVerification(
-        lock_hash=sha256_bytes(lock_bytes),
-        checked=tuple(checked),
-        repository=repository,
-        document=document_at_verification,
-    )
+    return tuple(checked)
 
 
 def verify_lock(repo: Path, build_missing: bool = True) -> LockVerification:
-    return verify_lock_document(repo, _load_lock(repo), build_missing)
+    document, policy_hash = _load_lock(repo)
+    checked = verify_lock_document(repo, document, build_missing)
+    if _sha256_file(repo / LOCK_PATH) != policy_hash:
+        raise LockError("input policy changed during verification")
+    return LockVerification(
+        lock_hash=policy_hash,
+        checked=checked,
+        repository=repository_provenance(repo),
+        document=document,
+    )
 
 
 def effective_lock_bytes(

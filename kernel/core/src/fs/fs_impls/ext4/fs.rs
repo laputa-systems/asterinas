@@ -38,7 +38,7 @@ impl Ext4 {
         flags: FsFlags,
         _data: Option<&str>,
     ) -> Result<Arc<Self>> {
-        let writable = !flags.contains(FsFlags::RDONLY);
+        let writable = cfg!(feature = "ext4_rw_experimental") && !flags.contains(FsFlags::RDONLY);
         let reader = Arc::new(DeviceReader::new(device.clone()));
         let info = analyze_device(&reader)?;
         let geometry = geometry_from(reader.as_ref()).map_err(|error| {

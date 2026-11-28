@@ -47,6 +47,7 @@ from .runner import (
     RunState,
     _observed_values,
     assert_selection_snapshot,
+    create_snapshot,
     evaluate_case,
     finalize_run,
     verify_backend_identity,
@@ -1249,6 +1250,55 @@ def selftest_main() -> int:
     evaluate("snapshot-changed-selection-manifest", lambda: selection_drift_control("manifest_hash", "0" * 64))
     evaluate("snapshot-changed-selection-payload", lambda: selection_drift_control("payload_hash", "0" * 64))
     evaluate("snapshot-changed-selection-cases", lambda: selection_drift_control("case_ids", ("core.unknown",)))
+
+    def snapshot_policy_control(change: str) -> tuple[bool, str]:
+        backend = bundle.work_dir / f"verified-backend-{change}"
+        backend.write_bytes(b"verified backend")
+        policy = json.loads((repo / lock_module.LOCK_PATH).read_bytes())
+        policy["asterinas_build"]["rw_kernel_sha256"] = "f" * 64
+        policy["qemu"] = {
+            "path": str(backend),
+            "resolved_path": str(backend.resolve()),
+            "version": "control-version",
+            "sha256": sha256_bytes(backend.read_bytes()),
+        }
+        verification = lock_module.LockVerification("0" * 64, (), {}, policy)
+        replacement = selection
+        if change == "backend":
+            backend.write_bytes(b"substituted backend")
+        else:
+            replacement = Selection(
+                selection.profile_name, selection.cases, "f" * 64,
+                selection.payload_hash, selection.excluded,
+            )
+        with mock.patch("qualcore.runner.qemu_version", return_value="control-version"):
+            try:
+                create_snapshot(verification, replacement)
+            except RunFailure as error:
+                return True, str(error)
+        return False, "snapshot accepted a substitution after verification"
+
+    evaluate("snapshot-rejects-substituted-backend", lambda: snapshot_policy_control("backend"))
+    evaluate("snapshot-rejects-substituted-selection", lambda: snapshot_policy_control("selection"))
+
+    def policy_file_substitution() -> tuple[bool, str]:
+        policy_repo = bundle.work_dir / "policy-repo"
+        policy = policy_repo / lock_module.LOCK_PATH
+        policy.parent.mkdir(parents=True)
+        policy.write_text('{"schema": 1, "revision": "verified"}', encoding="utf-8")
+
+        def replace_policy(*args) -> tuple[str, ...]:
+            policy.write_text('{"schema": 1, "revision": "substituted"}', encoding="utf-8")
+            return ()
+
+        with mock.patch.object(lock_module, "verify_lock_document", side_effect=replace_policy):
+            try:
+                lock_module.verify_lock(policy_repo)
+            except lock_module.LockError as error:
+                return "changed during verification" in str(error), str(error)
+        return False, "substituted policy was accepted"
+
+    evaluate("snapshot-rejects-substituted-policy", policy_file_substitution)
 
     backend_path = bundle.work_dir / "backend-binary"
     backend_path.write_bytes(b"verified backend")

@@ -20,6 +20,7 @@ aster-i8042.workspace = true
 [features]
 default = ["cvm_guest"]
 coverage = ["aster-core/coverage"]
+ext4_rw_experimental = ["aster-core/ext4_rw_experimental"]
 cvm_guest = ["aster-core/cvm_guest"]
 pvh_boot = ["aster-core/pvh_boot"]
 riscv_sv39_mode = ["aster-core/riscv_sv39_mode"]

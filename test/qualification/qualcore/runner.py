@@ -101,14 +101,15 @@ def load_selection(repo: Path, profile_name: str) -> Selection:
 
 def create_snapshot(verification: LockVerification, selection: Selection) -> RunSnapshot:
     document = verification.document
-    qemu_path = Path(document["qemu"]["path"])
-    resolved = resolve_qemu_path(qemu_path)
-    if not resolved.is_file():
-        raise RunFailure(f"verified qemu binary is missing: {qemu_path}")
+    qemu = document["qemu"]
+    policy_selection = document["selections"].get(selection.profile_name)
+    if policy_selection is None:
+        raise RunFailure(f"profile has no verified selection: {selection.profile_name}")
     expected_hashes = {
         "linux-bzImage": document["linux"]["bzimage_sha256"],
         "linux-config": document["linux"]["config_sha256"],
         "asterinas-kernel": document["asterinas_build"]["kernel_sha256"],
+        "asterinas-kernel-rw": document["asterinas_build"]["rw_kernel_sha256"],
         "initramfs.cpio": document["probe"]["initramfs_sha256"],
         "probe": document["probe"]["binary_sha256"],
         "probe-input.txt": document["probe"]["input_payload_sha256"],
@@ -120,17 +121,20 @@ def create_snapshot(verification: LockVerification, selection: Selection) -> Run
         "adapter-wrong-disk.ext2": document["adapter"]["wrong_disk_sha256"],
         "adapter-wrong-filesystem.img": document["adapter"]["wrong_filesystem_sha256"],
     }
-    return RunSnapshot(
+    snapshot = RunSnapshot(
         policy_hash=verification.lock_hash,
-        qemu_path=qemu_path,
-        qemu_resolved_path=resolved,
-        qemu_version=qemu_version(qemu_path),
-        qemu_sha256=sha256_bytes(resolved.read_bytes()),
-        manifest_hash=selection.manifest_hash,
-        payload_hash=selection.payload_hash,
-        case_ids=tuple(selection.case_ids),
+        qemu_path=Path(qemu["path"]),
+        qemu_resolved_path=Path(qemu["resolved_path"]),
+        qemu_version=qemu["version"],
+        qemu_sha256=qemu["sha256"],
+        manifest_hash=policy_selection["manifest_hash"],
+        payload_hash=policy_selection["payload_hash"],
+        case_ids=tuple(policy_selection["case_ids"]),
         expected_hashes=expected_hashes,
     )
+    assert_selection_snapshot(selection, snapshot)
+    assert_backend_snapshot(snapshot.qemu_path, snapshot)
+    return snapshot
 
 
 def verify_copied_input_hashes(copied: dict[str, Path], expected: dict[str, str]) -> list[str]:
@@ -139,6 +143,9 @@ def verify_copied_input_hashes(copied: dict[str, Path], expected: dict[str, str]
         wanted = expected.get(name)
         if wanted is None:
             failures.append(f"copied input has no verified identity: {name}")
+            continue
+        if not path.is_file():
+            failures.append(f"verified copy is missing: {name}")
             continue
         actual = sha256_bytes(path.read_bytes())
         if actual != wanted:
@@ -175,7 +182,10 @@ def assert_selection_snapshot(selection: Selection, snapshot: RunSnapshot) -> No
 
 
 def assert_backend_snapshot(path: Path, snapshot: RunSnapshot) -> None:
-    failures = verify_backend_identity(path, snapshot.qemu_sha256, snapshot.qemu_version)
+    resolved = resolve_qemu_path(path)
+    if resolved != snapshot.qemu_resolved_path:
+        raise RunFailure(f"backend resolved path changed between verification and use: {resolved}")
+    failures = verify_backend_identity(resolved, snapshot.qemu_sha256, snapshot.qemu_version)
     if failures:
         raise RunFailure("backend identity changed between verification and use: " + "; ".join(failures))
 
@@ -206,6 +216,7 @@ def copy_run_inputs(
         "linux-bzImage": repo / "test/qualification/linux/bzImage",
         "linux-config": repo / "test/qualification/linux/config",
         "asterinas-kernel": repo / CACHE_DIR / "asterinas-kernel",
+        "asterinas-kernel-rw": repo / CACHE_DIR / "asterinas-kernel-rw",
         "initramfs.cpio": repo / CACHE_DIR / "initramfs.cpio",
         "probe": repo / CACHE_DIR / "probe",
         "probe-input.txt": repo / "test/qualification/probe/input.txt",
@@ -232,7 +243,7 @@ def copy_run_inputs(
     drift = verify_copied_input_hashes(copied, snapshot.expected_hashes)
     if drift:
         raise RunFailure("copied run inputs do not match the verified snapshot: " + "; ".join(drift))
-    input_manifest = {name: sha256_bytes(path.read_bytes()) for name, path in sorted(copied.items())}
+    input_manifest = {name: snapshot.expected_hashes[name] for name in sorted(copied)}
     (bundle.inputs_dir / "manifest.json").write_text(json.dumps(input_manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return copied
 
@@ -355,6 +366,14 @@ def execute_backend(
     assert_backend_snapshot(snapshot.qemu_path, snapshot)
     termination_control = control in {"panic", "hang"} or label.endswith("timeout")
     adapter_enabled = bool(case.payload.get("adapter")) and not termination_control
+    kernel_name = "linux-bzImage"
+    if backend == "asterinas":
+        kernel_name = (
+            "asterinas-kernel-rw"
+            if case.payload.get("features") == "ext4_rw_experimental"
+            else "asterinas-kernel"
+        )
+    used_inputs = {name: inputs[name] for name in (kernel_name, "initramfs.cpio", "linux-config", "inputs.lock.json")}
     adapter_image = None
     if adapter_enabled and control != "missing-device":
         image_name = case.payload.get("disk_image", "adapter-disk.ext2")
@@ -363,9 +382,13 @@ def execute_backend(
         elif control == "wrong-filesystem":
             image_name = "adapter-wrong-filesystem.img"
         adapter_image = inputs[image_name]
+        used_inputs[image_name] = adapter_image
+    input_failures = verify_copied_input_hashes(used_inputs, snapshot.expected_hashes)
+    if input_failures:
+        raise RunFailure("backend inputs changed before use: " + "; ".join(input_failures))
     execution = run_qemu(
-        qemu_path=snapshot.qemu_path,
-        kernel=inputs["asterinas-kernel" if backend == "asterinas" else "linux-bzImage"],
+        qemu_path=snapshot.qemu_resolved_path,
+        kernel=inputs[kernel_name],
         initramfs=inputs["initramfs.cpio"],
         work_dir=bundle.work_dir,
         label=label,
@@ -392,6 +415,7 @@ def execute_backend(
         inject_writeback_eio=bool(case.payload.get("inject_writeback_eio")),
         kernel_kind=backend,
     )
+    assert_backend_snapshot(snapshot.qemu_path, snapshot)
     if execution.adapter_disk is not None:
         bundle.register_file(f"{label}/adapter-disk.img", execution.adapter_disk.image)
     bundle.register_file(f"{label}/console.log", execution.console_log)
