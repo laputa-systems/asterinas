@@ -243,6 +243,18 @@ impl BlockAllocator {
         }
     }
 
+    /// Builds an allocator from an ext4 block bitmap. The first `used_bits`
+    /// blocks are considered; bits beyond the group's block count are ignored.
+    pub fn from_bitmap(bitmap: &[u8], used_bits: usize) -> Self {
+        let mut used = Vec::with_capacity(used_bits);
+        for index in 0..used_bits {
+            let byte = bitmap.get(index / 8).copied().unwrap_or(0);
+            used.push(byte & (1 << (index % 8)) != 0);
+        }
+        let next = used.iter().position(|taken| !taken).unwrap_or(0);
+        Self { used, next }
+    }
+
     pub fn allocate(&mut self) -> Option<u64> {
         let len = self.used.len();
         for offset in 0..len {

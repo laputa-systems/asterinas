@@ -16,6 +16,7 @@ pub mod reader;
 pub mod extent_edit;
 pub mod recovery;
 pub mod transaction;
+pub mod write;
 
 use reader::{BlockReader, SliceReader};
 
