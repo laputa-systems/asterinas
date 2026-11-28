@@ -109,6 +109,7 @@ def create_snapshot(verification: LockVerification, selection: Selection) -> Run
         "linux-bzImage": document["linux"]["bzimage_sha256"],
         "linux-config": document["linux"]["config_sha256"],
         "asterinas-kernel": document["asterinas_build"]["kernel_sha256"],
+        "asterinas-kernel-rw": document["asterinas_build"]["rw_kernel_sha256"],
         "initramfs.cpio": document["probe"]["initramfs_sha256"],
         "probe": document["probe"]["binary_sha256"],
         "probe-input.txt": document["probe"]["input_payload_sha256"],
@@ -206,6 +207,7 @@ def copy_run_inputs(
         "linux-bzImage": repo / "test/qualification/linux/bzImage",
         "linux-config": repo / "test/qualification/linux/config",
         "asterinas-kernel": repo / CACHE_DIR / "asterinas-kernel",
+        "asterinas-kernel-rw": repo / CACHE_DIR / "asterinas-kernel-rw",
         "initramfs.cpio": repo / CACHE_DIR / "initramfs.cpio",
         "probe": repo / CACHE_DIR / "probe",
         "probe-input.txt": repo / "test/qualification/probe/input.txt",
@@ -365,7 +367,14 @@ def execute_backend(
         adapter_image = inputs[image_name]
     execution = run_qemu(
         qemu_path=snapshot.qemu_path,
-        kernel=inputs["asterinas-kernel" if backend == "asterinas" else "linux-bzImage"],
+        kernel=inputs[
+            "asterinas-kernel-rw"
+            if backend == "asterinas"
+            and "ext4_rw_experimental" in str(case.payload.get("features", ""))
+            else "asterinas-kernel"
+            if backend == "asterinas"
+            else "linux-bzImage"
+        ],
         initramfs=inputs["initramfs.cpio"],
         work_dir=bundle.work_dir,
         label=label,

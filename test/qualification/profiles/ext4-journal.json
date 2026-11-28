@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "name": "ext4-journal",
+  "inherits": [],
+  "cases": [
+    "ext4.write"
+  ],
+  "excludes": []
+}

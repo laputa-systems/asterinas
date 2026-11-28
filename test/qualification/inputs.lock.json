@@ -23,12 +23,14 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "7ca942400b139da047ade7ca43145840e3ce53c2083b15b8a22efe542744f359",
+    "kernel_sha256": "354a8116a4188b68a99151a5af38b2b72a5398733949b9a2ab1256c1c81f509f",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "a97c5f54e87f0e90f17e18a4733e0f93b95a632d3a1ad71d116adabba522af0e"
+    "rw_kernel_path": "target/qualification/inputs/cache/asterinas-kernel-rw",
+    "rw_kernel_sha256": "49e83cd6637057160df02a9bab844a9460e8b55dc2165e2949d44a11ed5dc6e0",
+    "source_tree_sha256": "441639dba50eb8b23e86d494c59caa7adea83bc5d0635ff6c7a6c6259ecd53ff"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -44,13 +46,13 @@
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "6d655f0906e533193e192f9b194bf92b8103d2b070c16fa901deea73221bb027",
+      "test/qualification/qualcore/lock.py": "86b67a67b811759f74390c7f43ed10985f4ab2dd24f127d16fb9228b33282113",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/persistence.py": "72b8345b57375e962cc328df8340318a303913415ca26c91104aa94fe98973b4",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
       "test/qualification/qualcore/qemu.py": "f93742ae85eaafaabab5d1ea549e783270513d0f848083257e3e0133d9256755",
       "test/qualification/qualcore/results.py": "09d0eed452b7a47d16f8f598b366d10383c423ec7a9b59f0b34d4cc0a68b5b1a",
-      "test/qualification/qualcore/runner.py": "531515891ebecabd0d7870f04538fecc880977d894e4425f3844638884a68675",
+      "test/qualification/qualcore/runner.py": "da150295cb429d9b2bc55d154c6c337d9f4288932e8a2ce8e8a789dbf0cdf3c1",
       "test/qualification/qualcore/selftest.py": "0105b98abf9eaa54519544d815a9104e623b1a863ec48114f25999801af3bde7",
       "test/qualification/qualcore/supervisor.py": "067c3d694359385ef35b79c60f57b2b7d9bbaf3b22080db6f9023182d582e0d5",
       "test/qualification/qualcore/util.py": "3698485c7a3a80f40c39024aefafe6c0bb46e708c4834180c8a163a5a847dd04",
@@ -72,15 +74,15 @@
   "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "0a138dce4f72b35f067840243197bbf56d51b0a297afb9483268987286fa2830",
+    "binary_sha256": "6485be0fc8041e81b4c734842914e3d96f106dd009069205a0d691ad66a3e921",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "4956b6ec37b772a4499c62c399241c8cbe2c6edcb96e22bacffae1c6ab801641",
+    "initramfs_sha256": "dd4bc869f20016b31c572c7d4ce74feba5a9c38b2c8c8e386b2afd3779746762",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "c30d52aed6e0091dc19672dfcdc76862a8348ed320d0fbf78c763205b99014ea"
+    "source_sha256": "3d0993f767a3bdb7ed49399253d3865d5bf35987a5bc968f10777aebda8d7555"
   },
   "python": {
     "minimum_version": "3.11"
@@ -118,6 +120,26 @@
       "manifest_hash": "48a96fc45bfb51efaac643183b03dee933deaeaacc2d742724aaf57101f4d5f8",
       "normalization_rules": [],
       "payload_hash": "4d373de8967c78c52285ab5ce34dd7526940084aef116de26d4ce4b62e1fe3cc"
+    },
+    "ext4-journal": {
+      "case_ids": [
+        "ext4.write"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc19-ext4-journal-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.write",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "07d253da196297d5b339ee2c96281c21b7885c76713ee64d82f7cc20cb52c511",
+      "normalization_rules": [],
+      "payload_hash": "4de1a80e75c0180d547e2e00a1f9ea02391cb7af6fa6d3936c65607ecc47cdc0"
     },
     "ext4-read": {
       "case_ids": [
