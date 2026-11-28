@@ -16,8 +16,21 @@ This is the single plan for this repository: all current and future work, and th
 - **LC-09 qualified (commit `9b5746e54`):** the paired `s0-errors` run reports four `PASS` dispositions (fsync, fdatasync, msync, syncfs) with replay `python3 test/qualification/run.py run --profile s0-errors --candidate asterinas`. Write-completion callbacks record an errseq-style EIO in the page cache's VMO; a defaulted `Inode::writeback_error` exposes it, and each file description consumes a new sequence once. The harness injects EIO with blkdebug on the pinned marker file's data sector and detaches adapter disks from runtime-termination controls so panic/hang/timeout controls remain comparable. `s0-errors --controls` reports 122/122 detected; selftest 99/99, adapter 112/112, selfcheck 122/122, Linux self-comparison `PASS=1`, `lock --verify` and `inventory --check` green, and both earlier pilots still pass.
 - **LC-11 reopened:** `0b8d558ac` recorded 105/105 controls, including the omitted-sync control. The test compared durable sector sets and the positive probe could flush after the target fsync. Require a verified acknowledgment, an immediate cut, recovered bytes and namespace checks, plus a negative control with the required sync omitted.
 - **G1 behavioral receipts:** ext2 pilot 6/6 (`20261127T060333Z-a9efb1a1fda5`), FD 4/4, and writeback errors 4/4. Commit `8d6c9ae9b` records `e2fsck -fn` exit 0 on the six candidate ext2 images. G1 acceptance remains open pending the full regression boot.
-- **LC-14–LC-18 implementation:** The fixture builders, format crate, read-only kernel driver and standalone journal and recovery prototypes exist. Qualification remains open. Fixture builders altered ext4 state and FILETYPE after mkfs, and the format parser admitted bad descriptor checksums. The read-time extent traversal needs depth-one coverage. The current kernel mount refuses recovery-needed images. The earlier journal round-trips use the prototype encoding.
-- **LC-19–LC-23 implementation:** The experimental driver has prototype write, allocation, namespace, orphan and xattr paths. Qualification remains open. The journal encoding is incompatible with JBD2 and metadata writes bypass transactions. Fragmented allocations, inode flags and lifecycle, aliases, xattrs and the orphan head require correction. Restore default writable mounts only after the full LC-23 exit passes.
+- **Ext4 implementation and qualification**
+
+  | Item | Implementation | Qualification |
+  | --- | --- | --- |
+  | LC-14 | Pinned mkfs recipes retain clean state and FILETYPE. Malformed images use a separate fixture. | `fixtures --check` reproduced hashes and feature masks and ran pinned `e2fsck -fn` on clean seeds. |
+  | LC-15 | Corrected feature bits, group addresses, geometry and checksum enforcement. | Focused format and malformed-input tests passed. The full mount-policy matrix remains open. |
+  | LC-16 | Read-only driver with corrected extent flags and depth traversal. | Three untouched-image guest cases passed, including the depth-one fixture. The full read contract remains open. |
+  | LC-17 | Genuine internal journal format and bounded transaction codecs. | Independent e2fsprogs fixtures and replay cover the codec. Full recovery and revocation semantics remain open. |
+  | LC-18 | Kernel mount rejects images needing recovery. | Mount-time replay, orphan cleanup, interruption and idempotence remain open. |
+  | LC-19 | Experimental writes use the prototype transaction path. | The guest corrupts the journal superblock. Ordered commit, checkpoint and reuse remain open. |
+  | LC-20 | Prototype allocation and writes. Fragmentation-aware work is parked. | The oversized sparse write disagrees with Linux. Transactional accounting and the allocation matrix remain open. |
+  | LC-21 | Prototype namespace operations. Name-based rename work is parked. | The full directory, alias and rename matrix remains open. |
+  | LC-22 | Corrected legacy orphan-head offset. Prototype unlink lacks the required lifetime and recovery behavior. | Transactional orphan maintenance, final-close reclaim and recovery remain open. |
+  | LC-23 | External xattr codec and prototype operation paths. | Pinned tools accepted an already allocated external xattr block update. The guest xattr image fails fsck. The full operation matrix and default-write promotion remain open. |
+
 - **G2 behavioral receipts at or before `25925b4b3`:** The Linux and Asterinas runs used separate clones. The shared harness controls do not add ext4 operation coverage. Keep these PASS receipts at the following scope.
 
   | Profile | Linux receipt | Asterinas receipt | Observed behavior |
