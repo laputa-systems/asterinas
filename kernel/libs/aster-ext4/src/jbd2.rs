@@ -54,6 +54,124 @@ pub struct JournalSuperBlock {
     pub err_sequence: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternalSuperblockError {
+    Truncated,
+    BadMagic,
+    BadBlockType(u32),
+    BadGeometry,
+    UnsupportedFeatures,
+    UuidMismatch,
+    UnsupportedChecksum,
+    ChecksumMismatch,
+}
+
+impl core::fmt::Display for InternalSuperblockError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "invalid internal journal superblock: {self:?}")
+    }
+}
+
+impl core::error::Error for InternalSuperblockError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InternalJournalSuperblock {
+    pub header_sequence: u32,
+    pub block_size: u32,
+    pub max_len: u32,
+    pub first: u32,
+    pub sequence: u32,
+    pub start: u32,
+    pub errno: u32,
+    pub feature_compat: u32,
+    pub feature_incompat: u32,
+    pub feature_ro_compat: u32,
+    pub uuid: [u8; 16],
+    pub nr_users: u32,
+    pub checksum_type: u8,
+}
+
+/// Parses a v2 internal journal superblock from the complete journal inode data.
+///
+/// `expected_uuid` is the filesystem UUID for the internal journal.
+/// Feature support here describes parsing only, not journal recovery.
+///
+/// # Errors
+///
+/// Returns an error if the superblock is truncated, invalid, unsupported,
+/// has the wrong UUID, or fails its checksum.
+pub fn parse_internal_superblock(
+    journal: &[u8],
+    expected_uuid: &[u8; 16],
+) -> Result<InternalJournalSuperblock, InternalSuperblockError> {
+    use InternalSuperblockError as E;
+
+    let sb = journal.get(..SUPERBLOCK_SIZE).ok_or(E::Truncated)?;
+    let word = |offset| read_u32(sb, offset).ok_or(E::Truncated);
+    if word(0)? != JBD2_MAGIC {
+        return Err(E::BadMagic);
+    }
+    let block_type = word(4)?;
+    if block_type != 4 {
+        return Err(E::BadBlockType(block_type));
+    }
+    let block_size = word(0x0c)?;
+    let max_len = word(0x10)?;
+    let first = word(0x14)?;
+    let start = word(0x1c)?;
+    if !(1024..=crate::MAX_BLOCK_SIZE as u32).contains(&block_size)
+        || !block_size.is_power_of_two()
+        || first == 0
+        || first >= max_len
+        || (start != 0 && !(first..max_len).contains(&start))
+        || u64::from(max_len) * u64::from(block_size) > journal.len() as u64
+    {
+        return Err(E::BadGeometry);
+    }
+    let feature_compat = word(0x24)?;
+    let feature_incompat = word(0x28)?;
+    let feature_ro_compat = word(0x2c)?;
+    if feature_compat & !1 != 0
+        || feature_incompat & !0x1b != 0
+        || feature_ro_compat != 0
+        || feature_incompat & 0x18 == 0x18
+        || (feature_compat & 1 != 0 && feature_incompat & 0x18 != 0)
+    {
+        return Err(E::UnsupportedFeatures);
+    }
+    let uuid: [u8; 16] = sb[0x30..0x40].try_into().map_err(|_| E::Truncated)?;
+    if &uuid != expected_uuid {
+        return Err(E::UuidMismatch);
+    }
+    let checksum_type = sb[0x50];
+    if feature_incompat & 0x18 != 0 {
+        if checksum_type != 4 {
+            return Err(E::UnsupportedChecksum);
+        }
+        let crc = crate::ext4_crc32c(!0, &sb[..0xfc]);
+        let crc = crate::ext4_crc32c(crc, &[0; 4]);
+        let crc = crate::ext4_crc32c(crc, &sb[0x100..]);
+        if word(0xfc)? != crc {
+            return Err(E::ChecksumMismatch);
+        }
+    }
+    Ok(InternalJournalSuperblock {
+        header_sequence: word(8)?,
+        block_size,
+        max_len,
+        first,
+        sequence: word(0x18)?,
+        start,
+        errno: word(0x20)?,
+        feature_compat,
+        feature_incompat,
+        feature_ro_compat,
+        uuid,
+        nr_users: word(0x40)?,
+        checksum_type,
+    })
+}
+
 fn read_u32(buf: &[u8], offset: usize) -> Option<u32> {
     buf.get(offset..offset + 4)
         .and_then(|slice| <[u8; 4]>::try_from(slice).ok())
@@ -296,6 +414,74 @@ pub fn from_format_error(error: FormatError) -> JournalError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, path::PathBuf};
+
+    fn internal_journal_fixture() -> (Vec<u8>, [u8; 16]) {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.pop();
+        path.pop();
+        path.pop();
+        path.push("target/qualification/inputs/ext4/basic.ext4");
+        let image = fs::read(path).expect("missing basic ext4 fixture");
+        let uuid = image[1024 + 0x68..1024 + 0x78].try_into().unwrap();
+        let info = crate::analyze(&image).unwrap();
+        assert_eq!(info.journal_inum, 8);
+        let geometry = crate::reader::geometry(&image).unwrap();
+        let inode = crate::reader::read_inode(&image, &geometry, info.journal_inum).unwrap();
+        (crate::reader::read_file(&image, &geometry, &inode).unwrap(), uuid)
+    }
+
+    #[test]
+    fn parses_mkfs_internal_journal_superblock() {
+        let (journal, uuid) = internal_journal_fixture();
+        assert_eq!(&journal[..8], &[0xc0, 0x3b, 0x39, 0x98, 0, 0, 0, 4]);
+        let sb = parse_internal_superblock(&journal, &uuid).unwrap();
+        assert_eq!(sb.block_size, 4096);
+        assert_eq!(sb.max_len, 1024);
+        assert_eq!(journal.len(), 4096 * 1024);
+        assert_eq!((sb.first, sb.sequence, sb.start, sb.errno), (1, 1, 0, 0));
+        assert_eq!((sb.feature_compat, sb.feature_incompat, sb.feature_ro_compat), (0, 0, 0));
+        assert_eq!(sb.uuid, uuid);
+        assert_eq!(uuid, [0xfb, 0xb7, 0xb5, 0xbf, 0x4c, 0xa3, 0x48, 0xee,
+            0xee, 0xbf, 0x8c, 0xc3, 0x66, 0x07, 0x12, 0x85]);
+        assert_eq!(sb.nr_users, 1);
+        assert_eq!(sb.checksum_type, 0);
+    }
+
+    #[test]
+    fn rejects_malformed_internal_superblocks() {
+        let (mut journal, uuid) = internal_journal_fixture();
+        assert_eq!(parse_internal_superblock(&journal[..1023], &uuid), Err(InternalSuperblockError::Truncated));
+        journal[0] ^= 1;
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::BadMagic));
+        journal[0] ^= 1;
+        journal[7] = 3;
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::BadBlockType(3)));
+        journal[7] = 4;
+        journal[0x13] = 1;
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::BadGeometry));
+        journal[0x13] = 0;
+        journal[0x1c..0x20].copy_from_slice(&1024u32.to_be_bytes());
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::BadGeometry));
+        journal[0x1c..0x20].fill(0);
+        journal[0x2b] = 0x20;
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::UnsupportedFeatures));
+        journal[0x2b] = 0;
+        assert_eq!(parse_internal_superblock(&journal, &[0; 16]), Err(InternalSuperblockError::UuidMismatch));
+    }
+
+    #[test]
+    fn verifies_internal_superblock_checksum() {
+        let (mut journal, uuid) = internal_journal_fixture();
+        journal[0x2b] = 0x10;
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::UnsupportedChecksum));
+        journal[0x50] = 4;
+        let checksum = crate::ext4_crc32c(!0, &journal[..1024]);
+        journal[0xfc..0x100].copy_from_slice(&checksum.to_be_bytes());
+        assert!(parse_internal_superblock(&journal, &uuid).is_ok());
+        journal[0x20] ^= 1;
+        assert_eq!(parse_internal_superblock(&journal, &uuid), Err(InternalSuperblockError::ChecksumMismatch));
+    }
 
     fn superblock(sequence: u32, start: u32) -> Vec<u8> {
         let mut sb = vec![0u8; 2048];
