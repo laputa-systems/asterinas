@@ -398,6 +398,12 @@ def generate_lock(repo: Path) -> dict[str, Any]:
     persistence_selection = _load_selection(repo, "s0-persistence")
     ext4_read_selection = _load_selection(repo, "ext4-read")
     ext4_extra_selection = _load_selection(repo, "ext4-read-extra")
+    ext4_journal_selection = _load_selection(repo, "ext4-journal")
+    ext4_alloc_selection = _load_selection(repo, "ext4-alloc")
+    ext4_dir_selection = _load_selection(repo, "ext4-dir")
+    ext4_orphan_selection = _load_selection(repo, "ext4-orphan")
+    ext4_xattr_selection = _load_selection(repo, "ext4-xattr")
+    ext4_durability_selection = _load_selection(repo, "ext4-durability")
     return {
         "schema": 1,
         "lock_revision": "lc07-r1",
@@ -476,6 +482,12 @@ def generate_lock(repo: Path) -> dict[str, Any]:
             "s0-persistence": _selection_lock(persistence_selection),
             "ext4-read": _selection_lock(ext4_read_selection),
             "ext4-read-extra": _selection_lock(ext4_extra_selection),
+            "ext4-journal": _selection_lock(ext4_journal_selection),
+            "ext4-alloc": _selection_lock(ext4_alloc_selection),
+            "ext4-dir": _selection_lock(ext4_dir_selection),
+            "ext4-orphan": _selection_lock(ext4_orphan_selection),
+            "ext4-xattr": _selection_lock(ext4_xattr_selection),
+            "ext4-durability": _selection_lock(ext4_durability_selection),
         },
     }
 
@@ -785,7 +797,7 @@ def verify_lock_document(repo: Path, lock: dict[str, Any], build_missing: bool =
         build_asterinas(repo)
     _check_file_hash(repo, asterinas_build["kernel_path"], asterinas_build["kernel_sha256"], "Asterinas kernel", failures, checked)
 
-    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra"):
+    for profile_name in ("selfcheck", "lc02-selftest", "adapter", "pilot-ext2", "pilot-fd", "s0-errors", "s0-persistence", "ext4-read", "ext4-read-extra", "ext4-journal", "ext4-alloc", "ext4-dir", "ext4-orphan", "ext4-xattr", "ext4-durability"):
         _verify_selection(repo, lock, profile_name, failures, checked)
 
     repository = repository_provenance(repo)

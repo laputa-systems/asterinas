@@ -23,12 +23,12 @@
     "flake_lock_path": "flake.lock",
     "flake_lock_sha256": "8886d322a872184c6beb804737ebc9afe459ad86b04eb010a4759d36181836ff",
     "kernel_path": "target/qualification/inputs/cache/asterinas-kernel",
-    "kernel_sha256": "4c900fe13bd6d17501188e338114904b5736df9ec8c8cc75baa4002ad0fc4001",
+    "kernel_sha256": "f47ecb5735e5678e3994369618f98faf657dea8ba1014fc93fc4c3de748e99a0",
     "nixpkgs_path": "distro/nixpkgs.nix",
     "nixpkgs_sha256": "5495d26b918393138cc85070aefff381818b1579ca57bf2de20109628e8bdfe0",
     "rust_toolchain_path": "rust-toolchain.toml",
     "rust_toolchain_sha256": "b2508d8c9cd57258fad2fc77737e07172846161f6a7dd726cbd8e974de69c6f7",
-    "source_tree_sha256": "75ad8c3a4acc101dc4de23eda2b37253d995fed95159ef76d8424f14260e61ff"
+    "source_tree_sha256": "8a9eb5aabd5faf2304aaa0e80da5267f553cd4f17b2b541528edf874317a911e"
   },
   "dev_container": {
     "digest": "sha256:6a62f4eb57337e23733f3b40036bbbea5b022c972f21ed9557ad9a4437848306",
@@ -44,7 +44,7 @@
       "test/qualification/qualcore/evidence.py": "2e26ee51885bcd8f6bd55253aed7859aca0b4326a4ae1d2e1209e53546ab430f",
       "test/qualification/qualcore/gtest.py": "dfc993b0140ff32a57fad5ab076f180dc2bab75edccc74307b3104125e9381cb",
       "test/qualification/qualcore/initramfs.py": "dc2f9dc9319a5a4ce779559e4e05eeee50e283d0a81a431eb9497b97322a9186",
-      "test/qualification/qualcore/lock.py": "6d655f0906e533193e192f9b194bf92b8103d2b070c16fa901deea73221bb027",
+      "test/qualification/qualcore/lock.py": "a3135d3ca4c3b9d54437d8f967af8850c1fa210bf6ecbdaf4fce0fba3afb9a3a",
       "test/qualification/qualcore/manifest.py": "08fb9ceafd8263c2d4951a5addf99205b845bce1018fdbf4fc6eb5e0f332be1a",
       "test/qualification/qualcore/persistence.py": "72b8345b57375e962cc328df8340318a303913415ca26c91104aa94fe98973b4",
       "test/qualification/qualcore/proctree.py": "991897b7ec70d989bda9930e402fcec96cb6bed5d26e3397c12c16f25b4a4823",
@@ -72,15 +72,15 @@
   "lock_revision": "lc07-r1",
   "probe": {
     "binary_path": "target/qualification/inputs/cache/probe",
-    "binary_sha256": "96f051a6e1020901f0a9e994a44d0430b5cccb117b2a719b57dadbc3fede5160",
+    "binary_sha256": "04a8fb822e98b2a1839412f990a63f608f8b059089efbab2103e051bc3727159",
     "initramfs_path": "target/qualification/inputs/cache/initramfs.cpio",
-    "initramfs_sha256": "8da50f3b14d903d09dfd278ab9dd3bfea27ea6cd0b903a5c333bd73970625b34",
+    "initramfs_sha256": "30db8f4ddfc3f75c62933d48dd8e609b8e993f9b21742b92b8c329e2af863b31",
     "input_path": "test/qualification/probe/input.txt",
     "input_payload_sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
     "nix_path": "test/qualification/probe/default.nix",
     "nix_sha256": "78a10cbb52b66b1dbf4d1d943064c9ce52fbd230b37164e0478cb073644035bf",
     "source_path": "test/qualification/probe/probe.c",
-    "source_sha256": "14100ab250262ca38feb1f03d2eb4d395577de37c04bebf3ad373045f0420cb8"
+    "source_sha256": "01917b09e4423871c4d926fb9fbb0e3845cc5bdcf74e45efd3c263f66bfebf27"
   },
   "python": {
     "minimum_version": "3.11"
@@ -118,6 +118,106 @@
       "manifest_hash": "48a96fc45bfb51efaac643183b03dee933deaeaacc2d742724aaf57101f4d5f8",
       "normalization_rules": [],
       "payload_hash": "4d373de8967c78c52285ab5ce34dd7526940084aef116de26d4ce4b62e1fe3cc"
+    },
+    "ext4-alloc": {
+      "case_ids": [
+        "ext4.alloc"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc20-ext4-alloc-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.alloc",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "a4619cb3f40a798d13771b8a5c06d611c844f805c3ccf639c6c2a3d39af3b7d9",
+      "normalization_rules": [],
+      "payload_hash": "39b218e50e3cd6eb5fac0ea169e563c4832e842ebbeed3dceb1acaa8a5018551"
+    },
+    "ext4-dir": {
+      "case_ids": [
+        "ext4.dir"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc21-ext4-dir-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.dir",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "9294245050e54762e03e171c6640a2278a1fa20761162765e2568600404c3118",
+      "normalization_rules": [],
+      "payload_hash": "4cab6862c9099953953ce86f822551e364e8140352e18fb477d1f4e702a66726"
+    },
+    "ext4-durability": {
+      "case_ids": [
+        "ext4.durability"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc25-ext4-durability-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.durability",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "b4e4afba817921520f95d1d993859303cf2a069e67794fc3511613d7f0a19928",
+      "normalization_rules": [],
+      "payload_hash": "a14ca9e768462add38bb437f95ca2ec650549ddd367e8d10fcac790e2bee22fc"
+    },
+    "ext4-journal": {
+      "case_ids": [
+        "ext4.write"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc19-ext4-journal-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.write",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "c16b3578d2418fc7993358eacc025b3fb14c014dc4bb7e03fb4dc531d40515cb",
+      "normalization_rules": [],
+      "payload_hash": "370962ca61b6c14a675556bac93fd7113076d90f70db3a142eb5040707beed5d"
+    },
+    "ext4-orphan": {
+      "case_ids": [
+        "ext4.orphan"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc22-ext4-orphan-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.orphan",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "39360ebab6fa8b5e4a7e657a39ba3a8cf42ae2267b6a8edd7b2bff0869ac77b1",
+      "normalization_rules": [],
+      "payload_hash": "c5174969f5dfbc0e51583f39db88a5aa2e1a62872ae80cba6352dfd66e1d1698"
     },
     "ext4-read": {
       "case_ids": [
@@ -168,6 +268,26 @@
       "manifest_hash": "5091a3448e1e3119656f5c49640e125ef58217dcc67732045db09606e91a4f03",
       "normalization_rules": [],
       "payload_hash": "b846d1a46ee6522fec9e545a3a456046ec8cb6258cbd7fb5674d90be66c831c1"
+    },
+    "ext4-xattr": {
+      "case_ids": [
+        "ext4.xattr"
+      ],
+      "cases": [
+        {
+          "artifacts": [],
+          "contract_revision": "lc23-ext4-xattr-r1",
+          "deadline_seconds": 60.0,
+          "id": "ext4.xattr",
+          "validators": [
+            "reference-contract"
+          ]
+        }
+      ],
+      "excluded": [],
+      "manifest_hash": "3fd04723f0a1fe20e7a77e4763509895c0334630f8698ec608352a398da370b4",
+      "normalization_rules": [],
+      "payload_hash": "149d97f8667afd3dc2b7633994610778abb162a9197413b7783285989a437d44"
     },
     "lc02-selftest": {
       "case_ids": [

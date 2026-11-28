@@ -43,6 +43,7 @@
 #define EXT4_DIR_CASE_ID "ext4.dir"
 #define EXT4_ORPHAN_CASE_ID "ext4.orphan"
 #define EXT4_XATTR_CASE_ID "ext4.xattr"
+#define EXT4_DURABILITY_CASE_ID "ext4.durability"
 #define FD_EVENTFD_CASE_ID "fd.eventfd"
 #define FD_EPOLL_CASE_ID "fd.epoll"
 #define FD_PIPE_CASE_ID "fd.pipe"
@@ -555,7 +556,8 @@ static bool is_ext4_case(void) {
            strcmp(active_case_id, EXT4_ALLOC_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_DIR_CASE_ID) == 0 ||
            strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) == 0 ||
-           strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0;
+           strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0 ||
+           strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) == 0;
 }
 
 static const char *expected_mount_filesystem(void) {
@@ -597,7 +599,8 @@ static void setup_storage_volume(struct storage_setup *setup) {
          strcmp(active_case_id, EXT4_ALLOC_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_DIR_CASE_ID) != 0 &&
          strcmp(active_case_id, EXT4_ORPHAN_CASE_ID) != 0 &&
-         strcmp(active_case_id, EXT4_XATTR_CASE_ID) != 0) ? MS_RDONLY : 0;
+         strcmp(active_case_id, EXT4_XATTR_CASE_ID) != 0 &&
+         strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) != 0) ? MS_RDONLY : 0;
     if (mount(setup->device_path, ADAPTER_MOUNT_POINT, expected_mount_filesystem(), mount_flags, NULL) != 0) {
         setup->mount_errno = errno;
         diagnostic("filesystem mount failed: %s", strerror(errno));
@@ -733,6 +736,80 @@ static void run_ext4_file_case(const char *run_id, const char *nonce, const char
     emit_final(run_id, nonce, manifest_hash, payload_hash,
                bytes_passed && size_passed && tail_passed,
                SETUP_SUBTESTS + extra, SETUP_ASSERTIONS + extra);
+}
+
+static void run_ext4_durability_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
+    const char *directory_path = ADAPTER_MOUNT_POINT "/durable";
+    const char *path = ADAPTER_MOUNT_POINT "/durable/data.txt";
+    const char *content = "lc25-durable\n";
+    struct storage_setup setup;
+    char roundtrip[256] = "";
+    long made_dir = 0;
+    long written = -1;
+    long file_fsync = -1;
+    long directory_fsync = -1;
+    long clean_umount = -1;
+    long remount_result = -1;
+    long size = -1;
+    long final_umount = -1;
+    if (begin_storage_case(run_id, nonce, manifest_hash, payload_hash, &setup)) {
+        made_dir = mkdir(directory_path, 0750) == 0 ? 1 : 0;
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (fd >= 0) {
+            written = write_all(fd, content, strlen(content));
+            file_fsync = fsync(fd);
+            close(fd);
+        }
+        int directory = open(directory_path, O_RDONLY | O_DIRECTORY);
+        if (directory >= 0) {
+            directory_fsync = fsync(directory);
+            close(directory);
+        }
+        sync();
+        clean_umount = umount(ADAPTER_MOUNT_POINT);
+        if (clean_umount == 0) {
+            if (mount(setup.device_path, ADAPTER_MOUNT_POINT, "ext4", 0, NULL) == 0) {
+                remount_result = 0;
+                read_file_base64(path, roundtrip, sizeof(roundtrip));
+                struct stat status;
+                if (stat(path, &status) == 0) {
+                    size = (long)status.st_size;
+                }
+                sync();
+                final_umount = umount(ADAPTER_MOUNT_POINT);
+            } else {
+                diagnostic("ext4 durability remount failed: %s", strerror(errno));
+            }
+        } else {
+            diagnostic("ext4 durability umount failed: %s", strerror(errno));
+            unmount_adapter_volume();
+        }
+    } else {
+        emit_final(run_id, nonce, manifest_hash, payload_hash, false, SETUP_SUBTESTS, SETUP_ASSERTIONS);
+        return;
+    }
+    bool dir_passed = made_dir == 1;
+    bool write_passed = written == 1;
+    bool file_passed = file_fsync == 0;
+    bool dirsync_passed = directory_fsync == 0;
+    bool umount_passed = clean_umount == 0;
+    bool remount_passed = remount_result == 0;
+    bool bytes_passed = strcmp(roundtrip, "bGMyNS1kdXJhYmxlCg==") == 0;
+    bool size_passed = size == 13;
+    bool final_passed = final_umount == 0;
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "mkdir", "result", made_dir, dir_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "create-write", "bytes_written", written, write_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "file-fsync", "result", file_fsync, file_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "directory-fsync", "result", directory_fsync, dirsync_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "clean-umount", "result", clean_umount, umount_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "remount", "result", remount_result, remount_passed);
+    emit_bytes_named(run_id, nonce, manifest_hash, payload_hash, "persistent-data", "bytes", roundtrip, bytes_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "persistent-size", "bytes", size, size_passed);
+    emit_integer_named(run_id, nonce, manifest_hash, payload_hash, "final-umount", "result", final_umount, final_passed);
+    emit_final(run_id, nonce, manifest_hash, payload_hash,
+               dir_passed && write_passed && file_passed && dirsync_passed && umount_passed && remount_passed &&
+               bytes_passed && size_passed && final_passed,
+               SETUP_SUBTESTS + 9, SETUP_ASSERTIONS + 9);
 }
 
 static void run_ext4_xattr_case(const char *run_id, const char *nonce, const char *manifest_hash, const char *payload_hash) {
@@ -1955,6 +2032,8 @@ int main(void) {
         run_ext4_orphan_case(run_id, nonce, manifest_hash, payload_hash);
     } else if (strcmp(active_case_id, EXT4_XATTR_CASE_ID) == 0) {
         run_ext4_xattr_case(run_id, nonce, manifest_hash, payload_hash);
+    } else if (strcmp(active_case_id, EXT4_DURABILITY_CASE_ID) == 0) {
+        run_ext4_durability_case(run_id, nonce, manifest_hash, payload_hash);
 
     } else if (strcmp(active_case_id, EXT2_CREATE_CASE_ID) == 0) {
         run_ext2_create_case(run_id, nonce, manifest_hash, payload_hash);

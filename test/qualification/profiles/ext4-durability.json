@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "name": "ext4-durability",
+  "inherits": [],
+  "cases": [
+    "ext4.durability"
+  ],
+  "excludes": []
+}
